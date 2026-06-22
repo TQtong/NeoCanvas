@@ -1,0 +1,207 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ==========================================================================
+ * NeoCanvas 全局样式与设计令牌
+ *
+ * 颜色以 HSL 三元组（不含 hsl() 包裹）写入 CSS 变量，配合 tailwind.config.ts 中
+ * 的 `hsl(var(--x) / <alpha-value>)` 语法支持透明度修饰。视觉基调为浅色留白、
+ * 克制紫色强调、磨砂玻璃悬浮层。
+ * ========================================================================== */
+
+@layer base {
+  :root {
+    --background: 0 0% 99%;
+    --foreground: 240 10% 12%;
+
+    --muted: 240 6% 96%;
+    --muted-foreground: 240 4% 46%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 240 10% 12%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 10% 12%;
+
+    --border: 240 6% 90%;
+    --input: 240 6% 90%;
+    --ring: 262 83% 64%;
+
+    /* 克制的紫色强调 */
+    --accent: 262 83% 60%;
+    --accent-foreground: 0 0% 100%;
+    --accent-muted: 262 80% 96%;
+
+    --danger: 0 72% 55%;
+    --danger-foreground: 0 0% 100%;
+
+    --success: 152 56% 42%;
+    --success-foreground: 0 0% 100%;
+
+    --shadow: 240 30% 30%;
+
+    /* 磨砂玻璃悬浮层底色 */
+    --glass: 0 0% 100%;
+    --glass-alpha: 0.72;
+  }
+
+  .dark {
+    --background: 240 10% 8%;
+    --foreground: 0 0% 96%;
+
+    --muted: 240 6% 16%;
+    --muted-foreground: 240 5% 64%;
+
+    --card: 240 9% 11%;
+    --card-foreground: 0 0% 96%;
+
+    --popover: 240 9% 11%;
+    --popover-foreground: 0 0% 96%;
+
+    --border: 240 6% 20%;
+    --input: 240 6% 22%;
+    --ring: 262 83% 64%;
+
+    --accent: 262 83% 66%;
+    --accent-foreground: 0 0% 100%;
+    --accent-muted: 262 40% 22%;
+
+    --danger: 0 72% 58%;
+    --danger-foreground: 0 0% 100%;
+
+    --success: 152 50% 48%;
+    --success-foreground: 0 0% 100%;
+
+    --shadow: 0 0% 0%;
+
+    --glass: 240 9% 12%;
+    --glass-alpha: 0.66;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  html,
+  body {
+    height: 100%;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings:
+      'rlig' 1,
+      'calt' 1;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* 细描边、柔和滚动条 */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: hsl(var(--muted-foreground) / 0.25);
+    border-radius: 9999px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--muted-foreground) / 0.4);
+    background-clip: content-box;
+  }
+}
+
+@layer components {
+  /* 磨砂玻璃质感：半透明 + 背景虚化 + 边缘高光 + 微妙投影 */
+  .glass {
+    background: hsl(var(--glass) / var(--glass-alpha));
+    backdrop-filter: blur(20px) saturate(160%);
+    -webkit-backdrop-filter: blur(20px) saturate(160%);
+    border: 1px solid hsl(0 0% 100% / 0.18);
+    box-shadow:
+      0 8px 32px hsl(var(--shadow) / 0.12),
+      inset 0 1px 0 hsl(0 0% 100% / 0.4);
+  }
+  .dark .glass {
+    border-color: hsl(0 0% 100% / 0.06);
+  }
+
+  /* 骨架屏微光 */
+  .skeleton {
+    @apply relative overflow-hidden bg-muted;
+  }
+  .skeleton::after {
+    @apply absolute inset-0 -translate-x-full animate-shimmer;
+    content: '';
+    background-image: linear-gradient(
+      90deg,
+      transparent,
+      hsl(0 0% 100% / 0.25),
+      transparent
+    );
+  }
+}
+
+@layer utilities {
+  /* 多行文本省略 */
+  .line-clamp-1 {
+    display: -webkit-box;
+    -webkit-line-clamp: 1;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .line-clamp-2 {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  /* 隐藏滚动条但保留滚动 */
+  .scrollbar-none {
+    scrollbar-width: none;
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* ==========================================================================
+ * React Flow 主题适配
+ * 让画布背景、控件、选择框与本产品视觉语言一致。
+ * ========================================================================== */
+.react-flow {
+  --xy-background-color: hsl(var(--background));
+  --xy-node-border-default: transparent;
+  --xy-selection-background-color: hsl(var(--accent) / 0.06);
+  --xy-selection-border-default: 1px dashed hsl(var(--accent) / 0.6);
+}
+
+.react-flow__node {
+  /* 自定义节点自行控制外观，移除 React Flow 默认描边与内边距 */
+  border: none;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  width: auto;
+  font-size: inherit;
+  color: inherit;
+}
+
+.react-flow__handle {
+  /* 血缘连线为次要构件，默认隐藏连接点，仅在需要时由节点显式开启 */
+  opacity: 0;
+  pointer-events: none;
+}
+
+.react-flow__attribution {
+  display: none;
+}
+
+.react-flow__pane.dragging {
+  cursor: grabbing;
+}

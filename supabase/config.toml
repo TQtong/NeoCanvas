@@ -1,0 +1,62 @@
+# ============================================================================
+# Supabase 项目配置（NeoCanvas）
+#
+# 内部型函数（消费队列、轮询、回调）不面向客户端，关闭网关 JWT 校验：消费 / 轮询由
+# 服务角色触发并在代码内以服务角色运行；回调由外部提供商调用、以签名校验代替 JWT。
+# 面向客户端的函数保留默认 JWT 校验，并在代码内二次校验调用者身份与归属。
+# ============================================================================
+
+project_id = "neocanvas"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 54322
+shadow_port = 54320
+major_version = 15
+
+[realtime]
+enabled = true
+
+[storage]
+enabled = true
+file_size_limit = "500MiB"
+
+[auth]
+enabled = true
+site_url = "http://localhost:3000"
+additional_redirect_urls = ["http://localhost:3000/auth/callback"]
+jwt_expiry = 3600
+enable_refresh_token_rotation = true
+enable_signup = true
+
+[auth.email]
+enable_signup = true
+enable_confirmations = false
+
+# ---- Edge Functions ----
+[functions.create-project]
+verify_jwt = true
+
+[functions.submit-generation]
+verify_jwt = true
+
+[functions.agent-orchestrate]
+verify_jwt = true
+
+[functions.export-canvas]
+verify_jwt = true
+
+[functions.process-generation-queue]
+verify_jwt = false
+
+[functions.poll-generations]
+verify_jwt = false
+
+[functions.generation-webhook]
+verify_jwt = false

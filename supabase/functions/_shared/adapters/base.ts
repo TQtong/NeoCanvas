@@ -1,0 +1,97 @@
+/**
+ * 模型适配器抽象（第 05 篇第二节）。
+ *
+ * 每个外部模型 / 提供商被封装为实现统一接口的适配器，对上暴露提交 / 查询 / 能力画像三组
+ * 语义；编排层只依赖该接口，不感知具体提供商。归一化（normalize）的产出为
+ * {@link AssetCandidate}，由完成阶段统一取回转存。
+ *
+ * @module functions/_shared/adapters/base
+ */
+
+import {
+  type ModelCapabilities,
+  type PollResult,
+  type Provider,
+  type SubmitResult,
+  type UnifiedGenerationRequest,
+} from '../types.ts';
+import { ApiException } from '../response.ts';
+
+/** 解析后的参考素材：已取得签名 URL 与 MIME，供适配器直接取回。 */
+export interface ResolvedReference {
+  assetId: string;
+  role: 'style' | 'content' | 'first_frame' | 'mask';
+  url: string;
+  mimeType: string;
+}
+
+/** 适配器调用上下文。 */
+export interface ModelContext {
+  /** 模型键。 */
+  modelKey: string;
+  /** 模型能力画像（来自 model_catalog）。 */
+  capabilities: ModelCapabilities;
+  /** 模型在提供商侧的端点 / 模型 id（来自 default_params.providerModel 或环境变量）。 */
+  providerModel: string;
+  /** 已解析的参考素材。 */
+  references: ResolvedReference[];
+}
+
+/** 模型适配器统一接口。 */
+export interface ModelAdapter {
+  /** 提供商标识。 */
+  readonly provider: Provider;
+  /** 提交一次生成。 */
+  submit(request: UnifiedGenerationRequest, ctx: ModelContext): Promise<SubmitResult>;
+  /** 查询一次异步生成的状态与进度。 */
+  poll(externalJobId: string, ctx: ModelContext): Promise<PollResult>;
+}
+
+/** 读取必需环境变量，缺失即以 model_unavailable 抛出。 */
+export function requireProviderKey(name: string, provider: Provider): string {
+  const value = Deno.env.get(name);
+  if (!value) {
+    throw new ApiException('model_unavailable', `${provider} 未配置密钥（${name}）`);
+  }
+  return value;
+}
+
+/**
+ * 把比例与显式尺寸归一为「宽×高」像素。优先显式尺寸，其次按比例配合基准边长推导。
+ *
+ * @param params - 含 aspectRatio / width / height 的图像参数
+ * @param base - 基准边长（px）
+ * @returns 宽高像素
+ */
+export function resolveSize(
+  params: { aspectRatio?: string; width?: number; height?: number },
+  base = 1024,
+): { width: number; height: number } {
+  if (params.width && params.height) {
+    return { width: params.width, height: params.height };
+  }
+  const ratio = params.aspectRatio ?? '1:1';
+  const [w, h] = ratio.split(':').map((n) => Number(n));
+  const rw = w || 1;
+  const rh = h || 1;
+  if (rw >= rh) {
+    return { width: base, height: Math.round((base * rh) / rw) };
+  }
+  return { width: Math.round((base * rw) / rh), height: base };
+}
+
+/** 把签名 URL 的参考图取回为 base64（供需要内联图像的提供商使用）。 */
+export async function fetchReferenceBase64(
+  ref: ResolvedReference,
+): Promise<{ base64: string; mimeType: string }> {
+  const response = await fetch(ref.url);
+  if (!response.ok) {
+    throw new ApiException('provider_error', `取参考图失败（${response.status}）`);
+  }
+  const buffer = new Uint8Array(await response.arrayBuffer());
+  let binary = '';
+  for (let i = 0; i < buffer.length; i += 1) {
+    binary += String.fromCharCode(buffer[i]);
+  }
+  return { base64: btoa(binary), mimeType: ref.mimeType };
+}

@@ -1,0 +1,42 @@
+# 依赖
+/node_modules
+/.pnp
+.pnp.*
+.yarn/*
+
+# 构建产物
+/.next/
+/out/
+/build
+/dist
+
+# 调试
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# 环境变量（密钥绝不进版本库）
+.env
+.env*.local
+.env.development
+.env.production
+
+# 部署
+.vercel
+
+# 类型声明
+next-env.d.ts
+*.tsbuildinfo
+
+# 编辑器 / 系统
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+Thumbs.db
+
+# Supabase 本地
+supabase/.branches
+supabase/.temp
+supabase/.env
