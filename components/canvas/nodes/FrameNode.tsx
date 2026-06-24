@@ -31,8 +31,10 @@ function FrameNodeComponent({ data, selected }: NodeProps<CanvasFlowNode>) {
       <div className="absolute -top-6 left-0 max-w-full truncate text-xs font-medium text-muted-foreground">
         {d.name}
       </div>
+      {/* 画板本体：不透明底色盖住其下的画布网格 + 细边框 + 轻阴影，使其成为浮于网格之上的
+          独立画板，而非与网格融为一体。仅在显式开启 showGrid 时才叠加画板内参考点阵。 */}
       <div
-        className="size-full rounded-md border border-border"
+        className="size-full rounded-md border border-border shadow-soft"
         style={{
           background: d.background,
           backgroundImage: d.showGrid

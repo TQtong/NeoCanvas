@@ -157,8 +157,11 @@ const defaultFrameData = (): FrameNodeData => ({
   rotation: 0,
   name: '画板',
   preset: 'custom',
+  // 画板默认为干净的白底（盖住其下的画布网格），不再默认叠加与画布网格同款的点阵——
+  // 否则画板内的点与画布网格连成一片，画板与网格糊在一起、分不清边界。需要画板内参考网格时
+  // 可在属性里手动开启 showGrid。
   background: 'hsl(0 0% 100%)',
-  showGrid: true,
+  showGrid: false,
 });
 
 /** 默认 data 工厂表，按类型取对应工厂。 */
