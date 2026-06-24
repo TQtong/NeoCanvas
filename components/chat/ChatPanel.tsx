@@ -12,6 +12,7 @@
 
 import { MessageSquarePlus, Share2 } from 'lucide-react';
 import { useChatStore } from '@/stores/chat-store';
+import { isRenderableMessage } from '@/lib/data/mappers';
 import { getBrowserSupabase } from '@/lib/supabase/client';
 import { useTranslation } from '@/i18n';
 import { IconButton } from '@/components/ui/icon-button';
@@ -35,8 +36,9 @@ export interface ChatPanelProps {
 export function ChatPanel({ projectId }: ChatPanelProps) {
   const { t } = useTranslation();
   const { success, error: toastError } = useToast();
-  // 仅订阅是否为空，避免随每条增量重渲染容器
-  const isEmpty = useChatStore((s) => s.messages.length === 0);
+  // 仅订阅是否为空，避免随每条增量重渲染容器。空态以「无任何可渲染消息」为准——
+  // 退化消息（如空白项目的空内容首条消息）不计入，故空白项目仍展示引导大标题
+  const isEmpty = useChatStore((s) => !s.messages.some(isRenderableMessage));
 
   // 新对话：在当前项目下建一条新会话并切换（清空消息流，保留所选模型 / 模式）
   const handleNewConversation = async () => {

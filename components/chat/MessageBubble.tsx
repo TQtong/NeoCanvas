@@ -22,6 +22,7 @@ import {
 import type { MessageAttachment, MessageMention, MessageView, NodeType } from '@/types';
 import { TERMINAL_GENERATION_STATUSES } from '@/types';
 import { useChatStore } from '@/stores/chat-store';
+import { isRenderableMessage } from '@/lib/data/mappers';
 import { useTranslation } from '@/i18n';
 import { Spinner } from '@/components/ui/spinner';
 import { cn } from '@/lib/utils/cn';
@@ -103,6 +104,10 @@ export function MessageBubble({ message }: { message: MessageView }) {
       const status = generationStatus[id];
       return status === undefined || !TERMINAL_GENERATION_STATUSES.has(status);
     });
+
+  // 退化消息不渲染，避免空气泡（典型来源：空白项目创建时落库的空内容首条用户消息）。
+  // 判据与 ChatPanel 的空态判断共用 isRenderableMessage，保持一致。
+  if (!isRenderableMessage(message)) return null;
 
   return (
     <div className={cn('flex w-full', isUser ? 'justify-end' : 'justify-start')}>

@@ -58,6 +58,26 @@ export function messageRowToView(row: MessageRow): MessageView {
 }
 
 /**
+ * 该消息是否有可渲染内容。
+ *
+ * 无正文、无附件、无提及，且非流式进行态、未触发任何生成的「退化消息」返回 false——典型来源
+ * 是空白项目创建时落库的空内容首条用户消息。退化消息既不渲染气泡（避免空气泡），也不计入
+ * 「是否空会话」的空态判断（从而空白项目仍展示引导大标题）。
+ *
+ * @param m - 消息视图
+ * @returns 是否应渲染
+ */
+export function isRenderableMessage(m: MessageView): boolean {
+  return (
+    Boolean(m.content) ||
+    m.attachments.length > 0 ||
+    m.mentions.length > 0 ||
+    Boolean(m.streaming) ||
+    (m.generationIds?.length ?? 0) > 0
+  );
+}
+
+/**
  * 生成任务行 → 视图（驱动占位节点进度与对话进行态）。
  *
  * @param row - generations 行
