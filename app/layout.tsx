@@ -5,17 +5,26 @@
  */
 
 import type { Metadata, Viewport } from 'next';
-import { Inter } from 'next/font/google';
+import localFont from 'next/font/local';
 import type { ReactNode } from 'react';
 import type { ProfileRow } from '@/types';
 import { createServerSupabase } from '@/lib/supabase/server';
 import { Providers } from '@/components/providers';
 import './globals.css';
 
-const inter = Inter({
-  subsets: ['latin'],
+/**
+ * 正文字体：自托管 Inter 可变字体（latin 子集）。
+ *
+ * 不用 `next/font/google`，以免编译期向 Google Fonts 发起出站请求——在受限网络下该
+ * 请求会在 jest-worker 子进程中超时崩溃，触发「Jest worker exceeded retry limit」并
+ * 使整页编译失败（页面看似渲染但事件未水合，按钮点不动）。字体文件随仓库提供，零网络依赖。
+ * Inter 仅含拉丁字形，中文走系统字体回退（见 tailwind.config.ts 的 fontFamily.sans）。
+ */
+const inter = localFont({
+  src: './fonts/inter-latin-variable.woff2',
   variable: '--font-sans',
   display: 'swap',
+  weight: '100 900',
 });
 
 export const metadata: Metadata = {
