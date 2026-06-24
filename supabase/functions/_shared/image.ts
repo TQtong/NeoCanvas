@@ -10,7 +10,11 @@
  * @module functions/_shared/image
  */
 
-import { decode, Image } from 'https://deno.land/x/imagescript@1.2.17/mod.ts';
+// 注意：imagescript 仅在缩略图生成时按需动态加载（见 makeImageThumbnail）。
+// 改为动态 import 的关键原因：其源在 deno.land——在被网络阻断（如 GFW）的环境里，
+// 顶层静态 import 会让「凡是经流水线引用到本模块的边缘函数」整体编译失败，进而退回旧的
+// 已缓存编译版（新代码永远不生效）。动态 import 把这条远端依赖移出静态依赖图：核心流程
+// 无需触达 deno.land 即可编译运行；缩略图不可用时静默回退（不阻断生成）。
 
 /** 缩略图最长边像素上限。 */
 const THUMB_MAX = 512;
@@ -35,6 +39,8 @@ export interface ThumbnailResult {
  */
 export async function makeImageThumbnail(bytes: Uint8Array): Promise<ThumbnailResult | null> {
   try {
+    // 按需动态加载 imagescript（远端依赖移出静态依赖图，见文件头说明）
+    const { decode, Image } = await import('https://deno.land/x/imagescript@1.2.17/mod.ts');
     const decoded = await decode(bytes);
     if (!(decoded instanceof Image)) return null; // 动图等暂不生成缩略图
     const longest = Math.max(decoded.width, decoded.height);

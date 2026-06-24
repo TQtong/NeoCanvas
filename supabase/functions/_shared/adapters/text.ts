@@ -46,6 +46,21 @@ export function isLlmConfigured(): boolean {
   return Boolean(Deno.env.get('ORCHESTRATOR_LLM_API_KEY') ?? Deno.env.get('OPENAI_API_KEY'));
 }
 
+/** 编排 LLM 单次调用超时（ms）：避免外呼缓慢/挂起阻塞整个编排，超时由上层退化到确定性兜底。
+ * 取 30s：容器→SiliconFlow 的链路比本机直连慢，DeepSeek 出完整海报版式 JSON 需更宽裕的窗口。 */
+const LLM_TIMEOUT_MS = 30000;
+
+/** 带超时的 fetch：超时即 abort，调用方据此抛错并触发兜底，绝不无限挂起。 */
+async function llmFetch(url: string, init: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), LLM_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** 解析 OpenAI 风格 SSE 行，逐块产出增量文本。 */
 async function* parseSseDeltas(body: ReadableStream<Uint8Array>): AsyncGenerator<string> {
   const reader = body.getReader();
@@ -82,7 +97,7 @@ export const openaiLlmAdapter: LlmAdapter = {
   async *stream(messages, opts) {
     const { apiKey, model, baseUrl } = llmConfig();
     if (!apiKey) throw new ApiException('model_unavailable', '未配置编排 LLM 密钥');
-    const response = await fetch(`${baseUrl}/chat/completions`, {
+    const response = await llmFetch(`${baseUrl}/chat/completions`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -101,7 +116,7 @@ export const openaiLlmAdapter: LlmAdapter = {
   async complete(messages, opts) {
     const { apiKey, model, baseUrl } = llmConfig();
     if (!apiKey) throw new ApiException('model_unavailable', '未配置编排 LLM 密钥');
-    const response = await fetch(`${baseUrl}/chat/completions`, {
+    const response = await llmFetch(`${baseUrl}/chat/completions`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({

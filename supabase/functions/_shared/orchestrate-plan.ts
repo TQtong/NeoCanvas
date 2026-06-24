@@ -151,6 +151,7 @@ function planSystemPrompt(input: PlanInput): string {
       : '- 当前无参考素材，useReferences 一律为 false。',
     input.scene ? `- 当前创作场景：${input.scene}，请贴合该场景。` : '',
     '- prompt 用具体、可生成的中文描述，融入用户意图与场景。',
+    '- 若用户要海报 / banner / 封面 / 详情页 / 宣传图等平面设计物料：prompt 必须描述一张完整的版式化设计稿——主体清晰、有设计感的背景、统一配色、构图均衡、为标题与卖点预留充足留白与放置区，倾向竖版构图；而非一张写实照片。',
   ]
     .filter(Boolean)
     .join('\n');

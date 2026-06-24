@@ -23,6 +23,13 @@ import { ApiException, CORS_HEADERS, fail, handleCorsPreflight } from '../_share
 import { assertProjectOwner, createAdminClient, requireUser, type SupabaseClient } from '../_shared/supabase.ts';
 import { buildGenerationParams, defaultPlacementSize } from '../_shared/params.ts';
 import { buildPlan, type OrchestrationStep } from '../_shared/orchestrate-plan.ts';
+import {
+  buildPosterLayout,
+  buildPosterTextNodeRows,
+  detectPosterIntent,
+  POSTER_ASPECT_RATIO,
+  posterPlacement,
+} from '../_shared/poster.ts';
 import { createGeneration } from '../_shared/create-generation.ts';
 
 /** 流式编码一个 SSE 事件。 */
@@ -185,6 +192,72 @@ Deno.serve(async (request) => {
         const scene = (project?.initial_scene as Scene | null) ?? null;
 
         const selectedModality: Modality = modelRow?.modality ?? 'image';
+
+        // 海报意图：走「分层合成」——生成「无文字的版式化背景图」并叠加可编辑文字节点，
+        // 而非把文字烤进图里（原始文生图模型渲染中文文字不可靠，见 _shared/poster.ts）。
+        if (
+          detectPosterIntent(body.content) &&
+          selectedModality === 'image' &&
+          modelRow &&
+          modelRow.is_active
+        ) {
+          const layout = await buildPosterLayout(body.content, scene);
+          for (const piece of chunkText(layout.reply)) {
+            controller.enqueue(sse({ type: 'text_delta', delta: piece }));
+          }
+
+          // 背景图：竖版、显式无文字；落位居中
+          const placement = posterPlacement();
+          const params = buildGenerationParams(
+            'image',
+            { ...modelRow.default_params, aspectRatio: POSTER_ASPECT_RATIO },
+            [],
+          );
+          const genRequest: UnifiedGenerationRequest = {
+            projectId: body.projectId,
+            conversationId: body.conversationId,
+            messageId: body.messageId,
+            modality: 'image',
+            modelKey: body.modelKey,
+            prompt: layout.backgroundPrompt,
+            params,
+            idempotencyKey: body.messageId,
+            placement,
+          };
+          const bg = await createGeneration(admin, genRequest, userId);
+          controller.enqueue(
+            sse({ type: 'generation_started', generationId: bg.generationId, placeholderNodeId: bg.placeholderNodeId }),
+          );
+
+          // 文字节点（z≥10，叠在背景之上；稳定 id + upsert，连点/重试不重复建）
+          const textRows = buildPosterTextNodeRows(layout, placement, body.projectId, userId, body.messageId);
+          if (textRows.length > 0) {
+            const { error: nodesError } = await admin
+              .from('canvas_nodes')
+              .upsert(textRows, { onConflict: 'id' });
+            if (nodesError) {
+              throw new ApiException('internal_error', `创建海报文字节点失败：${nodesError.message}`);
+            }
+          }
+
+          // 持久化助手消息（锚定用户消息以去重）；并发冲突忽略
+          const { error: posterMsgError } = await admin.from('messages').insert({
+            id: assistantMessageId,
+            conversation_id: body.conversationId,
+            role: 'assistant',
+            content: layout.reply,
+            model_key: body.modelKey,
+            agent_mode: body.agentMode,
+            user_message_id: body.messageId,
+          });
+          if (posterMsgError && posterMsgError.code !== '23505') {
+            throw new ApiException('internal_error', `保存助手消息失败：${posterMsgError.message}`);
+          }
+
+          controller.enqueue(sse({ type: 'done', assistantMessageId, generationIds: [bg.generationId] }));
+          return;
+        }
+
         const availableModalities = await getActiveModalities(admin);
         const referencesSummary = [
           ...body.mentions.filter((m) => m.assetId).map((m) => ({ label: m.label, kind: m.nodeType })),
