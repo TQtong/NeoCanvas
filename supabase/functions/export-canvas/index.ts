@@ -12,6 +12,7 @@
 import { type ExportCanvasRequest } from '../_shared/types.ts';
 import { ApiException, exceptionToResponse, fail, handleCorsPreflight, ok } from '../_shared/response.ts';
 import { assertProjectOwner, createAdminClient, requireUser, type SupabaseClient } from '../_shared/supabase.ts';
+import { pngToJpeg, pngToPdf, svgToPng } from '../_shared/raster.ts';
 
 /** XML 转义。 */
 function esc(text: string): string {
@@ -158,19 +159,56 @@ Deno.serve(async (request) => {
     const vbW = maxX - minX + pad * 2;
     const vbH = maxY - minY + pad * 2;
 
+    // 校验格式与倍率
+    const format = body.options.format;
+    if (!['png', 'jpeg', 'svg', 'pdf'].includes(format)) {
+      throw new ApiException('invalid_params', `不支持的导出格式：${format}`);
+    }
+    const scale = Math.min(4, Math.max(1, Number.isFinite(body.options.scale) ? body.options.scale : 1));
+
+    // 公共中间产物：SVG（viewBox 固定为包围盒；width/height 按用途设置）
     const fragments = await Promise.all(rows.map((n) => renderNode(admin, n)));
-    const svg =
-      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vbX} ${vbY} ${vbW} ${vbH}" width="${Math.round(vbW * body.options.scale)}" height="${Math.round(vbH * body.options.scale)}">` +
+    const svgBody =
       `<rect x="${vbX}" y="${vbY}" width="${vbW}" height="${vbH}" fill="#ffffff"/>` +
       fragments.join('') +
       `</svg>`;
+    const svgOpen = (w: number, h: number) =>
+      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vbX} ${vbY} ${vbW} ${vbH}" width="${w}" height="${h}">`;
 
-    // 写入 Storage（导出件）
+    const pixelW = Math.max(1, Math.round(vbW * scale));
+    const pixelH = Math.max(1, Math.round(vbH * scale));
+
+    // 按格式产出对应件
+    let bytes: Uint8Array;
+    let ext: string;
+    let contentType: string;
+    if (format === 'svg') {
+      bytes = new TextEncoder().encode(svgOpen(pixelW, pixelH) + svgBody);
+      ext = 'svg';
+      contentType = 'image/svg+xml';
+    } else {
+      const png = await svgToPng(svgOpen(vbW, vbH) + svgBody, pixelW);
+      if (format === 'png') {
+        bytes = png;
+        ext = 'png';
+        contentType = 'image/png';
+      } else if (format === 'jpeg') {
+        bytes = await pngToJpeg(png);
+        ext = 'jpg';
+        contentType = 'image/jpeg';
+      } else {
+        bytes = await pngToPdf(png, pixelW, pixelH);
+        ext = 'pdf';
+        contentType = 'application/pdf';
+      }
+    }
+
+    // 写入 Storage（导出件），扩展名与 MIME 随格式而定
     const exportId = crypto.randomUUID();
-    const path = `${userId}/${body.projectId}/exports/${exportId}.svg`;
+    const path = `${userId}/${body.projectId}/exports/${exportId}.${ext}`;
     const { error: uploadError } = await admin.storage
       .from('generations')
-      .upload(path, new TextEncoder().encode(svg), { contentType: 'image/svg+xml', upsert: true });
+      .upload(path, bytes, { contentType, upsert: true });
     if (uploadError) {
       throw new ApiException('internal_error', `导出写入失败：${uploadError.message}`);
     }
@@ -182,7 +220,7 @@ Deno.serve(async (request) => {
     return ok({
       downloadUrl: signed.signedUrl,
       expiresAt: new Date(Date.now() + 1800 * 1000).toISOString(),
-      mimeType: 'image/svg+xml',
+      mimeType: contentType,
     });
   } catch (error) {
     return exceptionToResponse(error);

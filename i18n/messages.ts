@@ -30,6 +30,17 @@ const zhCN: MessageDictionary = {
   'common.untitled': 'Untitled',
   'common.copyLink': '复制链接',
   'common.linkCopied': '链接已复制',
+  'common.undo': '撤销',
+
+  'settings.title': '设置',
+  'settings.displayName': '显示名称',
+  'settings.displayNamePlaceholder': '你的名字',
+  'settings.language': '语言',
+  'settings.saved': '设置已保存',
+
+  'design.versionSwitcher': '版本 / 标签',
+  'design.noVersions': '暂无其他版本',
+  'design.newConversationStarted': '已开始新对话',
 
   'home.tagline': 'NeoCanvas 让设计更简单',
   'home.subtitle': '懂你的设计代理，帮你搞定一切',
@@ -42,6 +53,7 @@ const zhCN: MessageDictionary = {
   'home.updatedAt': '更新于 {date}',
   'home.loadMore': '加载更多',
   'home.deleteProjectConfirm': '确定删除该项目？删除后可在保留期内恢复。',
+  'home.projectDeleted': '项目已删除',
 
   'scene.design': 'Design',
   'scene.branding': 'Branding',
@@ -126,6 +138,17 @@ const en: MessageDictionary = {
   'common.untitled': 'Untitled',
   'common.copyLink': 'Copy link',
   'common.linkCopied': 'Link copied',
+  'common.undo': 'Undo',
+
+  'settings.title': 'Settings',
+  'settings.displayName': 'Display name',
+  'settings.displayNamePlaceholder': 'Your name',
+  'settings.language': 'Language',
+  'settings.saved': 'Settings saved',
+
+  'design.versionSwitcher': 'Version / tag',
+  'design.noVersions': 'No other versions',
+  'design.newConversationStarted': 'Started a new conversation',
 
   'home.tagline': 'NeoCanvas makes design simple',
   'home.subtitle': 'Your design agent that gets it done',
@@ -138,6 +161,7 @@ const en: MessageDictionary = {
   'home.updatedAt': 'Updated {date}',
   'home.loadMore': 'Load more',
   'home.deleteProjectConfirm': 'Delete this project? You can restore it during the retention window.',
+  'home.projectDeleted': 'Project deleted',
 
   'scene.design': 'Design',
   'scene.branding': 'Branding',

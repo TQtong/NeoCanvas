@@ -26,6 +26,8 @@ export interface ToastItem {
   variant: ToastVariant;
   /** 自动消失时长（毫秒），0 表示不自动消失。 */
   duration: number;
+  /** 可选行动按钮（如「撤销」）。 */
+  action?: { label: string; onClick: () => void };
 }
 
 interface ToastStore {
@@ -105,6 +107,18 @@ function ToastRow({ toast }: { toast: ToastItem }) {
         {toast.title ? <p className="text-sm font-medium">{toast.title}</p> : null}
         <p className="text-sm text-muted-foreground">{toast.message}</p>
       </div>
+      {toast.action ? (
+        <button
+          type="button"
+          onClick={() => {
+            toast.action?.onClick();
+            dismiss(toast.id);
+          }}
+          className="shrink-0 rounded-md px-2 py-1 text-sm font-medium text-accent transition-colors hover:bg-accent-muted"
+        >
+          {toast.action.label}
+        </button>
+      ) : null}
       <button
         type="button"
         aria-label="关闭提示"

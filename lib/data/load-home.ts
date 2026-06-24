@@ -11,7 +11,21 @@ import 'server-only';
 import type { ModelCatalogEntry, ProfileRow, ProjectSummary } from '@/types';
 import type { TypedSupabaseClient } from '@/lib/supabase/types';
 import { fetchModelCatalog } from '@/lib/models/catalog';
+import { signStorageRef, THUMBNAIL_WIDTH } from '@/lib/storage/signed-url';
 import { PROJECTS_PAGE_SIZE, projectRowToSummary } from './mappers';
+
+/** 为一批项目摘要的缩略图引用签名（projects.thumbnail_url 存为 "bucket/path"）。 */
+export async function signProjectThumbnails(
+  supabase: TypedSupabaseClient,
+  summaries: ProjectSummary[],
+): Promise<ProjectSummary[]> {
+  return Promise.all(
+    summaries.map(async (p) => ({
+      ...p,
+      thumbnailUrl: await signStorageRef(supabase, p.thumbnailUrl, THUMBNAIL_WIDTH),
+    })),
+  );
+}
 
 /** 主页初始数据包。 */
 export interface HomeData {
@@ -52,7 +66,7 @@ export async function loadHomeData(supabase: TypedSupabaseClient): Promise<HomeD
 
   return {
     profile: (profileResult.data as ProfileRow | null) ?? null,
-    projects: (projectsResult.data ?? []).map(projectRowToSummary),
+    projects: await signProjectThumbnails(supabase, (projectsResult.data ?? []).map(projectRowToSummary)),
     models,
   };
 }

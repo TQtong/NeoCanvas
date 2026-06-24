@@ -42,6 +42,31 @@ export async function createSignedUrl(
 }
 
 /**
+ * 把存储引用（形如 "bucket/path"）签名为可访问 URL。
+ *
+ * 用于项目缩略图：DB 触发器把图片 / 视频资产的 "bucket/path" 写入 projects.thumbnail_url，
+ * 读取时在此签名。空值返回 null；已是完整 http(s) URL（历史数据兼容）则原样返回。
+ *
+ * @param supabase - Supabase 客户端
+ * @param ref - 存储引用 "bucket/path" 或完整 URL 或 null
+ * @param transformWidth - 可选图片变换宽度（缩略图）
+ * @returns 签名 URL 或 null
+ */
+export async function signStorageRef(
+  supabase: TypedSupabaseClient,
+  ref: string | null,
+  transformWidth?: number,
+): Promise<string | null> {
+  if (!ref) return null;
+  if (/^https?:\/\//.test(ref)) return ref;
+  const slash = ref.indexOf('/');
+  if (slash === -1) return null;
+  const bucket = ref.slice(0, slash);
+  const path = ref.slice(slash + 1);
+  return createSignedUrl(supabase, bucket, path, SIGNED_URL_TTL, transformWidth);
+}
+
+/**
  * 把一条资产行解析为带访问 URL 的视图。
  *
  * @param supabase - Supabase 客户端

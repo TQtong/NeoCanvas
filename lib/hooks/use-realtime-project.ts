@@ -34,19 +34,36 @@ export function useRealtimeProject(
 
   useEffect(() => {
     const supabase = getBrowserSupabase();
-    const unsubscribe = subscribeProject(
-      supabase,
-      { projectId, conversationId },
-      {
-        onNodeChange: (change) => useCanvasStore.getState().applyRemoteNode(change),
-        onEdgeChange: (change) => useCanvasStore.getState().applyRemoteEdge(change),
-        onGenerationChange: (change) => useCanvasStore.getState().applyRemoteGeneration(change),
-        onMessageChange: (change) => useChatStore.getState().applyRemoteMessage(change),
-        onStatusChange: (s) => setStatus(s),
-      },
-    );
+    let unsubscribe = () => {};
+    let cancelled = false;
+
+    void (async () => {
+      // 订阅前先把当前会话的用户 JWT 绑定到 Realtime socket，确保频道以 authenticated 身份
+      // 建立 —— 否则首轮以 anon 做逐行 RLS 授权，所有变更被静默过滤（见 lib/supabase/client）。
+      const { data } = await supabase.auth.getSession();
+      if (cancelled) return;
+      await supabase.realtime.setAuth(data.session?.access_token ?? null);
+      if (cancelled) return;
+
+      unsubscribe = subscribeProject(
+        supabase,
+        { projectId, conversationId },
+        {
+          onNodeChange: (change) => useCanvasStore.getState().applyRemoteNode(change),
+          onEdgeChange: (change) => useCanvasStore.getState().applyRemoteEdge(change),
+          // 生成变更同时驱动画布占位卡片与对话「生成中」徽标
+          onGenerationChange: (change) => {
+            useCanvasStore.getState().applyRemoteGeneration(change);
+            useChatStore.getState().applyRemoteGeneration(change);
+          },
+          onMessageChange: (change) => useChatStore.getState().applyRemoteMessage(change),
+          onStatusChange: (s) => setStatus(s),
+        },
+      );
+    })();
 
     return () => {
+      cancelled = true;
       unsubscribe();
       setStatus('closed');
     };

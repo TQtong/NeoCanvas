@@ -9,12 +9,13 @@
  * @module components/canvas/LayersList
  */
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useReactFlow } from '@xyflow/react';
 import {
   ChevronDown,
   ChevronUp,
   Frame,
+  GripVertical,
   ImageIcon,
   PenLine,
   Shapes,
@@ -72,12 +73,35 @@ export function LayersList() {
   const setSelection = useCanvasStore((s) => s.setSelection);
   const moveForward = useCanvasStore((s) => s.moveForward);
   const moveBackward = useCanvasStore((s) => s.moveBackward);
+  const setLayerOrder = useCanvasStore((s) => s.setLayerOrder);
+
+  // 拖拽改序瞬态
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [overId, setOverId] = useState<string | null>(null);
 
   // 按 z_index 倒序（顶层在上）
   const ordered = useMemo(
     () => [...nodes].sort((a, b) => (b.zIndex ?? 0) - (a.zIndex ?? 0)),
     [nodes],
   );
+
+  // 把 draggingId 移动到 targetId 之前（自顶向下视图）后整体重排 z_index
+  const handleDrop = (targetId: string) => {
+    if (!draggingId || draggingId === targetId) {
+      setDraggingId(null);
+      setOverId(null);
+      return;
+    }
+    const ids = ordered.map((n) => n.id);
+    const from = ids.indexOf(draggingId);
+    if (from === -1) return;
+    ids.splice(from, 1);
+    const insertAt = ids.indexOf(targetId);
+    ids.splice(insertAt === -1 ? ids.length : insertAt, 0, draggingId);
+    setLayerOrder(ids);
+    setDraggingId(null);
+    setOverId(null);
+  };
 
   if (ordered.length === 0) {
     return <div className="px-3 py-6 text-center text-sm text-muted-foreground">画布暂无元素</div>;
@@ -91,11 +115,31 @@ export function LayersList() {
         return (
           <div
             key={node.id}
+            draggable
+            onDragStart={(event) => {
+              setDraggingId(node.id);
+              event.dataTransfer.effectAllowed = 'move';
+            }}
+            onDragOver={(event) => {
+              event.preventDefault();
+              if (overId !== node.id) setOverId(node.id);
+            }}
+            onDrop={(event) => {
+              event.preventDefault();
+              handleDrop(node.id);
+            }}
+            onDragEnd={() => {
+              setDraggingId(null);
+              setOverId(null);
+            }}
             className={cn(
               'group flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm transition-colors',
               selected ? 'bg-accent-muted text-accent' : 'hover:bg-muted',
+              draggingId === node.id && 'opacity-50',
+              overId === node.id && draggingId && draggingId !== node.id && 'ring-1 ring-accent',
             )}
           >
+            <GripVertical className="size-3.5 shrink-0 cursor-grab text-muted-foreground opacity-40 group-hover:opacity-70" />
             <button
               type="button"
               className="flex min-w-0 flex-1 items-center gap-2 text-left"

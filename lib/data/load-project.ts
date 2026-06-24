@@ -17,6 +17,7 @@ import type {
   ProjectRow,
 } from '@/types';
 import type { TypedSupabaseClient } from '@/lib/supabase/types';
+import { MESSAGES_PAGE_SIZE } from './mappers';
 
 /** 设计页初始数据包。 */
 export interface ProjectBundle {
@@ -28,8 +29,10 @@ export interface ProjectBundle {
   edges: CanvasEdgeRow[];
   /** 主会话（最早创建的一条）。 */
   conversation: ConversationRow | null;
-  /** 主会话的历史消息（按时间升序）。 */
+  /** 主会话的最近一页历史消息（按时间升序）。 */
   messages: MessageRow[];
+  /** 是否还有更早的历史消息可加载（keyset 分页）。 */
+  hasMoreMessages: boolean;
 }
 
 /**
@@ -69,13 +72,19 @@ export async function loadProjectBundle(
 
   const conversation = conversationResult.data?.[0] ?? null;
   let messages: MessageRow[] = [];
+  let hasMoreMessages = false;
   if (conversation) {
+    // 取最近一页（DESC + 主键决胜），再翻转为升序展示；命中复合索引、避免长会话一次全量
     const { data: msgs } = await supabase
       .from('messages')
       .select('*')
       .eq('conversation_id', conversation.id)
-      .order('created_at', { ascending: true });
-    messages = msgs ?? [];
+      .order('created_at', { ascending: false })
+      .order('id', { ascending: false })
+      .limit(MESSAGES_PAGE_SIZE);
+    const page = msgs ?? [];
+    hasMoreMessages = page.length >= MESSAGES_PAGE_SIZE;
+    messages = page.slice().reverse();
   }
 
   return {
@@ -84,6 +93,7 @@ export async function loadProjectBundle(
     edges: edgesResult.data ?? [],
     conversation,
     messages,
+    hasMoreMessages,
   };
 }
 

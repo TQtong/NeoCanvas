@@ -11,7 +11,13 @@
  */
 
 import { redirect } from 'next/navigation';
-import type { ApiResponse, CreateProjectRequest, CreateProjectResponse, Scene } from '@/types';
+import type {
+  ApiResponse,
+  CreateProjectRequest,
+  CreateProjectResponse,
+  MessageAttachment,
+  Scene,
+} from '@/types';
 import { createServerSupabase } from '@/lib/supabase/server';
 
 /** 默认模型键（与 model_catalog 默认选中一致）。 */
@@ -53,6 +59,19 @@ export async function createProjectAction(formData: FormData): Promise<void> {
   const modelKey = (formData.get('modelKey') as string | null) || DEFAULT_MODEL_KEY;
   const sceneRaw = (formData.get('scene') as string | null) ?? '';
   const scene = VALID_SCENES.has(sceneRaw) ? (sceneRaw as Scene) : null;
+  const clientRequestId = (formData.get('clientRequestId') as string | null) || undefined;
+
+  // 客户端已把附件上传为资产并序列化其引用随表单提交
+  let attachments: MessageAttachment[] | undefined;
+  const attachmentsRaw = formData.get('attachments') as string | null;
+  if (attachmentsRaw) {
+    try {
+      const parsed = JSON.parse(attachmentsRaw) as MessageAttachment[];
+      if (Array.isArray(parsed) && parsed.length > 0) attachments = parsed;
+    } catch {
+      // 非法 JSON 忽略，不阻断创建
+    }
+  }
 
   if (!prompt) {
     // 空想法不创建（前端发送按钮已禁用，此为服务端兜底）
@@ -64,6 +83,8 @@ export async function createProjectAction(formData: FormData): Promise<void> {
     modelKey,
     scene,
     generateOnCreate: true,
+    clientRequestId,
+    attachments,
   });
   redirect(`/p/${projectId}`);
 }

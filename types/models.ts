@@ -58,6 +58,8 @@ export interface ModelDefaultParams {
   motionStrength?: number;
   temperature?: number;
   maxTokens?: number;
+  /** 提供商侧端点 / 模型 id 覆盖（见 docs/SETUP.md 与 `resolveProviderModel`）。 */
+  providerModel?: string;
 }
 
 /**

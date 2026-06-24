@@ -20,6 +20,8 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import type { MessageAttachment, MessageMention, MessageView, NodeType } from '@/types';
+import { TERMINAL_GENERATION_STATUSES } from '@/types';
+import { useChatStore } from '@/stores/chat-store';
 import { useTranslation } from '@/i18n';
 import { Spinner } from '@/components/ui/spinner';
 import { cn } from '@/lib/utils/cn';
@@ -91,7 +93,16 @@ export function MessageBubble({ message }: { message: MessageView }) {
   const onAccent = isUser;
   const hasAttachments = message.attachments.length > 0;
   const hasMentions = message.mentions.length > 0;
-  const isGenerating = (message.generationIds?.length ?? 0) > 0;
+  // 「生成中」徽标：本条消息触发的生成里，只要还有任一未达终态（或状态未知）就显示；
+  // 全部 succeeded/failed/cancelled 后由实时回流的状态收敛而自动消失（见 chat-store）。
+  const generationStatus = useChatStore((s) => s.generationStatus);
+  const genIds = message.generationIds ?? [];
+  const isGenerating =
+    genIds.length > 0 &&
+    genIds.some((id) => {
+      const status = generationStatus[id];
+      return status === undefined || !TERMINAL_GENERATION_STATUSES.has(status);
+    });
 
   return (
     <div className={cn('flex w-full', isUser ? 'justify-end' : 'justify-start')}>

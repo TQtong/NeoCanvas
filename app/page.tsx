@@ -8,10 +8,10 @@
  */
 
 import { redirect } from 'next/navigation';
-import { Sparkles } from 'lucide-react';
 import { createServerSupabase } from '@/lib/supabase/server';
 import { loadHomeData } from '@/lib/data/load-home';
 import { CreatePromptBox } from '@/components/home/CreatePromptBox';
+import { HomeHero } from '@/components/home/HomeHero';
 import { RecentProjectsGrid } from '@/components/home/RecentProjectsGrid';
 import { AvatarMenu } from '@/components/shared/AvatarMenu';
 
@@ -40,18 +40,8 @@ export default async function HomePage() {
       </div>
 
       <div className="mx-auto flex w-full max-w-3xl flex-col items-center px-6 pb-24 pt-20 sm:pt-28">
-        {/* 标语层 */}
-        <div className="mb-8 flex flex-col items-center text-center">
-          <div className="mb-5 flex size-14 items-center justify-center rounded-2xl bg-accent text-accent-foreground shadow-soft">
-            <Sparkles className="size-7" />
-          </div>
-          <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
-            NeoCanvas <span className="text-muted-foreground">让设计更简单</span>
-          </h1>
-          <p className="mt-3 text-sm text-muted-foreground sm:text-base">
-            懂你的设计代理，帮你搞定一切
-          </p>
-        </div>
+        {/* 标语层（客户端，随语言切换实时更新） */}
+        <HomeHero />
 
         {/* 创作输入层 */}
         <div className="w-full">
@@ -59,9 +49,8 @@ export default async function HomePage() {
         </div>
       </div>
 
-      {/* 最近项目层 */}
+      {/* 最近项目层（标题在网格内随语言切换） */}
       <section className="mx-auto w-full max-w-6xl px-6 pb-24">
-        <h2 className="mb-5 text-lg font-medium">最近项目</h2>
         <RecentProjectsGrid initialProjects={projects} />
       </section>
     </main>

@@ -173,8 +173,26 @@ export type PollResult =
   | { status: 'failed'; error: string };
 
 // ---------------------------------------------------------------------------
-// 模型能力画像（与 types/models.ts 一致，仅边缘侧校验所需子集）
+// 模型能力画像 / 默认参数（与 types/models.ts 逐字一致）
 // ---------------------------------------------------------------------------
+
+/** 模型默认生成参数（model_catalog.default_params 的结构化形状，全部可选）。 */
+export interface ModelDefaultParams {
+  aspectRatio?: AspectRatio;
+  width?: number;
+  height?: number;
+  count?: number;
+  quality?: ImageQuality;
+  resolution?: string;
+  durationSec?: number;
+  fps?: number;
+  motionStrength?: number;
+  temperature?: number;
+  maxTokens?: number;
+  /** 提供商侧端点 / 模型 id 覆盖（见 docs/SETUP.md 与 `resolveProviderModel`）。 */
+  providerModel?: string;
+}
+
 export interface ModelCapabilities {
   aspectRatios: AspectRatio[];
   sizes: Array<{ width: number; height: number; label: string }>;
@@ -261,7 +279,7 @@ export interface ModelCatalogRow {
   provider: Provider;
   modality: Modality;
   capabilities: ModelCapabilities;
-  default_params: Record<string, unknown>;
+  default_params: ModelDefaultParams;
   is_active: boolean;
 }
 
@@ -283,5 +301,7 @@ export interface GenerationRow {
   placeholder_node_id: string | null;
   error: string | null;
   idempotency_key: string | null;
+  moderation_status: string;
+  moderation_reason: string | null;
   completed_at: string | null;
 }

@@ -27,10 +27,17 @@ enabled = true
 enabled = true
 file_size_limit = "500MiB"
 
+# ---- 本地日志分析（Logflare + Vector）----
+# 在 Windows/Docker Desktop 上，vector 读取 docker.sock 常因「Connection refused」反复重启，
+# 进而拖垮 analytics 与 edge_runtime（边缘函数对外请求会报 name resolution failed）。
+# 本地开发不需要日志分析管线，关闭它以让 edge_runtime 独立、稳定运行。
+[analytics]
+enabled = false
+
 [auth]
 enabled = true
-site_url = "http://localhost:3000"
-additional_redirect_urls = ["http://localhost:3000/auth/callback"]
+site_url = "http://localhost:3100"
+additional_redirect_urls = ["http://localhost:3100/auth/callback"]
 jwt_expiry = 3600
 enable_refresh_token_rotation = true
 enable_signup = true
@@ -38,6 +45,18 @@ enable_signup = true
 [auth.email]
 enable_signup = true
 enable_confirmations = false
+
+# ---- 第三方 OAuth：Google ----
+# 启用前置：在 Google Cloud Console 建一个「Web 应用」OAuth 客户端，并把下列回调地址
+# 加入「已授权的重定向 URI」（注意是 Supabase 的回调，不是应用的）：
+#   http://127.0.0.1:54321/auth/v1/callback
+# 凭据从项目根目录 .env 的 GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_SECRET 读取。
+# 修改后需 `npm run db:stop && npm run db:start` 重启生效。
+[auth.external.google]
+enabled = true
+client_id = "env(GOOGLE_OAUTH_CLIENT_ID)"
+secret = "env(GOOGLE_OAUTH_SECRET)"
+skip_nonce_check = true
 
 # ---- Edge Functions ----
 [functions.create-project]

@@ -141,6 +141,7 @@ export function CanvasContainer({ initialViewport }: CanvasContainerProps) {
         zoomOnScroll
         zoomOnPinch
         selectNodesOnDrag={false}
+        onlyRenderVisibleElements
         proOptions={{ hideAttribution: true }}
         deleteKeyCode={['Delete', 'Backspace']}
         multiSelectionKeyCode={['Shift', 'Meta', 'Control']}

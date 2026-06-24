@@ -36,12 +36,3 @@ export function uuid(): string {
 export function idempotencyKey(): string {
   return uuid();
 }
-
-/**
- * 生成一个客户端回声标记，用于回声抑制：本端写入携带此标记，回流时据此识别自身变更。
- *
- * @returns 短随机串
- */
-export function echoToken(): string {
-  return uuid();
-}

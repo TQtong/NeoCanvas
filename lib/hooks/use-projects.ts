@@ -13,6 +13,7 @@ import { useCallback, useState } from 'react';
 import type { ProjectSummary } from '@/types';
 import { getBrowserSupabase } from '@/lib/supabase/client';
 import { fromSupabaseError } from '@/lib/edge/errors';
+import { signStorageRef, THUMBNAIL_WIDTH } from '@/lib/storage/signed-url';
 import { PROJECTS_PAGE_SIZE, projectRowToSummary } from '@/lib/data/mappers';
 
 export { PROJECTS_PAGE_SIZE };
@@ -43,6 +44,8 @@ export interface UseProjects {
   rename: (id: string, title: string) => Promise<void>;
   /** 软删除项目。 */
   softDelete: (id: string) => Promise<void>;
+  /** 恢复一个被软删的项目（撤销删除）。 */
+  restore: (project: ProjectSummary) => Promise<void>;
 }
 
 /**
@@ -78,7 +81,13 @@ export function useProjects(initialProjects: ProjectSummary[] = []): UseProjects
     if (queryError) {
       throw fromSupabaseError(queryError);
     }
-    return (data ?? []).map(projectRowToSummary);
+    // 缩略图引用（"bucket/path"）在客户端签名为可访问 URL
+    return Promise.all(
+      (data ?? []).map(async (row) => {
+        const summary = projectRowToSummary(row);
+        return { ...summary, thumbnailUrl: await signStorageRef(supabase, summary.thumbnailUrl, THUMBNAIL_WIDTH) };
+      }),
+    );
   }, []);
 
   const loadMore = useCallback(async () => {
@@ -139,5 +148,22 @@ export function useProjects(initialProjects: ProjectSummary[] = []): UseProjects
     }
   }, []);
 
-  return { projects, loading, hasMore, error, loadMore, refresh, prepend, rename, softDelete };
+  const restore = useCallback(async (project: ProjectSummary) => {
+    const supabase = getBrowserSupabase();
+    // 乐观恢复：按更新时间倒序插回（与列表排序一致）
+    setProjects((prev) =>
+      prev.some((p) => p.id === project.id)
+        ? prev
+        : [project, ...prev].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
+    );
+    const { error: updateError } = await supabase
+      .from('projects')
+      .update({ is_deleted: false })
+      .eq('id', project.id);
+    if (updateError) {
+      throw fromSupabaseError(updateError);
+    }
+  }, []);
+
+  return { projects, loading, hasMore, error, loadMore, refresh, prepend, rename, softDelete, restore };
 }

@@ -27,7 +27,9 @@ export interface PublicEnv {
 export function getPublicEnv(): PublicEnv {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000';
+  // 用 || 而非 ??：在 CI/部署平台上「声明但未赋值」的变量会是空串，?? 不会回退导致
+  // OAuth 回调地址变成相对路径而握手失败。trim 后为空一律回退到本地默认地址。
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL?.trim() || 'http://localhost:3000';
 
   if (!supabaseUrl || !supabaseAnonKey) {
     throw new Error(

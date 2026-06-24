@@ -8,6 +8,7 @@ import {
   type GenerationParams,
   type ImageGenerationParams,
   type Modality,
+  type ModelDefaultParams,
   type ReferenceMaterial,
   type Scene,
   type VideoGenerationParams,
@@ -50,7 +51,7 @@ export function sceneGenerationCount(scene: Scene | null): number {
  */
 export function buildGenerationParams(
   modality: Modality,
-  defaultParams: Record<string, unknown>,
+  defaultParams: ModelDefaultParams,
   references: ReferenceMaterial[],
 ): GenerationParams {
   if (modality === 'video') {

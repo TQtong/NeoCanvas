@@ -68,10 +68,16 @@ export function CanvasBottomToolbar({ onUploadImage, onAiTool }: CanvasBottomToo
   const { t } = useTranslation();
   const activeTool = useCanvasStore((s) => s.activeTool);
   const setTool = useCanvasStore((s) => s.setTool);
+  const cycleBackground = useCanvasStore((s) => s.cycleBackground);
 
   const handleCanvasTool = (tool: CanvasTool) => {
     if (tool === 'upload-image') {
       onUploadImage();
+      return;
+    }
+    // 画板 / 网格工具：已激活时再次点击循环切换背景网格三态（点状 / 线状 / 无）
+    if (tool === 'frame' && activeTool === 'frame') {
+      cycleBackground();
       return;
     }
     setTool(tool);

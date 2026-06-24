@@ -14,7 +14,7 @@
  * @module components/canvas/TransformableNode
  */
 
-import { useCallback, useRef, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { NodeResizer, useReactFlow } from '@xyflow/react';
 import { RotateCw } from 'lucide-react';
 import { useCanvasStore } from '@/stores/canvas-store';
@@ -65,6 +65,21 @@ export function TransformableNode({
   const updateNodeData = useCanvasStore((s) => s.updateNodeData);
   const rotatingRef = useRef(false);
 
+  // 等比 / 自由缩放：按住 Shift 反转该类型的默认锁定（第 04 篇 4.5）。仅选中时监听，避免
+  // 每个节点都常驻一对全局监听。
+  const [shiftHeld, setShiftHeld] = useState(false);
+  useEffect(() => {
+    if (!selected || !enableResize) return;
+    const onKey = (event: KeyboardEvent) => setShiftHeld(event.shiftKey);
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('keyup', onKey);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('keyup', onKey);
+    };
+  }, [selected, enableResize]);
+  const effectiveKeepAspect = shiftHeld ? !keepAspectRatio : keepAspectRatio;
+
   /** 旋转手柄拖拽：按指针相对节点中心的角度写入 rotation。 */
   const handleRotateStart = useCallback(
     (event: React.PointerEvent) => {
@@ -112,7 +127,7 @@ export function TransformableNode({
           isVisible={selected}
           minWidth={minWidth}
           minHeight={minHeight}
-          keepAspectRatio={keepAspectRatio}
+          keepAspectRatio={effectiveKeepAspect}
           lineClassName="!border-accent"
           handleClassName="!size-2.5 !rounded-sm !border-accent !bg-card"
         />

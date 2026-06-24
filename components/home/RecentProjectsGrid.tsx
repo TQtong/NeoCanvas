@@ -35,8 +35,9 @@ const SKELETON_COUNT = 4;
  */
 export function RecentProjectsGrid({ initialProjects }: RecentProjectsGridProps) {
   const { t } = useTranslation();
-  const { error: toastError } = useToast();
-  const { projects, loading, hasMore, loadMore, rename, softDelete } = useProjects(initialProjects);
+  const { toast, error: toastError } = useToast();
+  const { projects, loading, hasMore, loadMore, rename, softDelete, restore } =
+    useProjects(initialProjects);
 
   // 重命名：交由 hook 做乐观更新，失败时回退并提示
   const handleRename = (id: string, title: string) => {
@@ -45,11 +46,28 @@ export function RecentProjectsGrid({ initialProjects }: RecentProjectsGridProps)
     });
   };
 
-  // 软删除：同上
+  // 软删除：删除后弹出可「撤销」的提示，保留期内一键恢复
   const handleDelete = (id: string) => {
-    void softDelete(id).catch((err) => {
-      toastError(err instanceof Error ? err.message : t('error.internal_error'));
-    });
+    const project = projects.find((p) => p.id === id);
+    void softDelete(id)
+      .then(() => {
+        if (!project) return;
+        toast(t('home.projectDeleted'), {
+          variant: 'info',
+          duration: 6000,
+          action: {
+            label: t('common.undo'),
+            onClick: () => {
+              void restore(project).catch((err) => {
+                toastError(err instanceof Error ? err.message : t('error.internal_error'));
+              });
+            },
+          },
+        });
+      })
+      .catch((err) => {
+        toastError(err instanceof Error ? err.message : t('error.internal_error'));
+      });
   };
 
   // 空态：无任何项目且非加载中时，仅保留新建卡片并给出引导
@@ -57,6 +75,7 @@ export function RecentProjectsGrid({ initialProjects }: RecentProjectsGridProps)
 
   return (
     <section className="flex flex-col gap-4">
+      <h2 className="text-lg font-medium">{t('home.recentProjects')}</h2>
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
         {/* 首位固定为新建入口 */}
         <NewProjectCard />

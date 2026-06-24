@@ -19,16 +19,19 @@ import { Button } from '@/components/ui/button';
 export interface LoginFormProps {
   /** 登录成功后的回跳路径。 */
   redirectTo: string;
+  /** 初始错误提示（如认证回调失败回跳时携带）。 */
+  initialError?: string;
 }
 
 /**
  * 登录表单组件。
  */
-export function LoginForm({ redirectTo }: LoginFormProps) {
+export function LoginForm({ redirectTo, initialError }: LoginFormProps) {
   const [email, setEmail] = useState('');
   const [sending, setSending] = useState(false);
+  const [oauthLoading, setOauthLoading] = useState(false);
   const [sent, setSent] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(initialError ?? null);
 
   const callbackUrl = () => {
     const { siteUrl } = getPublicEnv();
@@ -56,11 +59,27 @@ export function LoginForm({ redirectTo }: LoginFormProps) {
 
   const onOAuth = async () => {
     setError(null);
-    const { error: oauthError } = await getBrowserSupabase().auth.signInWithOAuth({
-      provider: 'google',
-      options: { redirectTo: callbackUrl() },
-    });
-    if (oauthError) setError(oauthError.message);
+    // PKCE 流程需用 Web Crypto（crypto.subtle）计算 code challenge，而它仅在安全上下文可用：
+    // HTTPS、或 localhost / 127.0.0.1。经局域网 IP 等非安全来源以明文 HTTP 访问时其为
+    // undefined，signInWithOAuth 会在跳转前抛错。此处先行拦截并给出可操作提示，避免未捕获
+    // 的 Promise 拒绝直接打崩页面（这正是之前“点击谷歌登录页面崩溃”的根因）。
+    if (typeof window !== 'undefined' && !window.isSecureContext) {
+      setError('当前页面非安全上下文，Google 登录不可用。请通过 https:// 或 http://localhost:3000 打开本页后重试。');
+      return;
+    }
+    setOauthLoading(true);
+    try {
+      const { error: oauthError } = await getBrowserSupabase().auth.signInWithOAuth({
+        provider: 'google',
+        options: { redirectTo: callbackUrl() },
+      });
+      // signInWithOAuth 可能抛错（如配置/网络异常），也可能返回 error 字段，两路统一处理
+      if (oauthError) throw oauthError;
+      // 成功时浏览器整页跳转至 Google 授权页，下方代码通常不再执行（spinner 保持至跳转）
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Google 登录失败，请重试');
+      setOauthLoading(false);
+    }
   };
 
   return (
@@ -90,7 +109,7 @@ export function LoginForm({ redirectTo }: LoginFormProps) {
             placeholder="you@example.com"
             className="h-11 rounded-xl border border-border bg-background px-4 text-sm outline-none transition-colors focus:border-accent focus:ring-2 focus:ring-ring"
           />
-          <Button type="submit" size="lg" loading={sending}>
+          <Button type="submit" size="lg" loading={sending} disabled={oauthLoading}>
             发送登录链接
           </Button>
 
@@ -100,7 +119,14 @@ export function LoginForm({ redirectTo }: LoginFormProps) {
             <div className="h-px flex-1 bg-border" />
           </div>
 
-          <Button type="button" variant="outline" size="lg" onClick={onOAuth}>
+          <Button
+            type="button"
+            variant="outline"
+            size="lg"
+            onClick={onOAuth}
+            loading={oauthLoading}
+            disabled={sending}
+          >
             使用 Google 登录
           </Button>
         </form>

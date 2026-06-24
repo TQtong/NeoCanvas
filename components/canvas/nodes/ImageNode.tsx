@@ -9,7 +9,7 @@
  * @module components/canvas/nodes/ImageNode
  */
 
-import { memo } from 'react';
+import { memo, useEffect, useState } from 'react';
 import type { NodeProps } from '@xyflow/react';
 import { ImageOff } from 'lucide-react';
 import type { ImageFilters, ImageNodeData } from '@/types';
@@ -49,6 +49,11 @@ function cropStyle(data: ImageNodeData): React.CSSProperties {
 
 function ImageNodeComponent({ id, data, selected }: NodeProps<CanvasFlowNode>) {
   const d = data as ImageNodeData;
+  // 渐进加载：原图 onLoad 前以模糊缩略图垫底；媒体源切换（占位转化 / 替换）时重置
+  const [loaded, setLoaded] = useState(false);
+  useEffect(() => {
+    setLoaded(false);
+  }, [d.src]);
 
   return (
     <TransformableNode id={id} selected={Boolean(selected)} rotation={d.rotation} keepAspectRatio>
@@ -57,15 +62,32 @@ function ImageNodeComponent({ id, data, selected }: NodeProps<CanvasFlowNode>) {
         style={{ borderRadius: d.cornerRadius, opacity: d.opacity }}
       >
         {d.src ? (
-          // 画布媒体经签名 URL 加载，禁用 next/image 以避免重复优化（已由 Storage 变换处理）
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={d.src}
-            alt={d.alt}
-            draggable={false}
-            className="select-none"
-            style={{ ...cropStyle(d), filter: filtersToCss(d.filters) }}
-          />
+          <>
+            {/* 缩略图占位层：原图就绪前以模糊缩略图先行呈现，提升大图加载观感 */}
+            {d.thumbnailSrc && !loaded ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={d.thumbnailSrc}
+                alt=""
+                aria-hidden
+                draggable={false}
+                className="absolute inset-0 select-none"
+                style={{ ...cropStyle(d), filter: `${filtersToCss(d.filters)} blur(12px)`, transform: 'scale(1.06)' }}
+              />
+            ) : null}
+            {/* 原图：经签名 URL 加载，禁用 next/image（已由 Storage 变换处理）；加载完成淡入 */}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={d.src}
+              alt={d.alt}
+              draggable={false}
+              onLoad={() => setLoaded(true)}
+              className="absolute inset-0 select-none transition-opacity duration-300"
+              style={{ ...cropStyle(d), filter: filtersToCss(d.filters), opacity: loaded ? 1 : 0 }}
+            />
+            {/* 无缩略图且原图未就绪时退回骨架 */}
+            {!loaded && !d.thumbnailSrc ? <Skeleton className="absolute inset-0 size-full" /> : null}
+          </>
         ) : d.assetId ? (
           <Skeleton className="size-full" />
         ) : (

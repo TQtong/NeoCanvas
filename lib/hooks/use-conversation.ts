@@ -140,11 +140,14 @@ export function useConversation(): UseConversation {
             break;
           case 'error':
             if (assistantId) {
+              // 保留已流式产出的文本，把错误追加其后，避免清空用户已看到的内容
+              const existing =
+                useChatStore.getState().messages.find((m) => m.id === assistantId)?.content ?? '';
+              const errText =
+                translate(locale, `error.${event.code}`) +
+                (event.message ? `\n${event.message}` : '');
               chat.finalizeAssistant(assistantId, {
-                content:
-                  (assistantId ? '' : '') +
-                  translate(locale, `error.${event.code}`) +
-                  (event.message ? `\n${event.message}` : ''),
+                content: existing ? `${existing}\n\n${errText}` : errText,
               });
             }
             break;
@@ -155,7 +158,12 @@ export function useConversation(): UseConversation {
     } catch (err) {
       const apiErr = normalizeUnknownError(err);
       if (assistantId) {
-        chat.finalizeAssistant(assistantId, { content: translate(locale, `error.${apiErr.code}`) });
+        const existing =
+          useChatStore.getState().messages.find((m) => m.id === assistantId)?.content ?? '';
+        const errText = translate(locale, `error.${apiErr.code}`);
+        chat.finalizeAssistant(assistantId, {
+          content: existing ? `${existing}\n\n${errText}` : errText,
+        });
       }
       throw apiErr;
     } finally {

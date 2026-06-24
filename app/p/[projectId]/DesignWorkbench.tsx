@@ -107,13 +107,16 @@ function WorkbenchInner({ bundle, models }: DesignWorkbenchProps) {
     [bundle.project.id, reactFlow, toast, userId],
   );
 
-  // AI 工具：切换到匹配模态的模型并聚焦对话
+  // AI 工具：调起对应模态的生成——切到该模态模型、置为「纯生成」模式，展开对话并聚焦提示词
+  // 输入（第 04 篇 4.9 的「唤起轻量提示词输入再提交」一途），提交后复用统一生成流水线。
   const onAiTool = useCallback(
     (modality: 'image' | 'video' | 'text') => {
       const match = models.find((m) => m.modality === modality) ?? models[0];
-      if (match) useChatStore.getState().setModel(match.key);
+      const chat = useChatStore.getState();
+      if (match) chat.setModel(match.key);
+      chat.setAgentMode('generate');
       setPanelOpen(true);
-      useChatStore.getState().requestFocus();
+      chat.requestFocus();
     },
     [models],
   );
@@ -178,6 +181,7 @@ export function DesignWorkbench({ bundle, models }: DesignWorkbenchProps) {
       messages: bundle.messages.map(messageRowToView),
       selectedModelKey: bundle.project.default_model_key,
       agentMode: 'generate',
+      hasMoreMessages: bundle.hasMoreMessages,
     });
   }
 

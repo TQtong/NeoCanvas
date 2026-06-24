@@ -13,7 +13,7 @@
 import type { ApiResponse } from '@/types';
 import { getPublicEnv } from '@/lib/env';
 import { getBrowserSupabase } from '@/lib/supabase/client';
-import { ApiClientError, normalizeUnknownError } from './errors';
+import { ApiClientError, fromEdgeInvokeError } from './errors';
 
 /**
  * 调用一个返回统一封套的 Edge Function。
@@ -32,7 +32,8 @@ export async function invokeEdge<TReq, TRes>(fnName: string, body: TReq): Promis
   });
 
   if (error) {
-    throw normalizeUnknownError(error);
+    // 从 FunctionsHttpError.context 恢复结构化错误码，避免塌缩为 internal_error
+    throw await fromEdgeInvokeError(error);
   }
   if (!data) {
     throw new ApiClientError({ code: 'internal_error', message: '函数无响应' });

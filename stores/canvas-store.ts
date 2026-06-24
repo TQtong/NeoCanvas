@@ -29,6 +29,7 @@ import {
   rowToEdge,
   rowToNode,
 } from '@/lib/canvas/node-mapper';
+import { generationRowToView } from '@/lib/data/mappers';
 import { DEFAULT_VIEWPORT, PASTE_OFFSET } from '@/lib/canvas/constants';
 import { uuid } from '@/lib/utils/id';
 
@@ -105,6 +106,8 @@ export interface CanvasState {
   _deletedEdgeIds: Set<string>;
   /** 节点服务端版本（updated_at），用于回声抑制与最后写入胜出。 */
   _nodeVersions: Record<string, string>;
+  /** 已 flush、写回未确认的节点 id（在途持久化）；用于抑制自身写入的回声。 */
+  _pendingNodeIds: Set<string>;
   /** 视口是否脏。 */
   _viewportDirty: boolean;
 
@@ -153,6 +156,8 @@ export interface CanvasState {
   setEditingNode: (id: string | null) => void;
   setViewport: (viewport: Viewport, options?: { persist?: boolean }) => void;
   setBackground: (background: Partial<CanvasBackgroundSettings>) => void;
+  /** 在「点状 → 线状 → 无」三态间循环切换背景网格（画板 / 网格工具）。 */
+  cycleBackground: () => void;
   toggleLayers: () => void;
   setContinuousCreate: (value: boolean) => void;
 
@@ -162,6 +167,8 @@ export interface CanvasState {
   moveForward: (ids: string[]) => void;
   moveBackward: (ids: string[]) => void;
   reorderNode: (id: string, targetZIndex: number) => void;
+  /** 按「自顶向下」顺序重排参与节点的 z_index（图层列表拖拽改序）。 */
+  setLayerOrder: (orderedIdsTopFirst: string[]) => void;
 
   // ----- 剪贴板 -----
   copySelection: () => void;
@@ -184,8 +191,10 @@ export interface CanvasState {
   // ----- 持久化协调 -----
   /** 以快照整体替换节点 / 边（用于撤销 / 重做），并据差异标记脏 / 删除集以持久化。 */
   restoreGraph: (nodes: CanvasFlowNode[], edges: CanvasFlowEdge[]) => void;
-  /** 标记某节点已持久化（记录服务端版本，用于回声抑制）。 */
+  /** 标记某节点已持久化（记录服务端版本并清除在途标记，用于回声抑制）。 */
   markNodePersisted: (id: string, updatedAt: string) => void;
+  /** 标记一批节点持久化失败：清除在途标记，使后续真正的远端变更可正常套用。 */
+  markPersistFailed: (ids: string[]) => void;
   /** 取出并清空脏集快照，供持久化控制器写回。 */
   flushDirty: () => DirtyFlush;
   /** 取出并清空视口脏标记。 */
@@ -235,6 +244,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   _dirtyEdgeIds: new Set(),
   _deletedEdgeIds: new Set(),
   _nodeVersions: {},
+  _pendingNodeIds: new Set(),
   _viewportDirty: false,
 
   hydrate: ({ projectId, nodeRows, edgeRows, viewport }) => {
@@ -254,6 +264,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       _dirtyEdgeIds: new Set(),
       _deletedEdgeIds: new Set(),
       _nodeVersions: versions,
+      _pendingNodeIds: new Set(),
       _viewportDirty: false,
     });
   },
@@ -275,6 +286,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       _dirtyEdgeIds: new Set(),
       _deletedEdgeIds: new Set(),
       _nodeVersions: {},
+      _pendingNodeIds: new Set(),
       _viewportDirty: false,
     });
   },
@@ -419,6 +431,14 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   setBackground: (background) =>
     set((state) => ({ background: { ...state.background, ...background } })),
 
+  cycleBackground: () =>
+    set((state) => {
+      const order = ['dots', 'lines', 'none'] as const;
+      const idx = order.indexOf(state.background.variant as (typeof order)[number]);
+      const next = order[(idx + 1) % order.length] ?? 'dots';
+      return { background: { ...state.background, variant: next } };
+    }),
+
   toggleLayers: () => set((state) => ({ layersOpen: !state.layersOpen })),
   setContinuousCreate: (value) => set({ continuousCreate: value }),
 
@@ -495,6 +515,22 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     }));
   },
 
+  setLayerOrder: (orderedIdsTopFirst) => {
+    const dirty = new Set(get()._dirtyNodeIds);
+    const zById = new Map<string, number>();
+    const total = orderedIdsTopFirst.length;
+    orderedIdsTopFirst.forEach((id, i) => {
+      zById.set(id, total - i); // 顶层 z 最大
+      dirty.add(id);
+    });
+    set((state) => ({
+      nodes: state.nodes.map((n) =>
+        zById.has(n.id) ? { ...n, zIndex: zById.get(n.id) as number } : n,
+      ),
+      _dirtyNodeIds: dirty,
+    }));
+  },
+
   copySelection: () => {
     const { nodes, selectedNodeIds } = get();
     const sel = new Set(selectedNodeIds);
@@ -555,9 +591,31 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     const row = change.new as CanvasNodeRow;
     if (!row?.id) return;
 
-    // 回声抑制 + 最后写入胜出：远端版本不新于本地已知版本则忽略
-    const localVersion = get()._nodeVersions[row.id];
-    if (notOlderThan(localVersion, row.updated_at)) return;
+    const local = get();
+    // 生成完成事件：占位节点就地转为真实节点（image/video）。当客户端预建了占位 id
+    // （「以此再生成」路径），该转化会落在「在途/版本」抑制范围内而被吞掉，导致永远停在占位态。
+    // 故对「占位 → 真实类型」的转化豁免回声抑制与版本守卫，保证落图一定渲染。
+    const localNode = local.nodes.find((n) => n.id === row.id);
+    const isGenerationCompletion =
+      localNode?.data.type === 'generation_placeholder' && row.type !== 'generation_placeholder';
+
+    if (!isGenerationCompletion) {
+      // 回声抑制：本地仍有在途变更（脏 / 待持久化确认 / 正在就地编辑）的节点，以本地为准，
+      // 忽略回流——这正是用「客户端在途标识」识别并抑制自身写入回声，避免覆盖正在编辑的节点
+      // （第 04 篇第五节）。在途变更持久化后会经 markNodePersisted 记录服务端版本，
+      // 后续真正的远端变更再据 updated_at 做最后写入胜出。
+      if (
+        local._dirtyNodeIds.has(row.id) ||
+        local._pendingNodeIds.has(row.id) ||
+        local.editingNodeId === row.id
+      ) {
+        return;
+      }
+
+      // 最后写入胜出：远端版本不新于本地已知版本则忽略
+      const localVersion = local._nodeVersions[row.id];
+      if (notOlderThan(localVersion, row.updated_at)) return;
+    }
 
     const node = rowToNode(row);
     set((state) => {
@@ -594,8 +652,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   applyRemoteGeneration: (change) => {
     const row = change.new as GenerationRow;
     if (!row?.id) return;
-    // 把生成进度 / 状态投影到关联占位节点的 data（运行时字段）
-    const nodeId = row.placeholder_node_id;
+    // 经统一映射得到生成视图，再把进度 / 状态投影到关联占位节点的 data（运行时字段）
+    const view = generationRowToView(row);
+    const nodeId = view.placeholderNodeId;
     if (!nodeId) return;
     set((state) => ({
       nodes: state.nodes.map((n) => {
@@ -604,9 +663,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
           ...n,
           data: {
             ...n.data,
-            progress: row.progress,
-            statusLabel: row.status,
-            errorMessage: row.error,
+            progress: view.progress,
+            statusLabel: view.status,
+            errorMessage: view.error,
           },
         };
       }),
@@ -641,7 +700,19 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   },
 
   markNodePersisted: (id, updatedAt) => {
-    set((state) => ({ _nodeVersions: { ...state._nodeVersions, [id]: updatedAt } }));
+    set((state) => {
+      const pending = new Set(state._pendingNodeIds);
+      pending.delete(id);
+      return { _nodeVersions: { ...state._nodeVersions, [id]: updatedAt }, _pendingNodeIds: pending };
+    });
+  },
+
+  markPersistFailed: (ids) => {
+    set((state) => {
+      const pending = new Set(state._pendingNodeIds);
+      for (const id of ids) pending.delete(id);
+      return { _pendingNodeIds: pending };
+    });
   },
 
   flushDirty: () => {
@@ -667,11 +738,16 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       edgeDeletes: Array.from(state._deletedEdgeIds),
     };
 
+    // 把本批 upsert 的节点标记为「在途持久化」，在确认 / 失败前抑制其自身回声
+    const pending = new Set(state._pendingNodeIds);
+    for (const node of upserts) pending.add(node.id);
+
     set({
       _dirtyNodeIds: new Set(),
       _deletedNodeIds: new Set(),
       _dirtyEdgeIds: new Set(),
       _deletedEdgeIds: new Set(),
+      _pendingNodeIds: pending,
     });
 
     return flush;

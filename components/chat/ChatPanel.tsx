@@ -12,6 +12,7 @@
 
 import { MessageSquarePlus, Share2 } from 'lucide-react';
 import { useChatStore } from '@/stores/chat-store';
+import { getBrowserSupabase } from '@/lib/supabase/client';
 import { useTranslation } from '@/i18n';
 import { IconButton } from '@/components/ui/icon-button';
 import { useToast } from '@/components/ui/toast';
@@ -33,9 +34,34 @@ export interface ChatPanelProps {
  */
 export function ChatPanel({ projectId }: ChatPanelProps) {
   const { t } = useTranslation();
-  const { info } = useToast();
+  const { success, error: toastError } = useToast();
   // 仅订阅是否为空，避免随每条增量重渲染容器
   const isEmpty = useChatStore((s) => s.messages.length === 0);
+
+  // 新对话：在当前项目下建一条新会话并切换（清空消息流，保留所选模型 / 模式）
+  const handleNewConversation = async () => {
+    const { data, error } = await getBrowserSupabase()
+      .from('conversations')
+      .insert({ project_id: projectId })
+      .select('id')
+      .single();
+    if (error || !data) {
+      toastError(error?.message ?? t('error.internal_error'));
+      return;
+    }
+    useChatStore.getState().startConversation(data.id);
+    success(t('design.newConversationStarted'));
+  };
+
+  // 分享：复制当前页地址到剪贴板
+  const handleShare = async () => {
+    try {
+      await navigator.clipboard.writeText(window.location.href);
+      success(t('common.linkCopied'));
+    } catch {
+      toastError(t('common.share'));
+    }
+  };
 
   return (
     <div className="flex h-full flex-col bg-background">
@@ -46,11 +72,11 @@ export function ChatPanel({ projectId }: ChatPanelProps) {
           <IconButton
             size="sm"
             label={t('chat.newConversation')}
-            onClick={() => info(t('chat.newConversation'))}
+            onClick={() => void handleNewConversation()}
           >
             <MessageSquarePlus />
           </IconButton>
-          <IconButton size="sm" label={t('common.share')} onClick={() => info(t('common.share'))}>
+          <IconButton size="sm" label={t('common.share')} onClick={() => void handleShare()}>
             <Share2 />
           </IconButton>
         </div>

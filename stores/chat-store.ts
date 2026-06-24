@@ -13,6 +13,8 @@
 import { create } from 'zustand';
 import type {
   AgentMode,
+  GenerationRow,
+  GenerationStatus,
   MessageAttachment,
   MessageMention,
   MessageRow,
@@ -38,6 +40,12 @@ export interface ChatState {
   agentMode: AgentMode;
   /** 是否正在发送 / 等待响应。 */
   isSending: boolean;
+  /** 是否还有更早的历史消息可加载。 */
+  hasMoreMessages: boolean;
+  /** 是否正在加载更早的历史消息。 */
+  loadingOlder: boolean;
+  /** 各生成任务的最新状态（按生成 id）：用于判断助手消息是否仍在生成中。 */
+  generationStatus: Record<string, GenerationStatus>;
   /** 聚焦请求计数器：递增以请求对话输入框聚焦（C 快捷键、画布「以此再生成」）。 */
   focusNonce: number;
 
@@ -47,7 +55,14 @@ export interface ChatState {
     messages: MessageView[];
     selectedModelKey: string | null;
     agentMode?: AgentMode;
+    hasMoreMessages?: boolean;
   }) => void;
+  /** 把更早的一页历史消息前置插入（keyset 向前翻页）。 */
+  prependOlderMessages: (older: MessageView[], hasMore: boolean) => void;
+  /** 设置「正在加载更早消息」标记。 */
+  setLoadingOlder: (value: boolean) => void;
+  /** 切换到一条新会话：清空消息流与草稿，保留所选模型与 Agent 模式。 */
+  startConversation: (conversationId: string) => void;
   /** 离开项目时重置。 */
   reset: () => void;
 
@@ -82,6 +97,8 @@ export interface ChatState {
 
   // 远端回流
   applyRemoteMessage: (change: RealtimeChange<MessageRow>) => void;
+  /** 远端回流：记录生成任务状态，驱动助手消息「生成中」徽标在生成达终态时结束。 */
+  applyRemoteGeneration: (change: RealtimeChange<GenerationRow>) => void;
 }
 
 /** 把消息行映射为视图。 */
@@ -98,7 +115,7 @@ function rowToMessageView(row: MessageRow): MessageView {
   };
 }
 
-export const useChatStore = create<ChatState>((set, get) => ({
+export const useChatStore = create<ChatState>((set) => ({
   conversationId: null,
   messages: [],
   draft: '',
@@ -107,9 +124,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
   selectedModelKey: null,
   agentMode: 'generate',
   isSending: false,
+  hasMoreMessages: false,
+  loadingOlder: false,
+  generationStatus: {},
   focusNonce: 0,
 
-  hydrate: ({ conversationId, messages, selectedModelKey, agentMode }) =>
+  hydrate: ({ conversationId, messages, selectedModelKey, agentMode, hasMoreMessages }) =>
     set({
       conversationId,
       messages,
@@ -119,6 +139,31 @@ export const useChatStore = create<ChatState>((set, get) => ({
       pendingMentions: [],
       pendingAttachments: [],
       isSending: false,
+      hasMoreMessages: hasMoreMessages ?? false,
+      loadingOlder: false,
+      generationStatus: {},
+    }),
+
+  prependOlderMessages: (older, hasMore) =>
+    set((state) => ({
+      messages: [...older, ...state.messages],
+      hasMoreMessages: hasMore,
+      loadingOlder: false,
+    })),
+
+  setLoadingOlder: (value) => set({ loadingOlder: value }),
+
+  startConversation: (conversationId) =>
+    set({
+      conversationId,
+      messages: [],
+      draft: '',
+      pendingMentions: [],
+      pendingAttachments: [],
+      isSending: false,
+      hasMoreMessages: false,
+      loadingOlder: false,
+      generationStatus: {},
     }),
 
   reset: () =>
@@ -129,6 +174,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       pendingMentions: [],
       pendingAttachments: [],
       isSending: false,
+      hasMoreMessages: false,
+      loadingOlder: false,
+      generationStatus: {},
     }),
 
   setDraft: (draft) => set({ draft }),
@@ -211,5 +259,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
       );
       return { messages: next };
     });
+  },
+
+  applyRemoteGeneration: (change) => {
+    if (change.eventType !== 'INSERT' && change.eventType !== 'UPDATE') return;
+    const row = change.new as GenerationRow;
+    if (!row?.id) return;
+    // 记录该生成的最新状态；助手气泡据此判断是否仍在生成（见 MessageBubble）。
+    set((state) =>
+      state.generationStatus[row.id] === row.status
+        ? state
+        : { generationStatus: { ...state.generationStatus, [row.id]: row.status } },
+    );
   },
 }));

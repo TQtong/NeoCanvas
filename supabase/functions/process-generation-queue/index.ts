@@ -22,11 +22,21 @@ const MAX_RETRIES = 3;
 /** 瞬时错误码（可自动重试）。 */
 const TRANSIENT_CODES = new Set(['provider_error', 'rate_limited']);
 
+/** 瞬时失败的退避基数（秒）与上限（秒）。 */
+const BACKOFF_BASE_SECS = 30;
+const BACKOFF_MAX_SECS = 300;
+
+/** 按已读次数计算指数退避秒数。 */
+function backoffSeconds(readCount: number): number {
+  return Math.min(BACKOFF_MAX_SECS, BACKOFF_BASE_SECS * 2 ** Math.max(0, readCount - 1));
+}
+
 /** 处理单条队列任务。 */
 async function processJob(
   admin: SupabaseClient,
   generationId: string,
   readCount: number,
+  msgId: number,
 ): Promise<void> {
   const { data: gen } = await admin
     .from('generations')
@@ -95,9 +105,10 @@ async function processJob(
     const code = error instanceof Error && 'code' in error ? (error as { code: string }).code : 'internal_error';
     const message = error instanceof Error ? error.message : '执行失败';
     if (TRANSIENT_CODES.has(code) && readCount <= MAX_RETRIES) {
-      // 瞬时错误：回退为 pending，由队列可见性超时 / cron 兜底重试
+      // 瞬时错误：回退为 pending，并对该消息设置指数退避的可见性超时后留待重试
       await admin.from('generations').update({ status: 'pending' }).eq('id', generationId);
-      throw error; // 不删除消息，留待重试
+      await admin.rpc('set_generation_job_vt', { p_msg_id: msgId, p_vt: backoffSeconds(readCount) });
+      throw error; // 不删除消息，留待退避后重试
     }
     await markFailed(admin, { ...generation, status: 'running' }, message);
   }
@@ -112,11 +123,11 @@ Deno.serve(async () => {
     let processed = 0;
     for (const job of rows) {
       try {
-        await processJob(admin, job.message.generationId, job.read_ct);
+        await processJob(admin, job.message.generationId, job.read_ct, job.msg_id);
         await admin.rpc('delete_generation_job', { p_msg_id: job.msg_id });
         processed += 1;
       } catch {
-        // 留待可见性超时后重试，不删除消息
+        // 留待退避后的可见性超时重试，不删除消息
       }
     }
     return ok({ processed, total: rows.length });

@@ -5,7 +5,8 @@
  * @module lib/edge/errors
  */
 
-import type { ApiError, ErrorCode } from '@/types';
+import { FunctionsFetchError, FunctionsHttpError, FunctionsRelayError } from '@supabase/supabase-js';
+import type { ApiError, ApiResponse, ErrorCode } from '@/types';
 import { ERROR_CODES } from '@/types';
 
 /**
@@ -63,6 +64,46 @@ export function fromSupabaseError(error: {
     message: error.message ?? '请求失败，请稍后重试',
     details: error.details ? { pg: error.details } : undefined,
   });
+}
+
+/**
+ * 由 supabase-js `functions.invoke` 抛出的错误恢复稳定错误码。
+ *
+ * 非 2xx 响应时 functions-js 抛出 {@link FunctionsHttpError}，其结构化失败封套
+ * （含稳定 code 与可展示 message）只存在于 `error.context`（一个 Response）中，必须读取
+ * 才能拿到真实错误码；否则会塌缩为 internal_error，使第 06 篇第五节要求的「按错误码分支
+ * 处置」无法触发。网络 / 网关类错误映射为 provider_error。
+ *
+ * @param error - functions.invoke 返回的 error
+ * @returns 归一后的 ApiClientError
+ */
+export async function fromEdgeInvokeError(error: unknown): Promise<ApiClientError> {
+  if (isApiClientError(error)) return error;
+
+  if (error instanceof FunctionsHttpError) {
+    // 结构化封套在 context（Response）里，且响应体只能读取一次
+    try {
+      const payload = (await error.context.json()) as ApiResponse<never>;
+      if (payload && payload.success === false && payload.error) {
+        return new ApiClientError(payload.error);
+      }
+    } catch {
+      // 响应体非 JSON / 为空 → 落到兜底
+    }
+    return new ApiClientError({
+      code: 'internal_error',
+      message: 'Edge 函数返回非 2xx 且无可解析的错误封套',
+    });
+  }
+
+  if (error instanceof FunctionsFetchError) {
+    return new ApiClientError({ code: 'provider_error', message: '网络异常，请稍后重试' });
+  }
+  if (error instanceof FunctionsRelayError) {
+    return new ApiClientError({ code: 'provider_error', message: '边缘网关异常，请稍后重试' });
+  }
+
+  return normalizeUnknownError(error);
 }
 
 /**

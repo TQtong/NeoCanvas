@@ -18,7 +18,13 @@ import { createServerSupabase } from '@/lib/supabase/server';
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const { searchParams, origin } = request.nextUrl;
   const code = searchParams.get('code');
-  const redirectTo = searchParams.get('redirect') ?? '/';
+  const redirectParam = searchParams.get('redirect');
+  // 开放重定向防护：origin 与 redirect 直接拼接，仅以单个 `/` 开头的站内路径才安全。
+  // 形如 `@evil.com`、`//evil.com`、`https://evil.com` 的取值会逃逸出本站 origin，一律回退到主页。
+  const redirectTo =
+    redirectParam && redirectParam.startsWith('/') && !redirectParam.startsWith('//')
+      ? redirectParam
+      : '/';
 
   if (code) {
     const supabase = await createServerSupabase();

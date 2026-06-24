@@ -11,6 +11,7 @@
  */
 
 import { useEffect } from 'react';
+import { useReactFlow } from '@xyflow/react';
 import { useCanvasStore } from '@/stores/canvas-store';
 import { useChatStore } from '@/stores/chat-store';
 import type { UseCanvasHistory } from './use-canvas-history';
@@ -28,6 +29,8 @@ function isEditableTarget(target: EventTarget | null): boolean {
  * @param history - 撤销 / 重做动作
  */
 export function useCanvasShortcuts(history: UseCanvasHistory): void {
+  const reactFlow = useReactFlow();
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (isEditableTarget(event.target)) return;
@@ -46,6 +49,21 @@ export function useCanvasShortcuts(history: UseCanvasHistory): void {
           case 'y':
             event.preventDefault();
             history.redo();
+            return;
+          // 缩放：Cmd/Ctrl + = / + 放大，- 缩小，0 适应画布（第 04 篇 4.3）
+          case '=':
+          case '+':
+            event.preventDefault();
+            void reactFlow.zoomIn({ duration: 150 });
+            return;
+          case '-':
+          case '_':
+            event.preventDefault();
+            void reactFlow.zoomOut({ duration: 150 });
+            return;
+          case '0':
+            event.preventDefault();
+            void reactFlow.fitView({ padding: 0.2, duration: 250 });
             return;
           case 'c':
             store.copySelection();
@@ -103,5 +121,5 @@ export function useCanvasShortcuts(history: UseCanvasHistory): void {
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [history]);
+  }, [history, reactFlow]);
 }

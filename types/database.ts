@@ -55,6 +55,8 @@ export type ProjectRow = {
   initial_scene: Scene | null;
   default_model_key: string | null;
   is_deleted: boolean;
+  /** 客户端请求标识：连点去重用，重复请求复用既有项目。 */
+  client_request_id: string | null;
   created_at: string;
   updated_at: string;
   last_opened_at: string | null;
@@ -114,6 +116,8 @@ export type MessageRow = {
   content: string | null;
   model_key: string | null;
   agent_mode: string | null;
+  /** 助手消息所回应的用户消息 id；用于编排幂等。用户消息为空。 */
+  user_message_id: string | null;
   mentions: MessageMention[];
   attachments: MessageAttachment[];
   created_at: string;
@@ -137,6 +141,10 @@ export type GenerationRow = {
   placeholder_node_id: string | null;
   error: string | null;
   idempotency_key: string | null;
+  /** 内容安全审核状态：pending / passed / blocked。 */
+  moderation_status: string;
+  /** 审核拦截原因（命中策略或产出被过滤），无则为空。 */
+  moderation_reason: string | null;
   created_at: string;
   updated_at: string;
   completed_at: string | null;

@@ -29,6 +29,14 @@ import { getBrowserSupabase } from '@/lib/supabase/client';
 import { IconButton } from '@/components/ui/icon-button';
 import { Tooltip } from '@/components/ui/tooltip';
 import { useToast } from '@/components/ui/toast';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils/cn';
 import { AvatarMenu } from '@/components/shared/AvatarMenu';
 
@@ -171,10 +179,30 @@ export function TopBar({ projectId, title, panelOpen, onTogglePanel }: TopBarPro
           </button>
         )}
 
-        {/* 版本切换占位：暂仅呈现下拉指示，后续接入历史版本 */}
-        <IconButton size="sm" label={t('design.layers')} className="shrink-0" disabled>
-          <ChevronDown />
-        </IconButton>
+        {/* 版本 / 标签切换：下拉列出同项目的版本 / 标签并切换。当前数据模型仅单一版本，
+            故菜单展示当前版本并标明暂无其他版本（待引入版本快照后自然填充）。 */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              aria-label={t('design.versionSwitcher')}
+              title={t('design.versionSwitcher')}
+              className={cn(
+                'inline-flex shrink-0 items-center gap-0.5 rounded-lg px-1 py-1 text-muted-foreground transition-colors',
+                'hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+              )}
+            >
+              <ChevronDown className="size-4" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="min-w-[12rem]">
+            <DropdownMenuLabel className="text-sm font-medium text-foreground">
+              {t('design.versionSwitcher')}
+            </DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem disabled>{t('design.noVersions')}</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
 
       {/* 右端：分享、面板控制、头像菜单 */}

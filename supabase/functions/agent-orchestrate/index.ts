@@ -2,28 +2,27 @@
  * 智能体编排（agent-orchestrate）—— 把对话意图翻译为生成与画布操作（第 05 篇第七节、
  * 第 06 篇第四节）。
  *
- * 按 Agent 模式呈现不同深度：纯生成直接转为一次生成提交；编排式先以语言模型理解意图、
- * 再组织一到多次生成并决定落位；场景流程加载场景模板产出成套物料。助手文本回复经
- * SSE 流式返回，图 / 视频走异步生成流水线稍后经实时面落画布。
+ * 流程：先按用户消息去重（同一用户消息只产生一条助手消息与一组生成，重发即回放）；再由
+ * 编排型 LLM 产出结构化「编排计划」（助手回复 + 多步骤）；流式回传回复；按计划逐步执行，
+ * 每步按其模态选择合适模型、组织参考素材与落位，逐个提交到异步生成流水线，稍后经实时面
+ * 落画布。计划由 LLM 驱动，未配置 LLM 时退化为确定性规划（见 orchestrate-plan）。
  *
  * @module functions/agent-orchestrate
  */
 
 import {
   type AgentOrchestrateRequest,
+  type GenerationParams,
+  type Modality,
   type ModelCatalogRow,
   type ReferenceMaterial,
   type Scene,
   type UnifiedGenerationRequest,
 } from '../_shared/types.ts';
 import { ApiException, CORS_HEADERS, fail, handleCorsPreflight } from '../_shared/response.ts';
-import { assertProjectOwner, createAdminClient, requireUser } from '../_shared/supabase.ts';
-import {
-  buildGenerationParams,
-  composeScenePrompt,
-  defaultPlacementSize,
-  sceneGenerationCount,
-} from '../_shared/params.ts';
+import { assertProjectOwner, createAdminClient, requireUser, type SupabaseClient } from '../_shared/supabase.ts';
+import { buildGenerationParams, defaultPlacementSize } from '../_shared/params.ts';
+import { buildPlan, type OrchestrationStep } from '../_shared/orchestrate-plan.ts';
 import { createGeneration } from '../_shared/create-generation.ts';
 
 /** 流式编码一个 SSE 事件。 */
@@ -31,84 +30,85 @@ function sse(event: unknown): Uint8Array {
   return new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`);
 }
 
-/** 调用编排型 LLM 流式生成文本回复；无密钥时回退为本地化定语。 */
-async function* llmReply(
-  mode: AgentOrchestrateRequest['agentMode'],
-  content: string,
-): AsyncGenerator<string> {
-  const apiKey = Deno.env.get('ORCHESTRATOR_LLM_API_KEY') ?? Deno.env.get('OPENAI_API_KEY');
-  const model = Deno.env.get('ORCHESTRATOR_LLM_MODEL') ?? 'gpt-4o-mini';
-
-  if (mode === 'orchestrate' && apiKey) {
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model,
-        stream: true,
-        messages: [
-          {
-            role: 'system',
-            content:
-              '你是 NeoCanvas 的设计编排助手。用简洁中文先确认理解用户的视觉意图（要生成什么、风格、数量），再说明将如何在画布上落位。不要超过 3 句。',
-          },
-          { role: 'user', content },
-        ],
-      }),
-    });
-    if (response.ok && response.body) {
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        let idx = buffer.indexOf('\n');
-        while (idx !== -1) {
-          const line = buffer.slice(0, idx).trim();
-          buffer = buffer.slice(idx + 1);
-          if (line.startsWith('data:')) {
-            const payload = line.slice(5).trim();
-            if (payload && payload !== '[DONE]') {
-              try {
-                const json = JSON.parse(payload) as {
-                  choices?: Array<{ delta?: { content?: string } }>;
-                };
-                const delta = json.choices?.[0]?.delta?.content;
-                if (delta) yield delta;
-              } catch {
-                // 忽略不完整分块
-              }
-            }
-          }
-          idx = buffer.indexOf('\n');
-        }
-      }
-      return;
-    }
-  }
-
-  // 回退：本地化定语
-  const canned =
-    mode === 'scene'
-      ? '正在按所选场景为你产出成套物料，请稍候。'
-      : mode === 'orchestrate'
-        ? '正在理解你的想法并编排生成，请稍候。'
-        : '好的，正在为你生成。';
-  for (const ch of canned) {
-    yield ch;
-  }
+/** 把一段文本切成小块流式回传（计划回复由一次 JSON 规划产出，此处模拟逐块输出）。 */
+function* chunkText(text: string, size = 12): Generator<string> {
+  for (let i = 0; i < text.length; i += size) yield text.slice(i, i + size);
 }
 
-/** 从内容粗略解析期望产出数量（编排模式）。 */
-function parseCount(content: string): number {
-  const cnMap: Record<string, number> = { 一: 1, 两: 2, 二: 2, 三: 3, 四: 4 };
-  const cn = content.match(/[一二两三四]/)?.[0];
-  if (cn && cnMap[cn]) return Math.min(cnMap[cn], 4);
-  const digit = content.match(/([1-9])\s*(?:张|个|版|幅)/)?.[1];
-  if (digit) return Math.min(Number(digit), 4);
-  return 1;
+/** 取模型目录当前可服务的产出模态集合。 */
+async function getActiveModalities(admin: SupabaseClient): Promise<Modality[]> {
+  const { data } = await admin.from('model_catalog').select('modality').eq('is_active', true);
+  const set = new Set<Modality>();
+  for (const row of (data ?? []) as Array<{ modality: Modality }>) set.add(row.modality);
+  return Array.from(set);
+}
+
+/** 为某模态选择模型：与用户所选一致则用其，否则取该模态下排序最前的活跃模型。 */
+async function pickModelForModality(
+  admin: SupabaseClient,
+  modality: Modality,
+  selectedKey: string,
+  selectedModality: Modality,
+): Promise<ModelCatalogRow | null> {
+  if (modality === selectedModality) {
+    const { data } = await admin.from('model_catalog').select('*').eq('key', selectedKey).maybeSingle();
+    const row = data as ModelCatalogRow | null;
+    if (row && row.is_active) return row;
+  }
+  const { data } = await admin
+    .from('model_catalog')
+    .select('*')
+    .eq('modality', modality)
+    .eq('is_active', true)
+    .order('sort_order', { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  return (data as ModelCatalogRow | null) ?? null;
+}
+
+/** 由提及节点 + 附件构造某步的参考素材（统一赋予该步的引用角色）。 */
+function buildStepReferences(
+  body: AgentOrchestrateRequest,
+  role: OrchestrationStep['referenceRole'],
+): ReferenceMaterial[] {
+  return [
+    ...body.mentions
+      .filter((m) => m.assetId)
+      .map<ReferenceMaterial>((m) => ({ origin: 'node', nodeId: m.nodeId, assetId: m.assetId as string, role })),
+    ...body.attachments.map<ReferenceMaterial>((a) => ({ origin: 'attachment', assetId: a.assetId, role })),
+  ];
+}
+
+/** 一条待提交的生成规格（已含模型、参数、尺寸与落位）。 */
+interface GenerationSpec {
+  modelKey: string;
+  modality: Modality;
+  prompt: string;
+  params: GenerationParams;
+  width: number;
+  height: number;
+}
+
+/** 把编排计划展开为按行居中排布的生成规格序列。 */
+async function planToSpecs(
+  admin: SupabaseClient,
+  body: AgentOrchestrateRequest,
+  steps: OrchestrationStep[],
+  selectedModality: Modality,
+): Promise<GenerationSpec[]> {
+  const specs: GenerationSpec[] = [];
+  for (const step of steps) {
+    const model = await pickModelForModality(admin, step.modality, body.modelKey, selectedModality);
+    if (!model) continue; // 目录无法服务该模态则跳过该步
+    const references = step.useReferences ? buildStepReferences(body, step.referenceRole) : [];
+    const params = buildGenerationParams(step.modality, model.default_params, references);
+    const size = defaultPlacementSize(step.modality, 'aspectRatio' in params ? params.aspectRatio : undefined);
+    const count = Math.min(step.count, model.capabilities.maxOutputs || step.count);
+    for (let i = 0; i < count; i += 1) {
+      specs.push({ modelKey: model.key, modality: step.modality, prompt: step.prompt, params, width: size.width, height: size.height });
+    }
+  }
+  return specs;
 }
 
 Deno.serve(async (request) => {
@@ -130,111 +130,125 @@ Deno.serve(async (request) => {
       : fail('internal_error', '编排初始化失败');
   }
 
-  const assistantMessageId = crypto.randomUUID();
+  // 幂等去重：同一用户消息已编排过则回放既有结果，不重复调用 LLM / 不重复建生成
+  const { data: existingAssistant } = await admin
+    .from('messages')
+    .select('id, content')
+    .eq('user_message_id', body.messageId)
+    .eq('role', 'assistant')
+    .maybeSingle();
+
+  let replay: { assistantMessageId: string; content: string; generationIds: string[]; placeholders: Array<{ generationId: string; placeholderNodeId: string }> } | null = null;
+  if (existingAssistant) {
+    const { data: existingGens } = await admin
+      .from('generations')
+      .select('id, placeholder_node_id')
+      .eq('message_id', body.messageId);
+    const gens = (existingGens ?? []) as Array<{ id: string; placeholder_node_id: string | null }>;
+    replay = {
+      assistantMessageId: existingAssistant.id as string,
+      content: (existingAssistant.content as string | null) ?? '',
+      generationIds: gens.map((g) => g.id),
+      placeholders: gens.map((g) => ({ generationId: g.id, placeholderNodeId: g.placeholder_node_id ?? '' })),
+    };
+  }
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
-      let fullText = '';
-      const generationIds: string[] = [];
       try {
-        controller.enqueue(sse({ type: 'message_created', assistantMessageId }));
-
-        // 1) 流式文本回复
-        for await (const delta of llmReply(body.agentMode, body.content)) {
-          fullText += delta;
-          controller.enqueue(sse({ type: 'text_delta', delta }));
+        // 回放路径：直接重发既有助手消息与生成，保证编排幂等
+        if (replay) {
+          controller.enqueue(sse({ type: 'message_created', assistantMessageId: replay.assistantMessageId }));
+          if (replay.content) controller.enqueue(sse({ type: 'text_delta', delta: replay.content }));
+          for (const p of replay.placeholders) {
+            controller.enqueue(sse({ type: 'generation_started', generationId: p.generationId, placeholderNodeId: p.placeholderNodeId }));
+          }
+          controller.enqueue(sse({ type: 'done', assistantMessageId: replay.assistantMessageId, generationIds: replay.generationIds }));
+          return;
         }
 
-        // 2) 取模型与场景
+        const assistantMessageId = crypto.randomUUID();
+        controller.enqueue(sse({ type: 'message_created', assistantMessageId }));
+
+        // 取所选模型与场景，构造规划输入
         const { data: model } = await admin
           .from('model_catalog')
           .select('*')
           .eq('key', body.modelKey)
           .maybeSingle();
         const modelRow = model as ModelCatalogRow | null;
+        const { data: project } = await admin
+          .from('projects')
+          .select('initial_scene')
+          .eq('id', body.projectId)
+          .maybeSingle();
+        const scene = (project?.initial_scene as Scene | null) ?? null;
 
-        // 模态取自所选模型（请求不携带 modality）
+        const selectedModality: Modality = modelRow?.modality ?? 'image';
+        const availableModalities = await getActiveModalities(admin);
+        const referencesSummary = [
+          ...body.mentions.filter((m) => m.assetId).map((m) => ({ label: m.label, kind: m.nodeType })),
+          ...body.attachments.map((a) => ({ label: a.name, kind: a.kind })),
+        ];
+
+        // 由 LLM 产出编排计划（无 LLM 时确定性兜底）
+        const plan = await buildPlan({
+          agentMode: body.agentMode,
+          content: body.content,
+          scene,
+          selectedModality,
+          maxOutputs: modelRow?.capabilities.maxOutputs ?? 4,
+          references: referencesSummary,
+          availableModalities,
+        });
+
+        // 流式回传助手回复
+        for (const piece of chunkText(plan.reply)) {
+          controller.enqueue(sse({ type: 'text_delta', delta: piece }));
+        }
+
+        // 展开计划为生成规格，居中排布
+        const generationIds: string[] = [];
         if (modelRow && modelRow.is_active) {
-          const { data: project } = await admin
-            .from('projects')
-            .select('initial_scene')
-            .eq('id', body.projectId)
-            .maybeSingle();
-          const scene = (project?.initial_scene as Scene | null) ?? null;
+          const specs = await planToSpecs(admin, body, plan.steps, selectedModality);
+          const totalWidth = specs.reduce((sum, s) => sum + s.width + 24, 0) - 24;
+          let cursorX = specs.length > 0 ? -totalWidth / 2 : 0;
 
-          // 3) 决定产出数量
-          const count =
-            body.agentMode === 'scene'
-              ? sceneGenerationCount(scene)
-              : body.agentMode === 'orchestrate'
-                ? parseCount(body.content)
-                : 1;
-
-          // 4) 参考素材（提及节点 + 附件）
-          const references: ReferenceMaterial[] = [
-            ...body.mentions
-              .filter((m) => m.assetId)
-              .map<ReferenceMaterial>((m) => ({
-                origin: 'node',
-                nodeId: m.nodeId,
-                assetId: m.assetId as string,
-                role: modelRow.modality === 'video' ? 'first_frame' : 'content',
-              })),
-            ...body.attachments.map<ReferenceMaterial>((a) => ({
-              origin: 'attachment',
-              assetId: a.assetId,
-              role: modelRow.modality === 'video' ? 'first_frame' : 'content',
-            })),
-          ];
-
-          const params = buildGenerationParams(modelRow.modality, modelRow.default_params, references);
-          const size = defaultPlacementSize(
-            modelRow.modality,
-            'aspectRatio' in params ? params.aspectRatio : undefined,
-          );
-          const startX = -((count * (size.width + 24) - 24) / 2);
-          const effectivePrompt =
-            body.agentMode === 'scene' ? composeScenePrompt(scene, body.content) : body.content;
-
-          // 5) 逐个创建生成（网格排布）
-          for (let i = 0; i < count; i += 1) {
+          for (let idx = 0; idx < specs.length; idx += 1) {
+            const spec = specs[idx];
             const genRequest: UnifiedGenerationRequest = {
               projectId: body.projectId,
               conversationId: body.conversationId,
               messageId: body.messageId,
-              modality: modelRow.modality,
-              modelKey: body.modelKey,
-              prompt: effectivePrompt,
-              params,
-              idempotencyKey: `${body.messageId}-${i}`,
-              placement: {
-                x: startX + i * (size.width + 24),
-                y: 0,
-                width: size.width,
-                height: size.height,
-              },
+              modality: spec.modality,
+              modelKey: spec.modelKey,
+              prompt: spec.prompt,
+              params: spec.params,
+              idempotencyKey: `${body.messageId}-${idx}`,
+              placement: { x: cursorX, y: 0, width: spec.width, height: spec.height },
             };
+            cursorX += spec.width + 24;
             const result = await createGeneration(admin, genRequest, userId);
             generationIds.push(result.generationId);
             controller.enqueue(
-              sse({
-                type: 'generation_started',
-                generationId: result.generationId,
-                placeholderNodeId: result.placeholderNodeId,
-              }),
+              sse({ type: 'generation_started', generationId: result.generationId, placeholderNodeId: result.placeholderNodeId }),
             );
           }
         }
 
-        // 6) 持久化助手消息
-        await admin.from('messages').insert({
+        // 持久化助手消息（锚定到用户消息以实现去重）；并发冲突则忽略
+        const { error: insertError } = await admin.from('messages').insert({
           id: assistantMessageId,
           conversation_id: body.conversationId,
           role: 'assistant',
-          content: fullText,
+          content: plan.reply,
           model_key: body.modelKey,
           agent_mode: body.agentMode,
+          user_message_id: body.messageId,
         });
+        if (insertError && insertError.code !== '23505') {
+          throw new ApiException('internal_error', `保存助手消息失败：${insertError.message}`);
+        }
 
         controller.enqueue(sse({ type: 'done', assistantMessageId, generationIds }));
       } catch (error) {

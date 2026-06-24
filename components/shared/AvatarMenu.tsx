@@ -10,7 +10,7 @@
  * @module components/shared/AvatarMenu
  */
 
-import { useCallback } from 'react';
+import { useCallback, useState } from 'react';
 import { Check, LogOut, Settings } from 'lucide-react';
 import { useSessionStore, type Locale } from '@/stores/session-store';
 import { useTranslation } from '@/i18n';
@@ -24,6 +24,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils/cn';
+import { SettingsDialog } from './SettingsDialog';
 
 /** 受支持语言及其在菜单中的展示名（保留各自原生写法）。 */
 const LOCALE_OPTIONS: ReadonlyArray<{ value: Locale; label: string }> = [
@@ -53,6 +54,7 @@ export function AvatarMenu() {
   const locale = useSessionStore((s) => s.locale);
   const setLocale = useSessionStore((s) => s.setLocale);
   const { t } = useTranslation();
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   // 切换语言：先更新本地状态以即时反映，再把偏好持久化到 profiles.locale
   const handleSetLocale = useCallback(
@@ -77,6 +79,7 @@ export function AvatarMenu() {
   const avatarUrl = profile?.avatar_url ?? null;
 
   return (
+    <>
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <button
@@ -106,7 +109,7 @@ export function AvatarMenu() {
 
         <DropdownMenuSeparator />
 
-        <DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => setSettingsOpen(true)}>
           <Settings />
           {t('common.settings')}
         </DropdownMenuItem>
@@ -132,5 +135,8 @@ export function AvatarMenu() {
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
+
+    <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+    </>
   );
 }

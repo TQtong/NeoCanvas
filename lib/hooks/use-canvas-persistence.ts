@@ -66,6 +66,8 @@ export function useCanvasPersistence(
             if (error) throw error;
           }
         } catch (err) {
+          // 清除本批节点的在途标记，使后续真正的远端变更不被回声抑制误挡
+          store.getState().markPersistFailed(upserts.map((node) => node.id));
           // eslint-disable-next-line no-console
           console.error('画布持久化失败', err);
           onError?.(err instanceof Error ? err.message : '画布保存失败');

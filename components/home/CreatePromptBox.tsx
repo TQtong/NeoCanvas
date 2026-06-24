@@ -12,9 +12,11 @@
  */
 
 import { useCallback, useLayoutEffect, useRef, useState } from 'react';
-import { ArrowUp, Cuboid, Paperclip } from 'lucide-react';
+import { ArrowUp, Cuboid, Loader2, Paperclip } from 'lucide-react';
 import { createProjectAction } from '@/app/actions';
-import type { ModelCatalogEntry, Scene } from '@/types';
+import type { MessageAttachment, ModelCatalogEntry, Scene } from '@/types';
+import { getBrowserSupabase } from '@/lib/supabase/client';
+import { uploadAsset } from '@/lib/storage/upload';
 import { IconButton } from '@/components/ui/icon-button';
 import { Tooltip } from '@/components/ui/tooltip';
 import { useTranslation } from '@/i18n';
@@ -48,8 +50,17 @@ export function CreatePromptBox({ models, defaultModelKey }: CreatePromptBoxProp
   const [prompt, setPrompt] = useState('');
   const [modelKey, setModelKey] = useState<string>(defaultModelKey || FALLBACK_MODEL_KEY);
   const [scene, setScene] = useState<Scene | null>(null);
-  // 本地暂存的附件文件（此处仅展示计数，真正上传在进入项目后进行）
+  // 每次挂载生成一个稳定的请求标识：连点 / 失败重试复用同一值以避免重复建项目
+  const [requestId] = useState(() =>
+    typeof crypto !== 'undefined' && 'randomUUID' in crypto
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.round(Math.random() * 1e9)}`,
+  );
+  // 本地暂存的附件文件（提交时上传到 uploads 桶并随 create-project 携带为参考素材）
   const [attachments, setAttachments] = useState<File[]>([]);
+  // 提交中（含附件上传）态与错误提示
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -73,15 +84,62 @@ export function CreatePromptBox({ models, defaultModelKey }: CreatePromptBoxProp
   const trimmed = prompt.trim();
   const canSubmit = trimmed.length > 0;
 
+  /**
+   * 提交创作：先把本地附件上传到 uploads 桶、登记资产，再把资产引用随
+   * create-project 一并提交（作为首次生成的参考素材）。附件上传失败则中止并提示；
+   * create-project 在上传之后调用，其重定向由服务端动作原生处理。
+   */
+  const onSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!canSubmit || submitting) return;
+    setSubmitting(true);
+    setError(null);
+
+    // 复用隐藏字段（prompt / modelKey / scene / clientRequestId）
+    const formData = new FormData(event.currentTarget);
+
+    if (attachments.length > 0) {
+      try {
+        const supabase = getBrowserSupabase();
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
+        if (user) {
+          const refs: MessageAttachment[] = await Promise.all(
+            attachments.map(async (file): Promise<MessageAttachment> => {
+              const v = await uploadAsset(supabase, { file, userId: user.id, projectId: null });
+              return {
+                assetId: v.id,
+                kind: v.kind,
+                name: file.name,
+                mimeType: v.mimeType,
+                thumbnailUrl: v.thumbnailUrl ?? undefined,
+              };
+            }),
+          );
+          formData.set('attachments', JSON.stringify(refs));
+        }
+      } catch (err) {
+        setSubmitting(false);
+        setError(err instanceof Error ? err.message : '附件上传失败，请重试');
+        return;
+      }
+    }
+
+    // 在 try/catch 之外调用，避免捕获服务端动作的重定向信号
+    await createProjectAction(formData);
+  };
+
   return (
     <form
-      action={createProjectAction}
+      onSubmit={onSubmit}
       className="glass mx-auto flex w-full max-w-3xl flex-col gap-4 rounded-3xl p-3 shadow-float"
     >
       {/* 隐藏字段：把本地草稿、所选模型与场景随表单提交到服务端动作 */}
       <input type="hidden" name="prompt" value={prompt} />
       <input type="hidden" name="modelKey" value={modelKey} />
       <input type="hidden" name="scene" value={scene ?? ''} />
+      <input type="hidden" name="clientRequestId" value={requestId} />
 
       <div className="rounded-2xl bg-card/60 p-2">
         {/* 多行自适应文本域 */}
@@ -133,21 +191,25 @@ export function CreatePromptBox({ models, defaultModelKey }: CreatePromptBoxProp
                 <Cuboid />
               </IconButton>
             </Tooltip>
-            {/* 发送：提交表单；prompt 为空时禁用 */}
+            {/* 发送：提交表单；prompt 为空或提交中时禁用，提交中展示转圈 */}
             <button
               type="submit"
-              disabled={!canSubmit}
+              disabled={!canSubmit || submitting}
               aria-label={t('home.send')}
               title={t('home.send')}
               className={cn(
                 'inline-flex size-9 items-center justify-center rounded-full transition-colors duration-150',
                 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-                canSubmit
+                canSubmit && !submitting
                   ? 'bg-accent text-accent-foreground hover:bg-accent/90 shadow-soft'
                   : 'cursor-not-allowed bg-muted text-muted-foreground',
               )}
             >
-              <ArrowUp className="size-[18px]" />
+              {submitting ? (
+                <Loader2 className="size-[18px] animate-spin" />
+              ) : (
+                <ArrowUp className="size-[18px]" />
+              )}
             </button>
           </div>
         </div>
@@ -161,6 +223,8 @@ export function CreatePromptBox({ models, defaultModelKey }: CreatePromptBoxProp
         onModelChange={setModelKey}
         onSceneChange={setScene}
       />
+
+      {error ? <p className="px-2 text-center text-sm text-danger">{error}</p> : null}
     </form>
   );
 }
