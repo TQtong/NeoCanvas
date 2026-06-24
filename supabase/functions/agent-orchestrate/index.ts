@@ -96,6 +96,31 @@ interface GenerationSpec {
   height: number;
 }
 
+/** 新一批生成与既有画布内容之间的水平间距（flow px）。 */
+const CANVAS_BATCH_GAP = 64;
+
+/**
+ * 计算「新一批生成」应起始的 x：取项目内既有节点的最右缘 + 间距，使新内容落在既有内容右侧的
+ * 空白处，而非每次都以原点居中、彼此堆叠（多次生成只显示一张的根因）。
+ *
+ * 画布为空（项目首次生成）时返回 null，由调用方按本批宽度以原点居中——保持首图居中的体验。
+ *
+ * @param admin - 服务角色客户端
+ * @param projectId - 项目标识
+ * @returns 新批次最左缘 x；画布为空时为 null
+ */
+async function nextBatchStartX(admin: SupabaseClient, projectId: string): Promise<number | null> {
+  const { data } = await admin
+    .from('canvas_nodes')
+    .select('position_x, width')
+    .eq('project_id', projectId);
+  const rows = (data ?? []) as Array<{ position_x: number | null; width: number | null }>;
+  if (rows.length === 0) return null;
+  let maxRight = -Infinity;
+  for (const r of rows) maxRight = Math.max(maxRight, (r.position_x ?? 0) + (r.width ?? 0));
+  return Number.isFinite(maxRight) ? maxRight + CANVAS_BATCH_GAP : null;
+}
+
 /** 把编排计划展开为按行居中排布的生成规格序列。 */
 async function planToSpecs(
   admin: SupabaseClient,
@@ -206,8 +231,11 @@ Deno.serve(async (request) => {
             controller.enqueue(sse({ type: 'text_delta', delta: piece }));
           }
 
-          // 背景图：竖版、显式无文字；落位居中
-          const placement = posterPlacement();
+          // 背景图：竖版、显式无文字；落在既有画布内容右侧的空白处（画布为空则居中），
+          // 避免多次生成的海报堆叠在同一处。文字节点相对 placement 计算，随之一并偏移。
+          const posterBase = posterPlacement();
+          const posterStartX = await nextBatchStartX(admin, body.projectId);
+          const placement = posterStartX === null ? posterBase : { ...posterBase, x: posterStartX };
           const params = buildGenerationParams(
             'image',
             { ...modelRow.default_params, aspectRatio: POSTER_ASPECT_RATIO },
@@ -285,7 +313,9 @@ Deno.serve(async (request) => {
         if (modelRow && modelRow.is_active) {
           const specs = await planToSpecs(admin, body, plan.steps, selectedModality);
           const totalWidth = specs.reduce((sum, s) => sum + s.width + 24, 0) - 24;
-          let cursorX = specs.length > 0 ? -totalWidth / 2 : 0;
+          // 新一批落在既有画布内容右侧的空白处；画布为空（首次生成）则按批宽以原点居中
+          const batchStartX = await nextBatchStartX(admin, body.projectId);
+          let cursorX = batchStartX ?? (specs.length > 0 ? -totalWidth / 2 : 0);
 
           for (let idx = 0; idx < specs.length; idx += 1) {
             const spec = specs[idx];
