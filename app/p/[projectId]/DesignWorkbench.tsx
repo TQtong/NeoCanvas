@@ -163,13 +163,23 @@ function WorkbenchInner({ bundle, models }: DesignWorkbenchProps) {
 }
 
 /**
- * 设计页工作台。挂载时以快照水合状态库，卸载时重置。
+ * 设计页工作台。以服务端快照水合状态库，卸载时重置。
+ *
+ * StrictMode 安全：开发期 React 会 mount→unmount→remount，下方 cleanup 的 reset() 会清空
+ * 画布与对话状态库。若仅用一次性 ref 在渲染期水合，remount 后不会重灌，会留下空的
+ * conversationId 与空画布——表现为「发送按钮可点但点击无反应（send 因 conversationId 为空提前
+ * 返回）」「画布空白」。故除首帧同步水合（避免空闪、让子组件首次渲染即可读到状态）外，还在
+ * effect 每次 setup 重新水合，使 remount（及切换项目）后状态库始终对应当前项目。
  */
 export function DesignWorkbench({ bundle, models }: DesignWorkbenchProps) {
-  // 以初始快照水合（挂载即执行，先于子组件渲染读取）
-  const hydrated = useRef(false);
-  if (!hydrated.current) {
-    hydrated.current = true;
+  // 在 effect 内水合两库、cleanup 重置：
+  // - 不在渲染期调用 store.set()，避免「在渲染 DesignWorkbench 时更新订阅了画布库的子组件
+  //   （AlignmentGuides 等）」的 setState-in-render 告警；
+  // - StrictMode 下 dev 会 mount→unmount→remount，setup 重灌、cleanup 重置成对出现，remount
+  //   后状态库仍对应当前项目（修复此前 conversationId 被清空致「发送无反应」、画布空白）；
+  // - bundle 随服务端渲染稳定，切换项目时变更，届时自动「重置旧项目→水合新项目」。
+  // effect 在首帧提交后随即运行（早于任何用户交互），故 send() 取用 conversationId 时已就绪。
+  useEffect(() => {
     useCanvasStore.getState().hydrate({
       projectId: bundle.project.id,
       nodeRows: bundle.nodes,
@@ -183,14 +193,11 @@ export function DesignWorkbench({ bundle, models }: DesignWorkbenchProps) {
       agentMode: 'generate',
       hasMoreMessages: bundle.hasMoreMessages,
     });
-  }
-
-  useEffect(() => {
     return () => {
       useCanvasStore.getState().reset();
       useChatStore.getState().reset();
     };
-  }, []);
+  }, [bundle]);
 
   return (
     <ReactFlowProvider>
