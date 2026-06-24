@@ -150,16 +150,21 @@ export function MessageBubble({ message }: { message: MessageView }) {
           </span>
         ) : null}
 
-        {/* 生成进行态：本条消息触发了生成任务 */}
+        {/* 生成进行态：本条消息触发了生成任务，以脉冲图标 + 跳动圆点强化动态感 */}
         {isGenerating ? (
           <span
             className={cn(
-              'mt-1 flex items-center gap-1.5 text-xs',
-              onAccent ? 'text-accent-foreground/80' : 'text-accent',
+              'mt-1.5 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium',
+              onAccent ? 'bg-accent-foreground/15 text-accent-foreground' : 'bg-accent/10 text-accent',
             )}
           >
-            <Sparkles className="size-3.5 shrink-0" />
+            <Sparkles className="size-3.5 shrink-0 animate-pulse-soft" />
             {t('chat.generating')}
+            <span className="ml-0.5 flex items-center gap-0.5">
+              <span className="size-1 animate-bounce rounded-full bg-current [animation-delay:-0.3s]" />
+              <span className="size-1 animate-bounce rounded-full bg-current [animation-delay:-0.15s]" />
+              <span className="size-1 animate-bounce rounded-full bg-current" />
+            </span>
           </span>
         ) : null}
       </div>

@@ -49,7 +49,7 @@ function GenerationPlaceholderNodeComponent({ id, data }: NodeProps<CanvasFlowNo
   return (
     <div
       className={cn(
-        'flex size-full flex-col items-center justify-center gap-3 overflow-hidden rounded-xl border p-4 text-center',
+        'relative flex size-full flex-col items-center justify-center gap-3 overflow-hidden rounded-xl border p-4 text-center',
         failed ? 'border-danger/40 bg-danger/5' : 'border-dashed border-accent/40 bg-accent-muted/40',
       )}
     >
@@ -71,18 +71,29 @@ function GenerationPlaceholderNodeComponent({ id, data }: NodeProps<CanvasFlowNo
         </>
       ) : (
         <>
-          <Icon className="size-7 animate-pulse-soft text-accent" />
-          <p className="text-sm font-medium text-accent">{t('node.generating')}</p>
+          {/* 扫光骨架：覆盖整卡的循环高光，明确传达「正在生成」的动态感 */}
+          <div className="pointer-events-none absolute inset-0 -translate-x-full animate-shimmer bg-gradient-to-r from-transparent via-accent/20 to-transparent" />
+          {/* 图标 + 外扩脉冲光环 */}
+          <span className="relative flex size-12 items-center justify-center">
+            <span className="absolute inset-0 animate-ping rounded-full bg-accent/20" />
+            <span className="absolute inset-1.5 rounded-full bg-accent/10" />
+            <Icon className="relative size-6 animate-pulse-soft text-accent" />
+          </span>
+          <p className="relative text-sm font-medium text-accent">{t('node.generating')}</p>
           {d.promptSummary ? (
-            <p className="line-clamp-2 text-xs text-muted-foreground">{d.promptSummary}</p>
+            <p className="relative line-clamp-2 text-xs text-muted-foreground">{d.promptSummary}</p>
           ) : null}
-          <div className="h-1.5 w-full max-w-[80%] overflow-hidden rounded-full bg-accent/15">
-            <div
-              className="h-full rounded-full bg-accent transition-[width] duration-300"
-              style={{ width: `${progress}%` }}
-            />
+          {/* 不确定进度条：同步模型无细粒度进度，用循环滑动的高光段比「卡在 10%」更可信 */}
+          <div className="relative h-1.5 w-full max-w-[80%] overflow-hidden rounded-full bg-accent/15">
+            {progress >= 50 ? (
+              <div
+                className="h-full rounded-full bg-accent transition-[width] duration-500"
+                style={{ width: `${progress}%` }}
+              />
+            ) : (
+              <div className="h-full w-2/5 -translate-x-full animate-shimmer rounded-full bg-accent/70" />
+            )}
           </div>
-          <span className="text-xs tabular-nums text-muted-foreground">{progress}%</span>
         </>
       )}
     </div>
