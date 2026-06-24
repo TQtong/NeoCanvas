@@ -16,7 +16,7 @@
     "db:stop": "supabase stop",
     "db:reset": "supabase db reset",
     "db:status": "supabase status",
-    "functions:serve": "supabase functions serve --no-verify-jwt"
+    "functions:serve": "supabase functions serve --no-verify-jwt --env-file supabase/functions/.env"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.4",

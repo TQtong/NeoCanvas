@@ -25,7 +25,7 @@ export type NodeType =
   | 'video'
   | 'generation_placeholder'
   | 'frame';
-export type Provider = 'openai' | 'google' | 'volcengine' | 'fal' | 'replicate';
+export type Provider = 'openai' | 'google' | 'volcengine' | 'fal' | 'replicate' | 'siliconflow';
 export type Scene = 'design' | 'branding' | 'ecommerce' | 'video';
 export type AgentMode = 'generate' | 'orchestrate' | 'scene';
 

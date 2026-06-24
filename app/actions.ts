@@ -21,7 +21,7 @@ import type {
 import { createServerSupabase } from '@/lib/supabase/server';
 
 /** 默认模型键（与 model_catalog 默认选中一致）。 */
-const DEFAULT_MODEL_KEY = 'gpt-image-2';
+const DEFAULT_MODEL_KEY = 'siliconflow-kolors';
 
 /** 合法场景集合，用于校验表单输入。 */
 const VALID_SCENES: ReadonlySet<string> = new Set(['design', 'branding', 'ecommerce', 'video']);

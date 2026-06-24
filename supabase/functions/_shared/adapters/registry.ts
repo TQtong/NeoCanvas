@@ -15,6 +15,7 @@ import { googleAdapter } from './google.ts';
 import { volcengineAdapter } from './volcengine.ts';
 import { falAdapter } from './fal.ts';
 import { replicateAdapter } from './replicate.ts';
+import { siliconflowAdapter } from './siliconflow.ts';
 
 /** 提供商 → 适配器。 */
 const REGISTRY: Record<Provider, ModelAdapter> = {
@@ -23,6 +24,7 @@ const REGISTRY: Record<Provider, ModelAdapter> = {
   volcengine: volcengineAdapter,
   fal: falAdapter,
   replicate: replicateAdapter,
+  siliconflow: siliconflowAdapter,
 };
 
 /**

@@ -35,7 +35,7 @@ export interface CreatePromptBoxProps {
 const TEXTAREA_MAX_HEIGHT = 200;
 
 /** 缺省模型键：服务端未给出默认时退回到主图像模型。 */
-const FALLBACK_MODEL_KEY = 'gpt-image-2';
+const FALLBACK_MODEL_KEY = 'siliconflow-kolors';
 
 /**
  * 创作输入框组件。

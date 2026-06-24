@@ -78,7 +78,7 @@ export type NodeType = (typeof NODE_TYPES)[number];
 /**
  * 模型提供商标识。用于适配器路由与 `model_catalog.provider`。
  */
-export const PROVIDERS = ['openai', 'google', 'volcengine', 'fal', 'replicate'] as const;
+export const PROVIDERS = ['openai', 'google', 'volcengine', 'fal', 'replicate', 'siliconflow'] as const;
 export type Provider = (typeof PROVIDERS)[number];
 
 /**
