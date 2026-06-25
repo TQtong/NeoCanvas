@@ -16,12 +16,7 @@ import {
   type VideoGenerationParams,
 } from '../types.ts';
 import { ApiException } from '../response.ts';
-import {
-  requireProviderKey,
-  resolveSize,
-  type ModelAdapter,
-  type ModelContext,
-} from './base.ts';
+import { requireProviderKey, resolveSize, type ModelAdapter, type ModelContext } from './base.ts';
 
 const ARK_BASE = 'https://ark.cn-beijing.volces.com/api/v3';
 
@@ -46,11 +41,18 @@ async function submitVideo(
     (params.seed != null ? ` --seed ${params.seed}` : '');
 
   const content: ArkContentItem[] = [{ type: 'text', text: commandText }];
-  // 首帧 / 参考图
-  const firstFrame =
-    ctx.references.find((r) => r.role === 'first_frame') ?? ctx.references[0];
-  if (firstFrame) {
-    content.push({ type: 'image_url', image_url: { url: firstFrame.url } });
+  // 关键帧序列（逐段首尾帧）：仅声明 supportsKeyframeSequence 的模型经 validateParams 放行至此，
+  // 按链方向有序下发全部关键帧（相邻两帧构成一段：前者首帧、后者尾帧）。首/尾帧的精确 Ark 载荷标注
+  // 与分段拼接随 Seedance 实际激活时按其在线契约定稿；否则退回单首帧 / 参考图图生视频。
+  if (ctx.keyframes.length > 0) {
+    for (const kf of ctx.keyframes) {
+      content.push({ type: 'image_url', image_url: { url: kf.url } });
+    }
+  } else {
+    const firstFrame = ctx.references.find((r) => r.role === 'first_frame') ?? ctx.references[0];
+    if (firstFrame) {
+      content.push({ type: 'image_url', image_url: { url: firstFrame.url } });
+    }
   }
 
   const response = await fetch(`${ARK_BASE}/contents/generations/tasks`, {

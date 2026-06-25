@@ -82,7 +82,12 @@ interface WebhookPayload {
 async function pollViaAdapter(
   admin: ReturnType<typeof createAdminClient>,
   generation: GenerationRow,
-): Promise<{ done: 'succeeded'; candidates: AssetCandidate[] } | { done: 'failed'; error: string } | { done: 'running'; progress: number } | null> {
+): Promise<
+  | { done: 'succeeded'; candidates: AssetCandidate[] }
+  | { done: 'failed'; error: string }
+  | { done: 'running'; progress: number }
+  | null
+> {
   if (!generation.external_job_id) return null;
   const { data: model } = await admin
     .from('model_catalog')
@@ -97,6 +102,8 @@ async function pollViaAdapter(
       capabilities: modelRow.capabilities,
       providerModel: resolveProviderModel(modelRow.key, modelRow.provider, modelRow.default_params),
       references: [],
+      // 轮询 / 回调阶段不需要关键帧（提交已完成），置空满足上下文契约
+      keyframes: [],
     };
     const result = await getAdapter(generation.provider).poll(generation.external_job_id, ctx);
     if (result.status === 'succeeded') return { done: 'succeeded', candidates: result.candidates };

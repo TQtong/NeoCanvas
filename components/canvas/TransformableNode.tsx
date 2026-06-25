@@ -128,8 +128,10 @@ export function TransformableNode({
           minWidth={minWidth}
           minHeight={minHeight}
           keepAspectRatio={effectiveKeepAspect}
-          lineClassName="!border-accent"
-          handleClassName="!size-2.5 !rounded-sm !border-accent !bg-card"
+          // 边线透明：选中边界由 .react-flow__node.selected 的光环表达，避免双重边框；
+          // 角柄改小圆点，观感更干净
+          lineClassName="!border-transparent"
+          handleClassName="!size-2.5 !rounded-full !border-2 !border-accent !bg-card !shadow-soft"
         />
       ) : null}
 

@@ -16,6 +16,7 @@ import type { VideoNodeData } from '@/types';
 import type { CanvasFlowNode } from '@/lib/canvas/node-mapper';
 import { Skeleton } from '@/components/ui/skeleton';
 import { TransformableNode } from '../TransformableNode';
+import { NodeConnectHandles } from './NodeConnectHandles';
 
 function VideoNodeComponent({ id, data, selected }: NodeProps<CanvasFlowNode>) {
   const d = data as VideoNodeData;
@@ -33,33 +34,37 @@ function VideoNodeComponent({ id, data, selected }: NodeProps<CanvasFlowNode>) {
   }, [d.trimStartMs, d.src]);
 
   return (
-    <TransformableNode id={id} selected={Boolean(selected)} rotation={d.rotation} keepAspectRatio>
-      <div
-        className="relative size-full overflow-hidden bg-black"
-        style={{ borderRadius: d.cornerRadius }}
-      >
-        {d.src ? (
-          <video
-            ref={videoRef}
-            src={d.src}
-            poster={d.posterSrc ?? undefined}
-            autoPlay={d.autoplay}
-            muted={d.muted}
-            loop={d.loop}
-            controls={Boolean(selected)}
-            playsInline
-            draggable={false}
-            className="size-full select-none object-cover"
-          />
-        ) : d.assetId ? (
-          <Skeleton className="size-full" />
-        ) : (
-          <div className="flex size-full items-center justify-center text-muted-foreground">
-            <Film className="size-8" />
-          </div>
-        )}
-      </div>
-    </TransformableNode>
+    <>
+      <TransformableNode id={id} selected={Boolean(selected)} rotation={d.rotation} keepAspectRatio>
+        <div
+          className="relative size-full overflow-hidden bg-black"
+          style={{ borderRadius: d.cornerRadius }}
+        >
+          {d.src ? (
+            <video
+              ref={videoRef}
+              src={d.src}
+              poster={d.posterSrc ?? undefined}
+              autoPlay={d.autoplay}
+              muted={d.muted}
+              loop={d.loop}
+              controls={Boolean(selected)}
+              playsInline
+              draggable={false}
+              className="size-full select-none object-cover"
+            />
+          ) : d.assetId ? (
+            <Skeleton className="size-full" />
+          ) : (
+            <div className="flex size-full items-center justify-center text-muted-foreground">
+              <Film className="size-8" />
+            </div>
+          )}
+        </div>
+      </TransformableNode>
+      {/* 连接桩置于内容之后渲染：DOM 靠后 + z-20，确保整圆点在最上层、可拖拽连线 */}
+      <NodeConnectHandles selected={Boolean(selected)} />
+    </>
   );
 }
 

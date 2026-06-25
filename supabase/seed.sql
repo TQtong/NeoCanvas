@@ -54,7 +54,8 @@ values
       'supportsWebhook', false,
       'videoResolutions', jsonb_build_array('480p', '720p', '1080p'),
       'videoDurationRange', jsonb_build_object('min', 3, 'max', 12),
-      'supportsMotionStrength', true
+      'supportsMotionStrength', true,
+      'supportsKeyframeSequence', true
     ),
     jsonb_build_object('resolution', '720p', 'durationSec', 5, 'fps', 24, 'aspectRatio', '16:9'),
     20,

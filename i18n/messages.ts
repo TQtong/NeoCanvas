@@ -89,6 +89,13 @@ const zhCN: MessageDictionary = {
   'node.duplicate': '复制',
   'node.generating': '生成中…',
   'node.generationFailed': '生成失败',
+  'node.generateVideo': '按顺序生成视频',
+  'node.addDescription': '添加描述',
+  'edge.description': '描述',
+  'node.videoQueued': '已按关键帧顺序提交视频生成',
+  'node.videoTooShort': '至少连接两张已就绪的图片才能生成视频',
+  'node.videoNoModel': '当前无可用视频模型（需激活视频模型并配置其密钥）',
+  'node.videoFailed': '视频生成提交失败',
   'node.tapToRetry': '点击重试',
 
   'chat.newConversation': '新对话',
@@ -161,7 +168,8 @@ const en: MessageDictionary = {
   'home.emptyProjects': 'No projects yet — click "New project" to start',
   'home.updatedAt': 'Updated {date}',
   'home.loadMore': 'Load more',
-  'home.deleteProjectConfirm': 'Delete this project? You can restore it during the retention window.',
+  'home.deleteProjectConfirm':
+    'Delete this project? You can restore it during the retention window.',
   'home.projectDeleted': 'Project deleted',
 
   'scene.design': 'Design',
@@ -198,6 +206,13 @@ const en: MessageDictionary = {
   'node.duplicate': 'Duplicate',
   'node.generating': 'Generating…',
   'node.generationFailed': 'Generation failed',
+  'node.generateVideo': 'Generate video in order',
+  'node.addDescription': 'Add description',
+  'edge.description': 'Description',
+  'node.videoQueued': 'Video generation queued in keyframe order',
+  'node.videoTooShort': 'Connect at least two ready images to generate a video',
+  'node.videoNoModel': 'No active video model (activate one and configure its key)',
+  'node.videoFailed': 'Failed to submit video generation',
   'node.tapToRetry': 'Tap to retry',
 
   'chat.newConversation': 'New conversation',

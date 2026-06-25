@@ -12,6 +12,10 @@
 import { useCallback, useMemo, useRef } from 'react';
 import {
   ReactFlow,
+  ConnectionLineType,
+  type Connection,
+  type IsValidConnection,
+  type OnConnect,
   type OnMove,
   type Viewport as RFViewport,
 } from '@xyflow/react';
@@ -19,8 +23,11 @@ import '@xyflow/react/dist/style.css';
 import { useCanvasStore } from '@/stores/canvas-store';
 import { nodeBox, type CanvasFlowNode, type CanvasFlowEdge } from '@/lib/canvas/node-mapper';
 import { computeAlignment } from '@/lib/canvas/alignment';
+import { isSequenceable, wouldCreateSequenceCycle } from '@/lib/canvas/sequence';
+import { isAnnotationSource } from '@/lib/canvas/annotation';
 import { ZOOM_MAX, ZOOM_MIN, SNAP_THRESHOLD, DEFAULT_VIEWPORT } from '@/lib/canvas/constants';
 import { nodeTypes } from './node-registry';
+import { edgeTypes } from './edge-registry';
 import { BackgroundGrid } from './BackgroundGrid';
 import { AlignmentGuides } from './AlignmentGuides';
 import { SelectionTransformLayer } from './SelectionTransformLayer';
@@ -58,7 +65,10 @@ export function CanvasContainer({ initialViewport }: CanvasContainerProps) {
 
   // 按工具切换指针行为
   const isCreationTool =
-    activeTool === 'shape' || activeTool === 'draw' || activeTool === 'text' || activeTool === 'frame';
+    activeTool === 'shape' ||
+    activeTool === 'draw' ||
+    activeTool === 'text' ||
+    activeTool === 'frame';
   const isPanTool = activeTool === 'pan';
 
   const onMove = useCallback<OnMove>(
@@ -111,6 +121,39 @@ export function CanvasContainer({ initialViewport }: CanvasContainerProps) {
     setEditingNode(null);
   }, [clearSelection, setEditingNode]);
 
+  // 连线落定：按源节点类型分流——文字节点 → 图为「描述边」，图 → 图为「工作流序列边」
+  // （线性链 / 一对一、去重、拒环等约束由状态库处理）
+  const onConnect = useCallback<OnConnect>((connection) => {
+    const { source, target, sourceHandle, targetHandle } = connection;
+    if (!source || !target) return;
+    const store = useCanvasStore.getState();
+    const sourceNode = store.nodes.find((n) => n.id === source);
+    if (sourceNode && isAnnotationSource(sourceNode)) {
+      store.addAnnotationEdge(source, target, sourceHandle, targetHandle);
+    } else {
+      store.addSequenceEdge(source, target, sourceHandle, targetHandle);
+    }
+  }, []);
+
+  // 连线校验（提供拖拽时的有效性反馈与端口高亮）：
+  // - 文字 → 图片 / 视频：描述边；
+  // - 图片 / 视频 → 图片 / 视频：序列边（非自连、不成环）。
+  const isValidConnection = useCallback<IsValidConnection<CanvasFlowEdge>>((edgeOrConn) => {
+    const { source, target } = edgeOrConn as Connection;
+    if (!source || !target || source === target) return false;
+    const { nodes: currentNodes, edges: currentEdges } = useCanvasStore.getState();
+    const sourceNode = currentNodes.find((n) => n.id === source);
+    const targetNode = currentNodes.find((n) => n.id === target);
+    if (!sourceNode || !targetNode) return false;
+    // 文字节点只能作为描述源，连到图片 / 视频
+    if (isAnnotationSource(sourceNode)) return isSequenceable(targetNode);
+    // 图片 / 视频之间：序列边，拒自连 / 成环
+    if (isSequenceable(sourceNode)) {
+      return isSequenceable(targetNode) && !wouldCreateSequenceCycle(currentEdges, source, target);
+    }
+    return false;
+  }, []);
+
   const defaultViewport = useMemo<RFViewport>(
     () => initialViewport ?? DEFAULT_VIEWPORT,
     [initialViewport],
@@ -122,8 +165,11 @@ export function CanvasContainer({ initialViewport }: CanvasContainerProps) {
         nodes={nodes}
         edges={edges}
         nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
         onNodesChange={handleNodesChange}
         onEdgesChange={handleEdgesChange}
+        onConnect={onConnect}
+        isValidConnection={isValidConnection}
         onNodeDrag={onNodeDrag}
         onNodeDragStop={onNodeDragStop}
         onMove={onMove}
@@ -132,7 +178,10 @@ export function CanvasContainer({ initialViewport }: CanvasContainerProps) {
         defaultViewport={defaultViewport}
         minZoom={ZOOM_MIN}
         maxZoom={ZOOM_MAX}
-        nodesConnectable={false}
+        connectionLineType={ConnectionLineType.Bezier}
+        connectionRadius={28}
+        connectionLineStyle={{ stroke: 'hsl(var(--accent))', strokeWidth: 2 }}
+        nodesConnectable={!isCreationTool && !isPanTool}
         nodesDraggable={!isCreationTool && !isPanTool}
         elementsSelectable={!isCreationTool}
         panOnDrag={isPanTool ? true : isCreationTool ? false : [1, 2]}

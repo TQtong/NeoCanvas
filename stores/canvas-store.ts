@@ -11,7 +11,12 @@
  * @module stores/canvas-store
  */
 
-import { applyEdgeChanges, applyNodeChanges, type EdgeChange, type NodeChange } from '@xyflow/react';
+import {
+  applyEdgeChanges,
+  applyNodeChanges,
+  type EdgeChange,
+  type NodeChange,
+} from '@xyflow/react';
 import { create } from 'zustand';
 import type {
   CanvasBackgroundSettings,
@@ -30,6 +35,18 @@ import {
   rowToNode,
 } from '@/lib/canvas/node-mapper';
 import { generationRowToView } from '@/lib/data/mappers';
+import {
+  decorateSequenceEdge,
+  SEQUENCE_EDGE_TYPE,
+  SEQUENCE_HANDLE_IN,
+  SEQUENCE_HANDLE_OUT,
+  wouldCreateSequenceCycle,
+} from '@/lib/canvas/sequence';
+import {
+  ANNOTATION_EDGE_TYPE,
+  ANNOTATION_HANDLE_OUT,
+  decorateAnnotationEdge,
+} from '@/lib/canvas/annotation';
 import { DEFAULT_VIEWPORT, PASTE_OFFSET } from '@/lib/canvas/constants';
 import { uuid } from '@/lib/utils/id';
 
@@ -104,6 +121,8 @@ export interface CanvasState {
   _dirtyEdgeIds: Set<string>;
   /** 待删除边 id。 */
   _deletedEdgeIds: Set<string>;
+  /** 已 flush、写回未确认的边 id（在途持久化）；用于抑制自身写入的边回声。 */
+  _pendingEdgeIds: Set<string>;
   /** 节点服务端版本（updated_at），用于回声抑制与最后写入胜出。 */
   _nodeVersions: Record<string, string>;
   /** 已 flush、写回未确认的节点 id（在途持久化）；用于抑制自身写入的回声。 */
@@ -182,6 +201,30 @@ export interface CanvasState {
   // ----- 边 -----
   addEdge: (edge: CanvasFlowEdge) => void;
   removeEdges: (ids: string[]) => void;
+  /**
+   * 串接一条工作流序列边 `source → target`：强制线性链（替换源既有出边、目标既有入边），
+   * 去重已存在的同向边，并拒绝会成环的连接。
+   *
+   * @returns 实际创建的边 id；当被去重 / 拒环而未创建时返回 null。
+   */
+  addSequenceEdge: (
+    source: string,
+    target: string,
+    sourceHandle?: string | null,
+    targetHandle?: string | null,
+  ) => string | null;
+  /**
+   * 串接一条图片描述边 `note → image`：强制一对一（替换该便签既有描述、替换该图既有描述），
+   * 去重已存在的同向边。
+   *
+   * @returns 实际创建的边 id；当被去重而未创建时返回 null。
+   */
+  addAnnotationEdge: (
+    source: string,
+    target: string,
+    sourceHandle?: string | null,
+    targetHandle?: string | null,
+  ) => string | null;
 
   // ----- 远端回流 -----
   applyRemoteNode: (change: RealtimeChange<CanvasNodeRow>) => void;
@@ -195,6 +238,10 @@ export interface CanvasState {
   markNodePersisted: (id: string, updatedAt: string) => void;
   /** 标记一批节点持久化失败：清除在途标记，使后续真正的远端变更可正常套用。 */
   markPersistFailed: (ids: string[]) => void;
+  /** 标记一批边已持久化（清除在途标记，用于边回声抑制）。 */
+  markEdgesPersisted: (ids: string[]) => void;
+  /** 标记一批边持久化失败：清除在途标记，使后续真正的远端变更可正常套用。 */
+  markEdgesPersistFailed: (ids: string[]) => void;
   /** 取出并清空脏集快照，供持久化控制器写回。 */
   flushDirty: () => DirtyFlush;
   /** 取出并清空视口脏标记。 */
@@ -245,6 +292,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   _deletedEdgeIds: new Set(),
   _nodeVersions: {},
   _pendingNodeIds: new Set(),
+  _pendingEdgeIds: new Set(),
   _viewportDirty: false,
 
   hydrate: ({ projectId, nodeRows, edgeRows, viewport }) => {
@@ -265,6 +313,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       _deletedEdgeIds: new Set(),
       _nodeVersions: versions,
       _pendingNodeIds: new Set(),
+      _pendingEdgeIds: new Set(),
       _viewportDirty: false,
     });
   },
@@ -287,6 +336,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       _deletedEdgeIds: new Set(),
       _nodeVersions: {},
       _pendingNodeIds: new Set(),
+      _pendingEdgeIds: new Set(),
       _viewportDirty: false,
     });
   },
@@ -380,20 +430,39 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
   removeNodes: (ids) => {
     const idSet = new Set(ids);
-    const deleted = new Set(get()._deletedNodeIds);
-    const dirty = new Set(get()._dirtyNodeIds);
+    const state = get();
+    const deleted = new Set(state._deletedNodeIds);
+    const dirty = new Set(state._dirtyNodeIds);
     for (const id of ids) {
       deleted.add(id);
       dirty.delete(id);
     }
-    set((state) => ({
+    // 同步清理与被删节点相连的边（source/target 命中其一）：从 edges 移除、从脏边集删、并入待删边集，
+    // 避免悬挂边致持久化外键违例与序列链算法被幽灵端点污染（与 React Flow 删除键的级联语义对齐）
+    const edgeDirty = new Set(state._dirtyEdgeIds);
+    const edgeDeleted = new Set(state._deletedEdgeIds);
+    const incidentEdgeIds = new Set(
+      state.edges.filter((e) => idSet.has(e.source) || idSet.has(e.target)).map((e) => e.id),
+    );
+    for (const eid of incidentEdgeIds) {
+      edgeDeleted.add(eid);
+      edgeDirty.delete(eid);
+    }
+    set((s) => ({
       // 删除目标节点，并解除以其为父的子节点的父子关系
-      nodes: state.nodes
+      nodes: s.nodes
         .filter((n) => !idSet.has(n.id))
-        .map((n) => (n.parentId && idSet.has(n.parentId) ? { ...n, parentId: undefined, extent: undefined } : n)),
-      selectedNodeIds: state.selectedNodeIds.filter((sid) => !idSet.has(sid)),
+        .map((n) =>
+          n.parentId && idSet.has(n.parentId)
+            ? { ...n, parentId: undefined, extent: undefined }
+            : n,
+        ),
+      edges: s.edges.filter((e) => !incidentEdgeIds.has(e.id)),
+      selectedNodeIds: s.selectedNodeIds.filter((sid) => !idSet.has(sid)),
       _deletedNodeIds: deleted,
       _dirtyNodeIds: dirty,
+      _dirtyEdgeIds: edgeDirty,
+      _deletedEdgeIds: edgeDeleted,
     }));
   },
 
@@ -422,7 +491,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   clearSelection: () => set({ selectedNodeIds: [] }),
   selectAll: () => set((state) => ({ selectedNodeIds: state.nodes.map((n) => n.id) })),
 
-  setTool: (tool) => set({ activeTool: tool, editingNodeId: tool === 'text' ? get().editingNodeId : null }),
+  setTool: (tool) =>
+    set({ activeTool: tool, editingNodeId: tool === 'text' ? get().editingNodeId : null }),
   setEditingNode: (id) => set({ editingNodeId: id }),
 
   setViewport: (viewport, options) =>
@@ -534,7 +604,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   copySelection: () => {
     const { nodes, selectedNodeIds } = get();
     const sel = new Set(selectedNodeIds);
-    set({ clipboard: nodes.filter((n) => sel.has(n.id)).map((n) => ({ ...n, data: { ...n.data } })) });
+    set({
+      clipboard: nodes.filter((n) => sel.has(n.id)).map((n) => ({ ...n, data: { ...n.data } })),
+    });
   },
 
   paste: () => {
@@ -574,6 +646,86 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       edges: state.edges.filter((e) => !idSet.has(e.id)),
       _deletedEdgeIds: deleted,
     }));
+  },
+
+  addSequenceEdge: (source, target, sourceHandle, targetHandle) => {
+    if (source === target) return null;
+    const state = get();
+    const seqEdges = state.edges.filter((e) => e.type === SEQUENCE_EDGE_TYPE);
+    // 已存在同向序列边：去重
+    if (seqEdges.some((e) => e.source === source && e.target === target)) return null;
+    // 会成环：拒绝
+    if (wouldCreateSequenceCycle(state.edges, source, target)) return null;
+
+    // 线性链：移除源既有出边与目标既有入边，使每个节点至多一进一出
+    const supersededIds = seqEdges
+      .filter((e) => e.source === source || e.target === target)
+      .map((e) => e.id);
+
+    const id = uuid();
+    // 写入连接桩 id（默认右出桩 → 左入桩），持久化到 source_handle / target_handle，保证重载锚点一致
+    const edge = decorateSequenceEdge({
+      id,
+      source,
+      target,
+      sourceHandle: sourceHandle ?? SEQUENCE_HANDLE_OUT,
+      targetHandle: targetHandle ?? SEQUENCE_HANDLE_IN,
+      data: {},
+    });
+
+    const dirty = new Set(state._dirtyEdgeIds);
+    const deleted = new Set(state._deletedEdgeIds);
+    for (const sid of supersededIds) {
+      deleted.add(sid);
+      dirty.delete(sid);
+    }
+    dirty.add(id);
+
+    const supersededSet = new Set(supersededIds);
+    set((s) => ({
+      edges: [...s.edges.filter((e) => !supersededSet.has(e.id)), edge],
+      _dirtyEdgeIds: dirty,
+      _deletedEdgeIds: deleted,
+    }));
+    return id;
+  },
+
+  addAnnotationEdge: (source, target, sourceHandle, targetHandle) => {
+    if (source === target) return null;
+    const state = get();
+    const annEdges = state.edges.filter((e) => e.type === ANNOTATION_EDGE_TYPE);
+    // 已存在同向描述边：去重
+    if (annEdges.some((e) => e.source === source && e.target === target)) return null;
+    // 一对一：移除该便签既有描述出边、该图既有描述入边
+    const supersededIds = annEdges
+      .filter((e) => e.source === source || e.target === target)
+      .map((e) => e.id);
+
+    const id = uuid();
+    const edge = decorateAnnotationEdge({
+      id,
+      source,
+      target,
+      sourceHandle: sourceHandle ?? ANNOTATION_HANDLE_OUT,
+      targetHandle: targetHandle ?? SEQUENCE_HANDLE_IN,
+      data: {},
+    });
+
+    const dirty = new Set(state._dirtyEdgeIds);
+    const deleted = new Set(state._deletedEdgeIds);
+    for (const sid of supersededIds) {
+      deleted.add(sid);
+      dirty.delete(sid);
+    }
+    dirty.add(id);
+
+    const supersededSet = new Set(supersededIds);
+    set((s) => ({
+      edges: [...s.edges.filter((e) => !supersededSet.has(e.id)), edge],
+      _dirtyEdgeIds: dirty,
+      _deletedEdgeIds: deleted,
+    }));
+    return id;
   },
 
   applyRemoteNode: (change) => {
@@ -640,11 +792,24 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     }
     const row = change.new as CanvasEdgeRow;
     if (!row?.id) return;
+    // 回声抑制：本地仍有该边的在途变更（脏 / 待持久化确认 / 刚被替换或删除）时以本地为准，忽略自身
+    // 写入回流——边表无 updated_at，故以脏 / 在途 / 待删三集联合识别回声，避免迟到的 INSERT 回声
+    // 复活已被 addSequenceEdge 替换或已删除的边，破坏「每节点至多一进一出」的线性链不变式。
+    const local = get();
+    if (
+      local._dirtyEdgeIds.has(row.id) ||
+      local._pendingEdgeIds.has(row.id) ||
+      local._deletedEdgeIds.has(row.id)
+    ) {
+      return;
+    }
     const edge = rowToEdge(row);
     set((state) => {
       const exists = state.edges.some((e) => e.id === row.id);
       return {
-        edges: exists ? state.edges.map((e) => (e.id === row.id ? edge : e)) : [...state.edges, edge],
+        edges: exists
+          ? state.edges.map((e) => (e.id === row.id ? edge : e))
+          : [...state.edges, edge],
       };
     });
   },
@@ -703,7 +868,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     set((state) => {
       const pending = new Set(state._pendingNodeIds);
       pending.delete(id);
-      return { _nodeVersions: { ...state._nodeVersions, [id]: updatedAt }, _pendingNodeIds: pending };
+      return {
+        _nodeVersions: { ...state._nodeVersions, [id]: updatedAt },
+        _pendingNodeIds: pending,
+      };
     });
   },
 
@@ -712,6 +880,22 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       const pending = new Set(state._pendingNodeIds);
       for (const id of ids) pending.delete(id);
       return { _pendingNodeIds: pending };
+    });
+  },
+
+  markEdgesPersisted: (ids) => {
+    set((state) => {
+      const pending = new Set(state._pendingEdgeIds);
+      for (const id of ids) pending.delete(id);
+      return { _pendingEdgeIds: pending };
+    });
+  },
+
+  markEdgesPersistFailed: (ids) => {
+    set((state) => {
+      const pending = new Set(state._pendingEdgeIds);
+      for (const id of ids) pending.delete(id);
+      return { _pendingEdgeIds: pending };
     });
   },
 
@@ -738,9 +922,11 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       edgeDeletes: Array.from(state._deletedEdgeIds),
     };
 
-    // 把本批 upsert 的节点标记为「在途持久化」，在确认 / 失败前抑制其自身回声
+    // 把本批 upsert 的节点 / 边标记为「在途持久化」，在确认 / 失败前抑制其自身回声
     const pending = new Set(state._pendingNodeIds);
     for (const node of upserts) pending.add(node.id);
+    const pendingEdges = new Set(state._pendingEdgeIds);
+    for (const edge of edgeUpserts) pendingEdges.add(edge.id);
 
     set({
       _dirtyNodeIds: new Set(),
@@ -748,6 +934,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       _dirtyEdgeIds: new Set(),
       _deletedEdgeIds: new Set(),
       _pendingNodeIds: pending,
+      _pendingEdgeIds: pendingEdges,
     });
 
     return flush;

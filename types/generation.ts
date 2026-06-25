@@ -32,8 +32,11 @@ export interface ReferenceMaterial {
   nodeId?: string;
   /** 解析后用于取媒体的 `assets.id`（node 提及时取其绑定资产）。 */
   assetId: string;
-  /** 参考作用：风格 / 内容 / 首帧 / 蒙版。 */
-  role: 'style' | 'content' | 'first_frame' | 'mask';
+  /**
+   * 参考作用：风格 / 内容 / 首帧 / 蒙版 / 关键帧。
+   * `keyframe` 专用于 {@link VideoGenerationParams.keyframes} 的有序关键帧序列。
+   */
+  role: 'style' | 'content' | 'first_frame' | 'mask' | 'keyframe';
 }
 
 /**
@@ -78,6 +81,15 @@ export interface VideoGenerationParams {
   seed?: number;
   /** 参考素材（首帧 / 参考图，图生视频）。 */
   references: ReferenceMaterial[];
+  /**
+   * 有序关键帧序列（「逐段首尾帧」合成模式）。
+   *
+   * 当存在且长度 ≥ 2 时，按数组顺序相邻两帧构成一段图生视频（前者为首帧、后者为尾帧），
+   * 各段拼接为一条完整视频；此模式与 {@link references} 的单一首帧模式互斥，由画布上
+   * 用户手动连接的 `sequence` 边解析而来（第 05 篇生成编排）。每个元素 `role` 取 `keyframe`，
+   * 顺序即合成顺序。
+   */
+  keyframes?: ReferenceMaterial[];
 }
 
 /**
@@ -98,10 +110,7 @@ export interface TextGenerationParams {
 /**
  * 生成参数判别联合，以 `modality` narrow。映射 `generations.params` JSONB。
  */
-export type GenerationParams =
-  | ImageGenerationParams
-  | VideoGenerationParams
-  | TextGenerationParams;
+export type GenerationParams = ImageGenerationParams | VideoGenerationParams | TextGenerationParams;
 
 /**
  * 按模态取出对应参数形状的工具类型。

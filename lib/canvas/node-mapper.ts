@@ -20,6 +20,8 @@ import type {
   VideoNodeData,
 } from '@/types';
 import { createDefaultNodeDataUnion, DEFAULT_NODE_SIZE } from './constants';
+import { decorateSequenceEdge, SEQUENCE_EDGE_TYPE } from './sequence';
+import { ANNOTATION_EDGE_TYPE, decorateAnnotationEdge } from './annotation';
 
 /** 本项目的 React Flow 节点类型别名。 */
 export type CanvasFlowNode = Node<NodeData>;
@@ -211,6 +213,9 @@ export function rowToEdge(row: CanvasEdgeRow): CanvasFlowEdge {
   if (row.source_handle) edge.sourceHandle = row.source_handle;
   if (row.target_handle) edge.targetHandle = row.target_handle;
   if (row.type && row.type !== 'default') edge.type = row.type;
+  // 序列 / 描述边：加载时统一施加渲染装饰（动画 / 虚线 + 末端箭头），与创建路径外观一致
+  if (edge.type === SEQUENCE_EDGE_TYPE) return decorateSequenceEdge(edge);
+  if (edge.type === ANNOTATION_EDGE_TYPE) return decorateAnnotationEdge(edge);
   return edge;
 }
 

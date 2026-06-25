@@ -58,16 +58,21 @@ export function useCanvasPersistence(
           }
           if (edgeUpserts.length > 0) {
             const rows = edgeUpserts.map((edge) => edgeToInsert(edge, projectId));
-            const { error } = await supabase.from('canvas_edges').upsert(rows, { onConflict: 'id' });
+            const { error } = await supabase
+              .from('canvas_edges')
+              .upsert(rows, { onConflict: 'id' });
             if (error) throw error;
+            // 写回成功：清除在途边标记，使后续真正的远端边变更不被回声抑制误挡
+            store.getState().markEdgesPersisted(edgeUpserts.map((edge) => edge.id));
           }
           if (edgeDeletes.length > 0) {
             const { error } = await supabase.from('canvas_edges').delete().in('id', edgeDeletes);
             if (error) throw error;
           }
         } catch (err) {
-          // 清除本批节点的在途标记，使后续真正的远端变更不被回声抑制误挡
+          // 清除本批节点 / 边的在途标记，使后续真正的远端变更不被回声抑制误挡
           store.getState().markPersistFailed(upserts.map((node) => node.id));
+          store.getState().markEdgesPersistFailed(edgeUpserts.map((edge) => edge.id));
           // eslint-disable-next-line no-console
           console.error('画布持久化失败', err);
           onError?.(err instanceof Error ? err.message : '画布保存失败');

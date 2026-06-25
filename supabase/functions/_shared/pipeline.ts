@@ -17,6 +17,7 @@ import {
   type ModelCatalogRow,
   type ModelDefaultParams,
   type Provider,
+  type ReferenceMaterial,
   type UnifiedGenerationRequest,
   type VideoGenerationParams,
 } from './types.ts';
@@ -96,25 +97,38 @@ export function validateParams(
         throw new ApiException('invalid_params', `时长须在 ${min}~${max} 秒之间`);
       }
     }
+    // 关键帧序列（逐段首尾帧）：需模型声明支持关键帧序列、至少 2 帧、且与单首帧参考互斥
+    const keyframes = p.keyframes ?? [];
+    if (keyframes.length > 0) {
+      if (!capabilities.supportsKeyframeSequence) {
+        throw new ApiException('unsupported_param', '当前模型不支持关键帧序列（逐段首尾帧）视频');
+      }
+      if (keyframes.length < 2) {
+        throw new ApiException('invalid_params', '关键帧序列至少需要 2 帧');
+      }
+      if (p.references.length > 0) {
+        throw new ApiException('unsupported_param', '关键帧序列与单首帧参考不可同时使用');
+      }
+    }
   }
 }
 
 /**
- * 解析参考素材为带签名 URL 的引用，供适配器取回；并对参考图做输入端内容审核。
+ * 把一组参考素材解析为带签名 URL 的引用（保序、跳过缺失资产），并对其中图像类做输入端审核。
+ * 是 {@link resolveReferences} 与 {@link resolveKeyframes} 的共用底座。
  *
  * @param admin - 管理员客户端
- * @param request - 生成请求（含 references）
- * @returns 已解析引用
- * @throws {ApiException} content_blocked 当参考图触发审核
+ * @param materials - 参考素材（无序 references 或有序 keyframes）
+ * @returns 已解析引用（与输入同序，缺失资产被跳过）
+ * @throws {ApiException} content_blocked 当图像参考触发审核
  */
-export async function resolveReferences(
+async function resolveMaterials(
   admin: SupabaseClient,
-  request: UnifiedGenerationRequest,
+  materials: ReferenceMaterial[],
 ): Promise<ResolvedReference[]> {
-  const references = request.params.references;
-  if (references.length === 0) return [];
+  if (materials.length === 0) return [];
 
-  const assetIds = references.map((r) => r.assetId);
+  const assetIds = materials.map((r) => r.assetId);
   const { data: assets } = await admin
     .from('assets')
     .select('id, storage_bucket, storage_path, mime_type')
@@ -122,7 +136,7 @@ export async function resolveReferences(
   const byId = new Map((assets ?? []).map((a) => [a.id, a]));
 
   const resolved: ResolvedReference[] = [];
-  for (const ref of references) {
+  for (const ref of materials) {
     const asset = byId.get(ref.assetId);
     if (!asset) continue;
     const { data } = await admin.storage
@@ -143,6 +157,38 @@ export async function resolveReferences(
   await moderateReferenceImages(imageRefs);
 
   return resolved;
+}
+
+/**
+ * 解析参考素材（无序首帧 / 风格 / 内容参考）为带签名 URL 的引用，供适配器取回；并审核参考图。
+ *
+ * @param admin - 管理员客户端
+ * @param request - 生成请求（含 params.references）
+ * @returns 已解析引用
+ * @throws {ApiException} content_blocked 当参考图触发审核
+ */
+export async function resolveReferences(
+  admin: SupabaseClient,
+  request: UnifiedGenerationRequest,
+): Promise<ResolvedReference[]> {
+  return resolveMaterials(admin, request.params.references);
+}
+
+/**
+ * 解析视频「逐段首尾帧」的有序关键帧（params.keyframes）为带签名 URL 的引用，保序并审核关键帧图像。
+ * 非视频请求或无关键帧时返回空数组。
+ *
+ * @param admin - 管理员客户端
+ * @param request - 生成请求
+ * @returns 有序的已解析关键帧引用
+ * @throws {ApiException} content_blocked 当关键帧触发审核
+ */
+export async function resolveKeyframes(
+  admin: SupabaseClient,
+  request: UnifiedGenerationRequest,
+): Promise<ResolvedReference[]> {
+  if (request.params.modality !== 'video') return [];
+  return resolveMaterials(admin, request.params.keyframes ?? []);
 }
 
 /**
@@ -180,11 +226,13 @@ export async function buildModelContext(
   model: ModelCatalogRow,
 ): Promise<ModelContext> {
   const references = await resolveReferences(admin, request);
+  const keyframes = await resolveKeyframes(admin, request);
   return {
     modelKey: model.key,
     capabilities: model.capabilities,
     providerModel: resolveProviderModel(model.key, model.provider, model.default_params),
     references,
+    keyframes,
   };
 }
 
@@ -283,7 +331,15 @@ function imageContent(width: number | null, height: number | null): Record<strin
     naturalWidth: width,
     naturalHeight: height,
     crop: null,
-    filters: { brightness: 1, contrast: 1, saturation: 1, grayscale: 0, sepia: 0, blur: 0, hueRotate: 0 },
+    filters: {
+      brightness: 1,
+      contrast: 1,
+      saturation: 1,
+      grayscale: 0,
+      sepia: 0,
+      blur: 0,
+      hueRotate: 0,
+    },
     opacity: 1,
     cornerRadius: 8,
     objectFit: 'cover',
@@ -375,7 +431,12 @@ export async function landResult(
   }
 
   if (survivors.length === 0) {
-    await markFailed(admin, generation, `产出触发内容安全审核：${blockedReason ?? '违规'}`, blockedReason ?? '产出违规');
+    await markFailed(
+      admin,
+      generation,
+      `产出触发内容安全审核：${blockedReason ?? '违规'}`,
+      blockedReason ?? '产出违规',
+    );
     return;
   }
 

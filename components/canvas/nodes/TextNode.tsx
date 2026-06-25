@@ -15,6 +15,7 @@ import type { TextNodeData } from '@/types';
 import type { CanvasFlowNode } from '@/lib/canvas/node-mapper';
 import { useCanvasStore } from '@/stores/canvas-store';
 import { TransformableNode } from '../TransformableNode';
+import { TextConnectHandle } from './TextConnectHandle';
 
 function TextNodeComponent({ id, data, selected }: NodeProps<CanvasFlowNode>) {
   const d = data as TextNodeData;
@@ -58,45 +59,49 @@ function TextNodeComponent({ id, data, selected }: NodeProps<CanvasFlowNode>) {
   };
 
   return (
-    <TransformableNode
-      id={id}
-      selected={Boolean(selected)}
-      rotation={d.rotation}
-      enableRotate={!editing}
-      enableResize={!editing}
-    >
-      <div
-        className="size-full cursor-text overflow-hidden p-1"
-        onDoubleClick={(e) => {
-          e.stopPropagation();
-          setEditingNode(id);
-        }}
+    <>
+      <TransformableNode
+        id={id}
+        selected={Boolean(selected)}
+        rotation={d.rotation}
+        enableRotate={!editing}
+        enableResize={!editing}
       >
-        {editing ? (
-          <textarea
-            ref={textareaRef}
-            value={d.text}
-            onChange={(e) => updateNodeData(id, { text: e.target.value })}
-            onBlur={() => setEditingNode(null)}
-            onKeyDown={(e) => {
-              e.stopPropagation();
-              if (e.key === 'Escape') {
-                e.preventDefault();
-                setEditingNode(null);
-              }
-            }}
-            onPointerDown={(e) => e.stopPropagation()}
-            className="nodrag nopan size-full resize-none border-none bg-transparent outline-none"
-            style={textStyle}
-            spellCheck={false}
-          />
-        ) : (
-          <div className="size-full" style={textStyle}>
-            {d.text || <span className="text-muted-foreground/60">双击编辑文本</span>}
-          </div>
-        )}
-      </div>
-    </TransformableNode>
+        <div
+          className="size-full cursor-text overflow-hidden p-1"
+          onDoubleClick={(e) => {
+            e.stopPropagation();
+            setEditingNode(id);
+          }}
+        >
+          {editing ? (
+            <textarea
+              ref={textareaRef}
+              value={d.text}
+              onChange={(e) => updateNodeData(id, { text: e.target.value })}
+              onBlur={() => setEditingNode(null)}
+              onKeyDown={(e) => {
+                e.stopPropagation();
+                if (e.key === 'Escape') {
+                  e.preventDefault();
+                  setEditingNode(null);
+                }
+              }}
+              onPointerDown={(e) => e.stopPropagation()}
+              className="nodrag nopan size-full resize-none border-none bg-transparent outline-none"
+              style={textStyle}
+              spellCheck={false}
+            />
+          ) : (
+            <div className="size-full" style={textStyle}>
+              {d.text || <span className="text-muted-foreground/60">双击编辑文本</span>}
+            </div>
+          )}
+        </div>
+      </TransformableNode>
+      {/* 描述出桩：置于内容之后渲染（DOM 靠后 + z-20），确保可拖拽连到图片作为其描述 */}
+      <TextConnectHandle selected={Boolean(selected)} />
+    </>
   );
 }
 

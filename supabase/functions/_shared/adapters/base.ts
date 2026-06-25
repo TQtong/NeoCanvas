@@ -20,7 +20,7 @@ import { ApiException } from '../response.ts';
 /** 解析后的参考素材：已取得签名 URL 与 MIME，供适配器直接取回。 */
 export interface ResolvedReference {
   assetId: string;
-  role: 'style' | 'content' | 'first_frame' | 'mask';
+  role: 'style' | 'content' | 'first_frame' | 'mask' | 'keyframe';
   url: string;
   mimeType: string;
 }
@@ -33,8 +33,13 @@ export interface ModelContext {
   capabilities: ModelCapabilities;
   /** 模型在提供商侧的端点 / 模型 id（来自 default_params.providerModel 或环境变量）。 */
   providerModel: string;
-  /** 已解析的参考素材。 */
+  /** 已解析的参考素材（无序，单首帧 / 风格 / 内容参考）。 */
   references: ResolvedReference[];
+  /**
+   * 已解析的有序关键帧（「逐段首尾帧」视频合成）。按用户在画布上连接的 `sequence` 链方向
+   * 排列，相邻两帧构成一段（前者首帧、后者尾帧）。仅视频图生视频模型消费；非序列请求为空数组。
+   */
+  keyframes: ResolvedReference[];
 }
 
 /** 模型适配器统一接口。 */

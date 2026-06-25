@@ -138,12 +138,7 @@
   .skeleton::after {
     @apply absolute inset-0 -translate-x-full animate-shimmer;
     content: '';
-    background-image: linear-gradient(
-      90deg,
-      transparent,
-      hsl(0 0% 100% / 0.25),
-      transparent
-    );
+    background-image: linear-gradient(90deg, transparent, hsl(0 0% 100% / 0.25), transparent);
   }
 }
 
@@ -193,9 +188,44 @@
 }
 
 .react-flow__handle {
-  /* 血缘连线为次要构件，默认隐藏连接点，仅在需要时由节点显式开启 */
+  /* 血缘连线为次要构件，默认隐藏连接点，仅在需要时由节点显式开启
+     （序列连接桩在 NodeConnectHandles 中以 !opacity-* / !pointer-events-auto 显式覆盖此处） */
   opacity: 0;
   pointer-events: none;
+}
+
+/* 序列连接桩：悬停所在图片 / 视频节点时凸显，提示「可从此拖拽连线，串成视频序列」 */
+.react-flow__node:hover .react-flow__handle {
+  opacity: 1 !important;
+}
+
+/* 选中节点：柔和强调色光环（box-shadow ring）——贴近 Dify / n8n 等 workflow 编辑器观感，
+   替代生硬实线边框；2px 背景色留缝 + 4px 强调色环 + 柔和投影，亮 / 暗主题随令牌自适应 */
+.react-flow__node.selected {
+  border-radius: 10px;
+  box-shadow:
+    0 0 0 2px hsl(var(--background)),
+    0 0 0 4px hsl(var(--accent) / 0.85),
+    0 8px 24px hsl(var(--shadow) / 0.18);
+}
+
+/* 连接进行中：正在拖出的源端口高亮（实心强调色 + 光环） */
+.react-flow__handle.connectingfrom {
+  background: hsl(var(--accent)) !important;
+  box-shadow: 0 0 0 4px hsl(var(--accent) / 0.3) !important;
+}
+
+/* 连接线悬停到合法目标端口：成功色填充 + 光环，明确「可在此落点」 */
+.react-flow__handle.connectingto.valid {
+  background: hsl(var(--success)) !important;
+  border-color: hsl(var(--success)) !important;
+  box-shadow: 0 0 0 5px hsl(var(--success) / 0.35) !important;
+}
+
+/* 连接线悬停到非法目标端口：危险色提示「此处不可落点」 */
+.react-flow__handle.connectingto:not(.valid) {
+  border-color: hsl(var(--danger)) !important;
+  box-shadow: 0 0 0 4px hsl(var(--danger) / 0.25) !important;
 }
 
 .react-flow__attribution {

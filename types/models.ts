@@ -40,6 +40,12 @@ export interface ModelCapabilities {
   videoDurationRange?: { min: number; max: number };
   /** 视频专属：是否支持运动强度调节。 */
   supportsMotionStrength?: boolean;
+  /**
+   * 视频专属：是否支持「有序关键帧序列」（逐段首尾帧）图生视频。
+   * 区别于仅单首帧驱动的 {@link supportsImageToVideo}：为真才可接受由画布 `sequence` 链
+   * 解析出的 ≥2 帧关键帧序列。前端据此筛选可用模型、后端 `validateParams` 据此放行。
+   */
+  supportsKeyframeSequence?: boolean;
 }
 
 /**

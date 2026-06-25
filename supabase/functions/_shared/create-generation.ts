@@ -32,7 +32,7 @@ const RATE_MAX = Number(Deno.env.get('RATE_LIMIT_MAX') ?? '30');
  * 校验请求中引用的资产是否归属当前用户，杜绝越权引用他人资产 / 提及节点。
  *
  * @param admin - 管理员客户端
- * @param request - 生成请求（含 params.references）
+ * @param request - 生成请求（含 params.references 及视频 params.keyframes）
  * @param ownerId - 当前用户
  * @throws {ApiException} forbidden 当存在不归属当前用户的引用资产
  */
@@ -41,7 +41,12 @@ async function assertReferencesOwned(
   request: UnifiedGenerationRequest,
   ownerId: string,
 ): Promise<void> {
-  const assetIds = Array.from(new Set(request.params.references.map((r) => r.assetId)));
+  // 校验集合须覆盖请求 schema 支持的全部资产引用通道：无序参考 + 视频有序关键帧
+  const materials = [...request.params.references];
+  if (request.params.modality === 'video') {
+    materials.push(...(request.params.keyframes ?? []));
+  }
+  const assetIds = Array.from(new Set(materials.map((r) => r.assetId)));
   if (assetIds.length === 0) return;
   const { data, error } = await admin
     .from('assets')
@@ -195,7 +200,10 @@ export async function createGeneration(
   }
 
   // 关联占位节点
-  await admin.from('generations').update({ placeholder_node_id: placeholderId }).eq('id', generationId);
+  await admin
+    .from('generations')
+    .update({ placeholder_node_id: placeholderId })
+    .eq('id', generationId);
 
   // 入队 + 唤起消费
   await admin.rpc('enqueue_generation_job', { p_generation_id: generationId });

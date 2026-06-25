@@ -88,7 +88,7 @@ export interface ReferenceMaterial {
   origin: 'node' | 'attachment';
   nodeId?: string;
   assetId: string;
-  role: 'style' | 'content' | 'first_frame' | 'mask';
+  role: 'style' | 'content' | 'first_frame' | 'mask' | 'keyframe';
 }
 
 export interface ImageGenerationParams {
@@ -112,6 +112,11 @@ export interface VideoGenerationParams {
   motionStrength?: number;
   seed?: number;
   references: ReferenceMaterial[];
+  /**
+   * 有序关键帧序列（「逐段首尾帧」合成模式）。存在且长度 ≥ 2 时，相邻两帧构成一段图生视频
+   * （前者首帧、后者尾帧），各段拼接为一条视频；与 references 单首帧模式互斥。
+   */
+  keyframes?: ReferenceMaterial[];
 }
 
 export interface TextGenerationParams {
@@ -122,10 +127,7 @@ export interface TextGenerationParams {
   references: ReferenceMaterial[];
 }
 
-export type GenerationParams =
-  | ImageGenerationParams
-  | VideoGenerationParams
-  | TextGenerationParams;
+export type GenerationParams = ImageGenerationParams | VideoGenerationParams | TextGenerationParams;
 
 export interface NodePlacement {
   x: number;
@@ -207,6 +209,8 @@ export interface ModelCapabilities {
   videoResolutions?: string[];
   videoDurationRange?: { min: number; max: number };
   supportsMotionStrength?: boolean;
+  /** 视频专属：是否支持「有序关键帧序列」（逐段首尾帧）图生视频，区别于单首帧 supportsImageToVideo。 */
+  supportsKeyframeSequence?: boolean;
 }
 
 // ---------------------------------------------------------------------------

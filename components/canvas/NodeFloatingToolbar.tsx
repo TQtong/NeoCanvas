@@ -19,10 +19,12 @@ import {
   ArrowDownToLine,
   ArrowUpToLine,
   Bold,
+  Clapperboard,
   Copy,
   Italic,
   Replace,
   Sparkles,
+  StickyNote,
   Trash2,
   Underline,
 } from 'lucide-react';
@@ -31,6 +33,11 @@ import { useCanvasStore } from '@/stores/canvas-store';
 import { useChatStore } from '@/stores/chat-store';
 import { useSessionStore } from '@/stores/session-store';
 import { getBrowserSupabase } from '@/lib/supabase/client';
+import { resolveSequenceChain } from '@/lib/canvas/sequence';
+import { nodeBox, type CanvasFlowNode } from '@/lib/canvas/node-mapper';
+import { createDefaultNodeData } from '@/lib/canvas/constants';
+import { uuid } from '@/lib/utils/id';
+import { useSequenceVideo } from '@/lib/hooks/use-sequence-video';
 import { uploadAsset } from '@/lib/storage/upload';
 import { IconButton } from '@/components/ui/icon-button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -89,7 +96,12 @@ function TextProperties({ id, data }: { id: string; data: TextNodeData }) {
         >
           <Bold />
         </IconButton>
-        <IconButton size="sm" label="斜体" active={data.italic} onClick={() => updateNodeData(id, { italic: !data.italic })}>
+        <IconButton
+          size="sm"
+          label="斜体"
+          active={data.italic}
+          onClick={() => updateNodeData(id, { italic: !data.italic })}
+        >
           <Italic />
         </IconButton>
         <IconButton
@@ -153,22 +165,52 @@ export function NodeFloatingToolbar() {
 
   const selectedNodeIds = useCanvasStore((s) => s.selectedNodeIds);
   const nodes = useCanvasStore((s) => s.nodes);
+  const edges = useCanvasStore((s) => s.edges);
   const removeNodes = useCanvasStore((s) => s.removeNodes);
   const duplicateSelection = useCanvasStore((s) => s.duplicateSelection);
   const bringToFront = useCanvasStore((s) => s.bringToFront);
   const sendToBack = useCanvasStore((s) => s.sendToBack);
   const updateNodeData = useCanvasStore((s) => s.updateNodeData);
+  const addNode = useCanvasStore((s) => s.addNode);
+  const addAnnotationEdge = useCanvasStore((s) => s.addAnnotationEdge);
+  const setEditingNode = useCanvasStore((s) => s.setEditingNode);
   const projectId = useCanvasStore((s) => s.projectId);
 
   const addMention = useChatStore((s) => s.addMention);
   const requestFocus = useChatStore((s) => s.requestFocus);
   const profile = useSessionStore((s) => s.profile);
+  const { generate: generateSequenceVideo } = useSequenceVideo();
 
   if (selectedNodeIds.length !== 1) return null;
   const node = nodes.find((n) => n.id === selectedNodeIds[0]);
   if (!node) return null;
 
   const isMedia = node.data.type === 'image' || node.data.type === 'video';
+
+  // 选中节点处于一条「序列链」（≥2 个已绑定资产的媒体成员）时，提供「按顺序生成视频」
+  const canGenerateVideo =
+    isMedia &&
+    resolveSequenceChain(nodes, edges, node.id).nodes.filter(
+      (n) => (n.data.type === 'image' || n.data.type === 'video') && n.data.assetId,
+    ).length >= 2;
+
+  const onGenerateVideo = async () => {
+    const result = await generateSequenceVideo(node.id);
+    if (result.ok) {
+      toast.success(t('node.videoQueued'));
+      return;
+    }
+    if (result.reason === 'too_short') toast.error(t('node.videoTooShort'));
+    else if (result.reason === 'no_model') toast.error(t('node.videoNoModel'));
+    else {
+      // 失败详情仅入控制台便于排查；用户侧统一走已本地化文案，避免原始（可能中文）message 串到英文界面
+      if (result.message) {
+        // eslint-disable-next-line no-console
+        console.error('序列视频生成失败', result.message);
+      }
+      toast.error(t('node.videoFailed'));
+    }
+  };
 
   const onRegenerate = () => {
     addMention({
@@ -178,6 +220,31 @@ export function NodeFloatingToolbar() {
       assetId: node.data.type === 'image' || node.data.type === 'video' ? node.data.assetId : null,
     });
     requestFocus();
+  };
+
+  // 添加描述：在图片上方落一个文字便签，自动连一条「描述」边并进入编辑
+  const onAddDescription = () => {
+    const box = nodeBox(node);
+    const noteWidth = 240;
+    const noteHeight = 88;
+    const noteId = uuid();
+    const note: CanvasFlowNode = {
+      id: noteId,
+      type: 'text',
+      position: { x: box.x, y: box.y - noteHeight - 24 },
+      data: createDefaultNodeData('text', {
+        text: '',
+        fontSize: 14,
+        backgroundColor: 'hsl(48 95% 90%)',
+      }),
+      width: noteWidth,
+      height: noteHeight,
+      zIndex: 0,
+      style: { width: noteWidth, height: noteHeight },
+    };
+    addNode(note, { select: true });
+    addAnnotationEdge(noteId, node.id);
+    setEditingNode(noteId);
   };
 
   const onReplaceFile = async (file: File) => {
@@ -206,12 +273,21 @@ export function NodeFloatingToolbar() {
         {isMedia ? (
           <>
             <Tooltip content={t('node.regenerate')}>
-              <IconButton size="sm" label={t('node.regenerate')} className="text-accent" onClick={onRegenerate}>
+              <IconButton
+                size="sm"
+                label={t('node.regenerate')}
+                className="text-accent"
+                onClick={onRegenerate}
+              >
                 <Sparkles />
               </IconButton>
             </Tooltip>
             <Tooltip content={t('node.replace')}>
-              <IconButton size="sm" label={t('node.replace')} onClick={() => fileRef.current?.click()}>
+              <IconButton
+                size="sm"
+                label={t('node.replace')}
+                onClick={() => fileRef.current?.click()}
+              >
                 <Replace />
               </IconButton>
             </Tooltip>
@@ -226,6 +302,23 @@ export function NodeFloatingToolbar() {
                 e.target.value = '';
               }}
             />
+            <Tooltip content={t('node.addDescription')}>
+              <IconButton size="sm" label={t('node.addDescription')} onClick={onAddDescription}>
+                <StickyNote />
+              </IconButton>
+            </Tooltip>
+            {canGenerateVideo ? (
+              <Tooltip content={t('node.generateVideo')}>
+                <IconButton
+                  size="sm"
+                  label={t('node.generateVideo')}
+                  className="text-accent"
+                  onClick={() => void onGenerateVideo()}
+                >
+                  <Clapperboard />
+                </IconButton>
+              </Tooltip>
+            ) : null}
             <div className="mx-0.5 h-5 w-px bg-border" />
           </>
         ) : null}
@@ -246,7 +339,11 @@ export function NodeFloatingToolbar() {
         {node.data.type === 'shape' ? (
           <Popover>
             <PopoverTrigger asChild>
-              <button className="size-7 rounded-md border border-border" style={{ background: (node.data as ShapeNodeData).fill }} aria-label="形状属性" />
+              <button
+                className="size-7 rounded-md border border-border"
+                style={{ background: (node.data as ShapeNodeData).fill }}
+                aria-label="形状属性"
+              />
             </PopoverTrigger>
             <PopoverContent side="top">
               <ShapeProperties id={node.id} data={node.data as ShapeNodeData} />
@@ -260,7 +357,11 @@ export function NodeFloatingToolbar() {
           </IconButton>
         </Tooltip>
         <Tooltip content={t('node.bringToFront')}>
-          <IconButton size="sm" label={t('node.bringToFront')} onClick={() => bringToFront([node.id])}>
+          <IconButton
+            size="sm"
+            label={t('node.bringToFront')}
+            onClick={() => bringToFront([node.id])}
+          >
             <ArrowUpToLine />
           </IconButton>
         </Tooltip>
@@ -270,7 +371,12 @@ export function NodeFloatingToolbar() {
           </IconButton>
         </Tooltip>
         <Tooltip content={t('node.delete')}>
-          <IconButton size="sm" label={t('node.delete')} className="hover:text-danger" onClick={() => removeNodes([node.id])}>
+          <IconButton
+            size="sm"
+            label={t('node.delete')}
+            className="hover:text-danger"
+            onClick={() => removeNodes([node.id])}
+          >
             <Trash2 />
           </IconButton>
         </Tooltip>
