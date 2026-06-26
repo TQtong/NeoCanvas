@@ -193,7 +193,10 @@ function posterSystemPrompt(scene: Scene | null): string {
  * @param scene - 创作场景
  * @returns 经校验的海报版式
  */
-export async function buildPosterLayout(content: string, scene: Scene | null): Promise<PosterLayout> {
+export async function buildPosterLayout(
+  content: string,
+  scene: Scene | null,
+): Promise<PosterLayout> {
   if (!isLlmConfigured()) return fallbackPosterLayout(content);
 
   try {
@@ -240,7 +243,12 @@ export async function buildPosterLayout(content: string, scene: Scene | null): P
 
 /** 海报背景图在画布上的居中落位（以原点为中心）。 */
 export function posterPlacement(): { x: number; y: number; width: number; height: number } {
-  return { x: -POSTER_WIDTH / 2, y: -POSTER_HEIGHT / 2, width: POSTER_WIDTH, height: POSTER_HEIGHT };
+  return {
+    x: -POSTER_WIDTH / 2,
+    y: -POSTER_HEIGHT / 2,
+    width: POSTER_WIDTH,
+    height: POSTER_HEIGHT,
+  };
 }
 
 /** 由用户消息 id 派生稳定的文字节点 id（uuid 形状），便于 upsert 去重（连点/重试不重复建）。 */
@@ -250,7 +258,12 @@ function posterTextNodeId(messageId: string, index: number): string {
 }
 
 /** 估算文字节点高度：按可视字宽折行（CJK 约 1×字号，拉丁约 0.56×字号）。 */
-function estimateTextHeight(content: string, fontSize: number, widthPx: number, lineHeight: number): number {
+function estimateTextHeight(
+  content: string,
+  fontSize: number,
+  widthPx: number,
+  lineHeight: number,
+): number {
   let visual = 0;
   for (const ch of content) {
     const isCjkWide = /[　-〿㐀-鿿＀-￯]/.test(ch);
@@ -271,7 +284,7 @@ export interface PosterTextNodeRow {
   height: number;
   rotation: number;
   z_index: number;
-  parent_id: null;
+  parent_id: string;
   data: Record<string, unknown>;
   created_by: string;
 }
@@ -284,6 +297,7 @@ export interface PosterTextNodeRow {
  * @param projectId - 项目标识
  * @param userId - 创建者
  * @param messageId - 触发的用户消息 id（用于派生稳定节点 id）
+ * @param backgroundNodeId - 背景图节点 id（文字作为其子节点，随背景整体移动）
  * @returns canvas_nodes 文字节点插入行
  */
 export function buildPosterTextNodeRows(
@@ -292,13 +306,15 @@ export function buildPosterTextNodeRows(
   projectId: string,
   userId: string,
   messageId: string,
+  backgroundNodeId: string,
 ): PosterTextNodeRow[] {
   const lineHeight = 1.3;
   return layout.texts.map((el, index) => {
     const fontSize = Math.round(clamp(el.fontPct, 0.02, 0.14) * placement.height);
     const width = Math.round(clamp(el.wPct, 0.1, 0.95) * placement.width);
-    const x = placement.x + clamp(el.xPct, 0, 0.95) * placement.width;
-    const y = placement.y + clamp(el.yPct, 0, 0.95) * placement.height;
+    // 文字为背景图的子节点：坐标相对于背景图左上角 (0,0)，随背景图整体移动
+    const x = clamp(el.xPct, 0, 0.95) * placement.width;
+    const y = clamp(el.yPct, 0, 0.95) * placement.height;
     const height = estimateTextHeight(el.content, fontSize, width, lineHeight);
     return {
       id: posterTextNodeId(messageId, index),
@@ -311,7 +327,7 @@ export function buildPosterTextNodeRows(
       rotation: 0,
       // 叠在背景图（z=0）之上；按角色与顺序递增，标题更靠上层
       z_index: 10 + index,
-      parent_id: null,
+      parent_id: backgroundNodeId,
       data: {
         text: el.content,
         fontFamily: POSTER_FONT_FAMILY,

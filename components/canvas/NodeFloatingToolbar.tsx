@@ -27,6 +27,7 @@ import {
   StickyNote,
   Trash2,
   Underline,
+  Ungroup,
 } from 'lucide-react';
 import type { ShapeNodeData, TextAlign, TextNodeData } from '@/types';
 import { useCanvasStore } from '@/stores/canvas-store';
@@ -174,6 +175,7 @@ export function NodeFloatingToolbar() {
   const addNode = useCanvasStore((s) => s.addNode);
   const addAnnotationEdge = useCanvasStore((s) => s.addAnnotationEdge);
   const setEditingNode = useCanvasStore((s) => s.setEditingNode);
+  const ungroupSelection = useCanvasStore((s) => s.ungroupSelection);
   const projectId = useCanvasStore((s) => s.projectId);
 
   const addMention = useChatStore((s) => s.addMention);
@@ -349,6 +351,14 @@ export function NodeFloatingToolbar() {
               <ShapeProperties id={node.id} data={node.data as ShapeNodeData} />
             </PopoverContent>
           </Popover>
+        ) : null}
+
+        {nodes.some((n) => n.parentId === node.id) || node.parentId ? (
+          <Tooltip content={t('node.ungroup')}>
+            <IconButton size="sm" label={t('node.ungroup')} onClick={() => ungroupSelection()}>
+              <Ungroup />
+            </IconButton>
+          </Tooltip>
         ) : null}
 
         <Tooltip content={t('node.duplicate')}>

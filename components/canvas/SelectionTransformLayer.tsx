@@ -89,7 +89,10 @@ export function SelectionTransformLayer() {
             position: { x: next.x, y: next.y },
             width: Math.max(MIN_NODE_WIDTH, next.width),
             height: Math.max(MIN_NODE_HEIGHT, next.height),
-            style: { width: Math.max(MIN_NODE_WIDTH, next.width), height: Math.max(MIN_NODE_HEIGHT, next.height) },
+            style: {
+              width: Math.max(MIN_NODE_WIDTH, next.width),
+              height: Math.max(MIN_NODE_HEIGHT, next.height),
+            },
           });
         }
       };
@@ -116,10 +119,7 @@ export function SelectionTransformLayer() {
         className="pointer-events-none absolute"
         style={{ left: group.x, top: group.y, width: group.width, height: group.height }}
       >
-        <div
-          className="absolute inset-0 border border-accent"
-          style={{ borderWidth: border }}
-        />
+        <div className="absolute inset-0 border border-accent" style={{ borderWidth: border }} />
         {HANDLES.map((handle) => (
           <div
             key={handle.dir}

@@ -80,6 +80,12 @@ export function useCanvasShortcuts(history: UseCanvasHistory): void {
             event.preventDefault();
             store.selectAll();
             return;
+          case 'g':
+            // 成组（多选）/ 解组（选中组容器）：Cmd/Ctrl+G、Cmd/Ctrl+Shift+G
+            event.preventDefault();
+            if (event.shiftKey) store.ungroupSelection();
+            else store.groupSelection();
+            return;
           default:
             return;
         }

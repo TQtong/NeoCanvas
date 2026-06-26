@@ -20,7 +20,12 @@ import {
   type UnifiedGenerationRequest,
 } from '../_shared/types.ts';
 import { ApiException, CORS_HEADERS, fail, handleCorsPreflight } from '../_shared/response.ts';
-import { assertProjectOwner, createAdminClient, requireUser, type SupabaseClient } from '../_shared/supabase.ts';
+import {
+  assertProjectOwner,
+  createAdminClient,
+  requireUser,
+  type SupabaseClient,
+} from '../_shared/supabase.ts';
 import { buildGenerationParams, defaultPlacementSize } from '../_shared/params.ts';
 import { buildPlan, type OrchestrationStep } from '../_shared/orchestrate-plan.ts';
 import {
@@ -58,7 +63,11 @@ async function pickModelForModality(
   selectedModality: Modality,
 ): Promise<ModelCatalogRow | null> {
   if (modality === selectedModality) {
-    const { data } = await admin.from('model_catalog').select('*').eq('key', selectedKey).maybeSingle();
+    const { data } = await admin
+      .from('model_catalog')
+      .select('*')
+      .eq('key', selectedKey)
+      .maybeSingle();
     const row = data as ModelCatalogRow | null;
     if (row && row.is_active) return row;
   }
@@ -81,8 +90,17 @@ function buildStepReferences(
   return [
     ...body.mentions
       .filter((m) => m.assetId)
-      .map<ReferenceMaterial>((m) => ({ origin: 'node', nodeId: m.nodeId, assetId: m.assetId as string, role })),
-    ...body.attachments.map<ReferenceMaterial>((a) => ({ origin: 'attachment', assetId: a.assetId, role })),
+      .map<ReferenceMaterial>((m) => ({
+        origin: 'node',
+        nodeId: m.nodeId,
+        assetId: m.assetId as string,
+        role,
+      })),
+    ...body.attachments.map<ReferenceMaterial>((a) => ({
+      origin: 'attachment',
+      assetId: a.assetId,
+      role,
+    })),
   ];
 }
 
@@ -134,10 +152,20 @@ async function planToSpecs(
     if (!model) continue; // 目录无法服务该模态则跳过该步
     const references = step.useReferences ? buildStepReferences(body, step.referenceRole) : [];
     const params = buildGenerationParams(step.modality, model.default_params, references);
-    const size = defaultPlacementSize(step.modality, 'aspectRatio' in params ? params.aspectRatio : undefined);
+    const size = defaultPlacementSize(
+      step.modality,
+      'aspectRatio' in params ? params.aspectRatio : undefined,
+    );
     const count = Math.min(step.count, model.capabilities.maxOutputs || step.count);
     for (let i = 0; i < count; i += 1) {
-      specs.push({ modelKey: model.key, modality: step.modality, prompt: step.prompt, params, width: size.width, height: size.height });
+      specs.push({
+        modelKey: model.key,
+        modality: step.modality,
+        prompt: step.prompt,
+        params,
+        width: size.width,
+        height: size.height,
+      });
     }
   }
   return specs;
@@ -170,7 +198,12 @@ Deno.serve(async (request) => {
     .eq('role', 'assistant')
     .maybeSingle();
 
-  let replay: { assistantMessageId: string; content: string; generationIds: string[]; placeholders: Array<{ generationId: string; placeholderNodeId: string }> } | null = null;
+  let replay: {
+    assistantMessageId: string;
+    content: string;
+    generationIds: string[];
+    placeholders: Array<{ generationId: string; placeholderNodeId: string }>;
+  } | null = null;
   if (existingAssistant) {
     const { data: existingGens } = await admin
       .from('generations')
@@ -181,7 +214,10 @@ Deno.serve(async (request) => {
       assistantMessageId: existingAssistant.id as string,
       content: (existingAssistant.content as string | null) ?? '',
       generationIds: gens.map((g) => g.id),
-      placeholders: gens.map((g) => ({ generationId: g.id, placeholderNodeId: g.placeholder_node_id ?? '' })),
+      placeholders: gens.map((g) => ({
+        generationId: g.id,
+        placeholderNodeId: g.placeholder_node_id ?? '',
+      })),
     };
   }
 
@@ -190,12 +226,27 @@ Deno.serve(async (request) => {
       try {
         // 回放路径：直接重发既有助手消息与生成，保证编排幂等
         if (replay) {
-          controller.enqueue(sse({ type: 'message_created', assistantMessageId: replay.assistantMessageId }));
-          if (replay.content) controller.enqueue(sse({ type: 'text_delta', delta: replay.content }));
+          controller.enqueue(
+            sse({ type: 'message_created', assistantMessageId: replay.assistantMessageId }),
+          );
+          if (replay.content)
+            controller.enqueue(sse({ type: 'text_delta', delta: replay.content }));
           for (const p of replay.placeholders) {
-            controller.enqueue(sse({ type: 'generation_started', generationId: p.generationId, placeholderNodeId: p.placeholderNodeId }));
+            controller.enqueue(
+              sse({
+                type: 'generation_started',
+                generationId: p.generationId,
+                placeholderNodeId: p.placeholderNodeId,
+              }),
+            );
           }
-          controller.enqueue(sse({ type: 'done', assistantMessageId: replay.assistantMessageId, generationIds: replay.generationIds }));
+          controller.enqueue(
+            sse({
+              type: 'done',
+              assistantMessageId: replay.assistantMessageId,
+              generationIds: replay.generationIds,
+            }),
+          );
           return;
         }
 
@@ -254,17 +305,31 @@ Deno.serve(async (request) => {
           };
           const bg = await createGeneration(admin, genRequest, userId);
           controller.enqueue(
-            sse({ type: 'generation_started', generationId: bg.generationId, placeholderNodeId: bg.placeholderNodeId }),
+            sse({
+              type: 'generation_started',
+              generationId: bg.generationId,
+              placeholderNodeId: bg.placeholderNodeId,
+            }),
           );
 
           // 文字节点（z≥10，叠在背景之上；稳定 id + upsert，连点/重试不重复建）
-          const textRows = buildPosterTextNodeRows(layout, placement, body.projectId, userId, body.messageId);
+          const textRows = buildPosterTextNodeRows(
+            layout,
+            placement,
+            body.projectId,
+            userId,
+            body.messageId,
+            bg.placeholderNodeId,
+          );
           if (textRows.length > 0) {
             const { error: nodesError } = await admin
               .from('canvas_nodes')
               .upsert(textRows, { onConflict: 'id' });
             if (nodesError) {
-              throw new ApiException('internal_error', `创建海报文字节点失败：${nodesError.message}`);
+              throw new ApiException(
+                'internal_error',
+                `创建海报文字节点失败：${nodesError.message}`,
+              );
             }
           }
 
@@ -282,13 +347,17 @@ Deno.serve(async (request) => {
             throw new ApiException('internal_error', `保存助手消息失败：${posterMsgError.message}`);
           }
 
-          controller.enqueue(sse({ type: 'done', assistantMessageId, generationIds: [bg.generationId] }));
+          controller.enqueue(
+            sse({ type: 'done', assistantMessageId, generationIds: [bg.generationId] }),
+          );
           return;
         }
 
         const availableModalities = await getActiveModalities(admin);
         const referencesSummary = [
-          ...body.mentions.filter((m) => m.assetId).map((m) => ({ label: m.label, kind: m.nodeType })),
+          ...body.mentions
+            .filter((m) => m.assetId)
+            .map((m) => ({ label: m.label, kind: m.nodeType })),
           ...body.attachments.map((a) => ({ label: a.name, kind: a.kind })),
         ];
 
@@ -334,7 +403,11 @@ Deno.serve(async (request) => {
             const result = await createGeneration(admin, genRequest, userId);
             generationIds.push(result.generationId);
             controller.enqueue(
-              sse({ type: 'generation_started', generationId: result.generationId, placeholderNodeId: result.placeholderNodeId }),
+              sse({
+                type: 'generation_started',
+                generationId: result.generationId,
+                placeholderNodeId: result.placeholderNodeId,
+              }),
             );
           }
         }

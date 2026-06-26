@@ -20,6 +20,7 @@ import {
   type Viewport as RFViewport,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
+import { Group } from 'lucide-react';
 import { useCanvasStore } from '@/stores/canvas-store';
 import { nodeBox, type CanvasFlowNode, type CanvasFlowEdge } from '@/lib/canvas/node-mapper';
 import { computeAlignment } from '@/lib/canvas/alignment';
@@ -60,6 +61,8 @@ export function CanvasContainer({ initialViewport }: CanvasContainerProps) {
   const updateNode = useCanvasStore((s) => s.updateNode);
   const clearSelection = useCanvasStore((s) => s.clearSelection);
   const setEditingNode = useCanvasStore((s) => s.setEditingNode);
+  const selectedCount = useCanvasStore((s) => s.selectedNodeIds.length);
+  const groupSelection = useCanvasStore((s) => s.groupSelection);
 
   useCanvasTools(wrapperRef);
 
@@ -207,6 +210,20 @@ export function CanvasContainer({ initialViewport }: CanvasContainerProps) {
           <p className="max-w-xs text-center text-sm text-muted-foreground">
             {t('design.emptyCanvas')}
           </p>
+        </div>
+      ) : null}
+
+      {/* 多选（≥2）时屏幕底部常驻「成组」按钮：不随选区位置漂移，海报等大选区也始终可见 */}
+      {selectedCount >= 2 ? (
+        <div className="pointer-events-none absolute inset-x-0 bottom-6 flex justify-center">
+          <button
+            type="button"
+            onClick={() => groupSelection()}
+            className="glass pointer-events-auto flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-sm font-medium text-accent shadow-float transition-transform hover:scale-105"
+          >
+            <Group className="size-4" />
+            {t('node.group')}
+          </button>
         </div>
       ) : null}
     </div>

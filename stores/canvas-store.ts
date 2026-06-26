@@ -31,6 +31,7 @@ import type { AlignmentGuide } from '@/lib/canvas/alignment';
 import {
   type CanvasFlowEdge,
   type CanvasFlowNode,
+  nodeBox,
   rowToEdge,
   rowToNode,
 } from '@/lib/canvas/node-mapper';
@@ -47,7 +48,8 @@ import {
   ANNOTATION_HANDLE_OUT,
   decorateAnnotationEdge,
 } from '@/lib/canvas/annotation';
-import { DEFAULT_VIEWPORT, PASTE_OFFSET } from '@/lib/canvas/constants';
+import { createDefaultNodeData, DEFAULT_VIEWPORT, PASTE_OFFSET } from '@/lib/canvas/constants';
+import { unionBounds } from '@/lib/canvas/geometry';
 import { uuid } from '@/lib/utils/id';
 
 /** 画布工具，对应底部工具栏的十个工具（第 01 篇、第 04 篇 4.9）。 */
@@ -193,6 +195,16 @@ export interface CanvasState {
   copySelection: () => void;
   paste: () => void;
   duplicateSelection: () => void;
+  /**
+   * 把选中的顶层节点（≥2 个）成组：以其包围盒新建一个透明画板容器，把它们 reparent 为该容器
+   * 的子节点（坐标转相对、extent:'parent'），此后拖动容器即整体移动；子节点仍可单独编辑。
+   */
+  groupSelection: () => void;
+  /**
+   * 解组：把选中的成组关系拆开——选中组容器或其任一子节点皆可。子节点 parent 清空、坐标转回
+   * 绝对；纯组容器（frame）解组后删除，内容父节点（如海报背景图）保留。
+   */
+  ungroupSelection: () => void;
 
   // ----- 交互瞬态 -----
   setMarquee: (marquee: MarqueeState | null) => void;
@@ -627,6 +639,113 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   duplicateSelection: () => {
     get().copySelection();
     get().paste();
+  },
+
+  groupSelection: () => {
+    const state = get();
+    // 仅成组选中的顶层节点（已在某容器内的子节点不重复 reparent）
+    const selected = state.nodes.filter((n) => state.selectedNodeIds.includes(n.id) && !n.parentId);
+    if (selected.length < 2) return;
+
+    const PAD = 16;
+    const bounds = unionBounds(selected.map(nodeBox));
+    if (!bounds) return;
+    const fx = bounds.x - PAD;
+    const fy = bounds.y - PAD;
+    const fw = bounds.width + PAD * 2;
+    const fh = bounds.height + PAD * 2;
+    const minZ = Math.min(...selected.map((n) => n.zIndex ?? 0));
+
+    const frameId = uuid();
+    const frame: CanvasFlowNode = {
+      id: frameId,
+      type: 'frame',
+      position: { x: fx, y: fy },
+      // 组容器：透明底（不遮挡成员）、无内部网格，仅以细边框示意分组
+      data: createDefaultNodeData('frame', {
+        name: '组',
+        background: 'transparent',
+        showGrid: false,
+      }),
+      width: fw,
+      height: fh,
+      // z 较小以保证 hydrate 按 z 排序时父先于子（React Flow 要求父在子之前）
+      zIndex: minZ - 1,
+      selected: true,
+      style: { width: fw, height: fh },
+    };
+
+    const groupedIds = new Set(selected.map((n) => n.id));
+    const dirty = new Set(state._dirtyNodeIds);
+    dirty.add(frameId); // 父先入脏集，持久化时先于子 upsert，满足 parent_id 外键
+    const rest = state.nodes.filter((n) => !groupedIds.has(n.id));
+    const reparented = selected.map((n) => {
+      dirty.add(n.id);
+      return {
+        ...n,
+        parentId: frameId,
+        extent: 'parent' as const,
+        selected: false,
+        position: { x: n.position.x - fx, y: n.position.y - fy },
+      };
+    });
+
+    set({
+      nodes: [...rest, frame, ...reparented],
+      selectedNodeIds: [frameId],
+      _dirtyNodeIds: dirty,
+    });
+  },
+
+  ungroupSelection: () => {
+    const state = get();
+    const sel = state.nodes.find((n) => state.selectedNodeIds.includes(n.id));
+    if (!sel) return;
+    // 解组对象 = 选中节点本身（若它有子节点，如海报背景图 / frame 组容器），
+    // 否则取选中子节点的父容器（如选中了海报上的文字）
+    const hasChildren = state.nodes.some((c) => c.parentId === sel.id);
+    const containerId = hasChildren ? sel.id : sel.parentId;
+    if (!containerId) return;
+    const container = state.nodes.find((n) => n.id === containerId);
+    if (!container) return;
+
+    const cx = container.position.x;
+    const cy = container.position.y;
+    // 纯组容器（frame）解组后删除；内容父节点（如海报背景图）保留为独立节点
+    const isFrameContainer = container.data.type === 'frame';
+
+    const dirty = new Set(state._dirtyNodeIds);
+    const deleted = new Set(state._deletedNodeIds);
+    const freedIds: string[] = [];
+
+    let nodes = state.nodes.map((n) => {
+      if (n.parentId !== containerId) return n;
+      dirty.add(n.id);
+      freedIds.push(n.id);
+      // 子节点恢复为顶层：清父子 / extent，坐标转回绝对
+      return {
+        ...n,
+        parentId: undefined,
+        extent: undefined,
+        selected: true,
+        position: { x: n.position.x + cx, y: n.position.y + cy },
+      };
+    });
+
+    if (isFrameContainer) {
+      deleted.add(containerId);
+      dirty.delete(containerId);
+      nodes = nodes.filter((n) => n.id !== containerId);
+    } else {
+      nodes = nodes.map((n) => (n.id === containerId ? { ...n, selected: true } : n));
+    }
+
+    set({
+      nodes,
+      selectedNodeIds: isFrameContainer ? freedIds : [containerId, ...freedIds],
+      _dirtyNodeIds: dirty,
+      _deletedNodeIds: deleted,
+    });
   },
 
   setMarquee: (marquee) => set({ marquee }),
