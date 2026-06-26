@@ -319,7 +319,6 @@ Deno.serve(async (request) => {
             body.projectId,
             userId,
             body.messageId,
-            bg.placeholderNodeId,
           );
           if (textRows.length > 0) {
             const { error: nodesError } = await admin

@@ -353,7 +353,8 @@ export function NodeFloatingToolbar() {
           </Popover>
         ) : null}
 
-        {nodes.some((n) => n.parentId === node.id) || node.parentId ? (
+        {/* 解组：逻辑组成员（groupId）或 parent_id 容器/子节点（历史海报 / 画板）单选时均可解组 */}
+        {node.data.groupId || nodes.some((n) => n.parentId === node.id) || node.parentId ? (
           <Tooltip content={t('node.ungroup')}>
             <IconButton size="sm" label={t('node.ungroup')} onClick={() => ungroupSelection()}>
               <Ungroup />

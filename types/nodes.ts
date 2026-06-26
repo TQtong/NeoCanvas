@@ -75,6 +75,12 @@ export type NodeDataBase = {
   type: NodeType;
   /** 旋转角（度），来自 `canvas_nodes.rotation` 列；由内容容器以 CSS 变换应用。 */
   rotation: number;
+  /**
+   * 所属逻辑组标识（PPT / Figma 式分组）。同一 `groupId` 的节点构成一个组：选中任一成员
+   * 即整组选中、一起移动 / 缩放；不引入容器节点，也不依赖父子关系。解组即清除此标记。
+   * 持久化于 `canvas_nodes.data` JSONB。
+   */
+  groupId?: string;
 };
 
 /**

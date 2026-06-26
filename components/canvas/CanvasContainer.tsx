@@ -20,7 +20,6 @@ import {
   type Viewport as RFViewport,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { Group } from 'lucide-react';
 import { useCanvasStore } from '@/stores/canvas-store';
 import { nodeBox, type CanvasFlowNode, type CanvasFlowEdge } from '@/lib/canvas/node-mapper';
 import { computeAlignment } from '@/lib/canvas/alignment';
@@ -33,6 +32,7 @@ import { BackgroundGrid } from './BackgroundGrid';
 import { AlignmentGuides } from './AlignmentGuides';
 import { SelectionTransformLayer } from './SelectionTransformLayer';
 import { NodeFloatingToolbar } from './NodeFloatingToolbar';
+import { MultiSelectToolbar } from './MultiSelectToolbar';
 import { useCanvasTools } from './use-canvas-tools';
 import { useTranslation } from '@/i18n';
 
@@ -47,6 +47,8 @@ export interface CanvasContainerProps {
  */
 export function CanvasContainer({ initialViewport }: CanvasContainerProps) {
   const wrapperRef = useRef<HTMLDivElement>(null);
+  // 组拖动：记录被拖节点上一帧位置，用于把同组未被一起拖动的成员按相同位移跟随
+  const groupDragRef = useRef<{ x: number; y: number } | null>(null);
   const { t } = useTranslation();
 
   const nodes = useCanvasStore((s) => s.nodes);
@@ -61,8 +63,6 @@ export function CanvasContainer({ initialViewport }: CanvasContainerProps) {
   const updateNode = useCanvasStore((s) => s.updateNode);
   const clearSelection = useCanvasStore((s) => s.clearSelection);
   const setEditingNode = useCanvasStore((s) => s.setEditingNode);
-  const selectedCount = useCanvasStore((s) => s.selectedNodeIds.length);
-  const groupSelection = useCanvasStore((s) => s.groupSelection);
 
   useCanvasTools(wrapperRef);
 
@@ -88,9 +88,35 @@ export function CanvasContainer({ initialViewport }: CanvasContainerProps) {
     [setViewport],
   );
 
-  // 拖动时计算对齐参考线（视觉提示）
+  // 拖动开始：若拖的是组内节点，记录起始位置以便组联动
+  const onNodeDragStart = useCallback((_event: MouseEvent | TouchEvent, node: CanvasFlowNode) => {
+    groupDragRef.current = node.data.groupId ? { x: node.position.x, y: node.position.y } : null;
+  }, []);
+
+  // 拖动时：组联动（同组成员按相同位移跟随）+ 计算对齐参考线
   const onNodeDrag = useCallback(
-    (_event: MouseEvent | TouchEvent, node: CanvasFlowNode) => {
+    (_event: MouseEvent | TouchEvent, node: CanvasFlowNode, draggedNodes: CanvasFlowNode[]) => {
+      // 组联动：拖动组内任一节点，未被 React Flow 一起拖动的同组成员按相同位移跟随移动
+      const gid = node.data.groupId;
+      const last = groupDragRef.current;
+      if (gid && last) {
+        const dx = node.position.x - last.x;
+        const dy = node.position.y - last.y;
+        if (dx !== 0 || dy !== 0) {
+          const draggedIds = new Set(draggedNodes.map((n) => n.id));
+          const store = useCanvasStore.getState();
+          for (const m of store.nodes) {
+            if (m.id !== node.id && m.data.groupId === gid && !draggedIds.has(m.id)) {
+              store.updateNode(m.id, {
+                position: { x: m.position.x + dx, y: m.position.y + dy },
+              });
+            }
+          }
+          groupDragRef.current = { x: node.position.x, y: node.position.y };
+        }
+      }
+
+      // 对齐参考线（视觉提示）
       const others = useCanvasStore
         .getState()
         .nodes.filter((n) => n.id !== node.id && !n.selected)
@@ -105,6 +131,7 @@ export function CanvasContainer({ initialViewport }: CanvasContainerProps) {
   // 拖动结束：吸附到对齐位置并清除参考线
   const onNodeDragStop = useCallback(
     (_event: MouseEvent | TouchEvent, node: CanvasFlowNode) => {
+      groupDragRef.current = null;
       const others = useCanvasStore
         .getState()
         .nodes.filter((n) => n.id !== node.id && !n.selected)
@@ -173,6 +200,7 @@ export function CanvasContainer({ initialViewport }: CanvasContainerProps) {
         onEdgesChange={handleEdgesChange}
         onConnect={onConnect}
         isValidConnection={isValidConnection}
+        onNodeDragStart={onNodeDragStart}
         onNodeDrag={onNodeDrag}
         onNodeDragStop={onNodeDragStop}
         onMove={onMove}
@@ -193,6 +221,7 @@ export function CanvasContainer({ initialViewport }: CanvasContainerProps) {
         zoomOnScroll
         zoomOnPinch
         selectNodesOnDrag={false}
+        elevateNodesOnSelect={false}
         onlyRenderVisibleElements
         proOptions={{ hideAttribution: true }}
         deleteKeyCode={['Delete', 'Backspace']}
@@ -203,6 +232,7 @@ export function CanvasContainer({ initialViewport }: CanvasContainerProps) {
         <AlignmentGuides />
         <SelectionTransformLayer />
         <NodeFloatingToolbar />
+        <MultiSelectToolbar />
       </ReactFlow>
 
       {isEmpty ? (
@@ -210,20 +240,6 @@ export function CanvasContainer({ initialViewport }: CanvasContainerProps) {
           <p className="max-w-xs text-center text-sm text-muted-foreground">
             {t('design.emptyCanvas')}
           </p>
-        </div>
-      ) : null}
-
-      {/* 多选（≥2）时屏幕底部常驻「成组」按钮：不随选区位置漂移，海报等大选区也始终可见 */}
-      {selectedCount >= 2 ? (
-        <div className="pointer-events-none absolute inset-x-0 bottom-6 flex justify-center">
-          <button
-            type="button"
-            onClick={() => groupSelection()}
-            className="glass pointer-events-auto flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-sm font-medium text-accent shadow-float transition-transform hover:scale-105"
-          >
-            <Group className="size-4" />
-            {t('node.group')}
-          </button>
         </div>
       ) : null}
     </div>

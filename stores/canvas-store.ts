@@ -31,7 +31,6 @@ import type { AlignmentGuide } from '@/lib/canvas/alignment';
 import {
   type CanvasFlowEdge,
   type CanvasFlowNode,
-  nodeBox,
   rowToEdge,
   rowToNode,
 } from '@/lib/canvas/node-mapper';
@@ -48,8 +47,7 @@ import {
   ANNOTATION_HANDLE_OUT,
   decorateAnnotationEdge,
 } from '@/lib/canvas/annotation';
-import { createDefaultNodeData, DEFAULT_VIEWPORT, PASTE_OFFSET } from '@/lib/canvas/constants';
-import { unionBounds } from '@/lib/canvas/geometry';
+import { DEFAULT_VIEWPORT, PASTE_OFFSET } from '@/lib/canvas/constants';
 import { uuid } from '@/lib/utils/id';
 
 /** 画布工具，对应底部工具栏的十个工具（第 01 篇、第 04 篇 4.9）。 */
@@ -373,6 +371,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       }
     }
 
+    // 注：不做「选中成员→整组选中」联动——单击成员即单独选中它，便于单独编辑（替换 / 再生成等）；
+    // 整组一起移动由 CanvasContainer 的 onNodeDrag 主动跟随保证。
     set({
       nodes: applyNodeChanges(changes, get().nodes),
       selectedNodeIds: Array.from(selected),
@@ -643,109 +643,75 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
   groupSelection: () => {
     const state = get();
-    // 仅成组选中的顶层节点（已在某容器内的子节点不重复 reparent）
-    const selected = state.nodes.filter((n) => state.selectedNodeIds.includes(n.id) && !n.parentId);
-    if (selected.length < 2) return;
+    const selectedIds = new Set(state.selectedNodeIds);
+    const members = state.nodes.filter((n) => selectedIds.has(n.id));
+    if (members.length < 2) return;
 
-    const PAD = 16;
-    const bounds = unionBounds(selected.map(nodeBox));
-    if (!bounds) return;
-    const fx = bounds.x - PAD;
-    const fy = bounds.y - PAD;
-    const fw = bounds.width + PAD * 2;
-    const fh = bounds.height + PAD * 2;
-    const minZ = Math.min(...selected.map((n) => n.zIndex ?? 0));
-
-    const frameId = uuid();
-    const frame: CanvasFlowNode = {
-      id: frameId,
-      type: 'frame',
-      position: { x: fx, y: fy },
-      // 组容器：透明底（不遮挡成员）、无内部网格，仅以细边框示意分组
-      data: createDefaultNodeData('frame', {
-        name: '组',
-        background: 'transparent',
-        showGrid: false,
-      }),
-      width: fw,
-      height: fh,
-      // z 较小以保证 hydrate 按 z 排序时父先于子（React Flow 要求父在子之前）
-      zIndex: minZ - 1,
-      selected: true,
-      style: { width: fw, height: fh },
-    };
-
-    const groupedIds = new Set(selected.map((n) => n.id));
+    // PPT / Figma 式逻辑组：给全部成员打同一 groupId（无容器、不依赖位置是否相邻、不改父子）。
+    // 既有不同组的成员会被合并进新组。持久化于 data.groupId。
+    const groupId = uuid();
+    const memberIds = new Set(members.map((n) => n.id));
     const dirty = new Set(state._dirtyNodeIds);
-    dirty.add(frameId); // 父先入脏集，持久化时先于子 upsert，满足 parent_id 外键
-    const rest = state.nodes.filter((n) => !groupedIds.has(n.id));
-    const reparented = selected.map((n) => {
+    const nodes = state.nodes.map((n) => {
+      if (!memberIds.has(n.id)) return n;
       dirty.add(n.id);
-      return {
-        ...n,
-        parentId: frameId,
-        extent: 'parent' as const,
-        selected: false,
-        position: { x: n.position.x - fx, y: n.position.y - fy },
-      };
+      return { ...n, data: { ...n.data, groupId }, selected: true };
     });
-
-    set({
-      nodes: [...rest, frame, ...reparented],
-      selectedNodeIds: [frameId],
-      _dirtyNodeIds: dirty,
-    });
+    set({ nodes, _dirtyNodeIds: dirty });
   },
 
   ungroupSelection: () => {
     const state = get();
-    const sel = state.nodes.find((n) => state.selectedNodeIds.includes(n.id));
-    if (!sel) return;
-    // 解组对象 = 选中节点本身（若它有子节点，如海报背景图 / frame 组容器），
-    // 否则取选中子节点的父容器（如选中了海报上的文字）
-    const hasChildren = state.nodes.some((c) => c.parentId === sel.id);
-    const containerId = hasChildren ? sel.id : sel.parentId;
-    if (!containerId) return;
-    const container = state.nodes.find((n) => n.id === containerId);
-    if (!container) return;
+    const selectedIds = new Set(state.selectedNodeIds);
 
-    const cx = container.position.x;
-    const cy = container.position.y;
-    // 纯组容器（frame）解组后删除；内容父节点（如海报背景图）保留为独立节点
-    const isFrameContainer = container.data.type === 'frame';
+    // 解组涉及：① 逻辑组 groupId；② parent_id 容器（兼容画板 frame 与历史海报「图当容器」）。
+    // 选中容器本身或其任一子节点皆可触发。
+    const groupIds = new Set<string>();
+    const containerIds = new Set<string>();
+    for (const n of state.nodes) {
+      if (!selectedIds.has(n.id)) continue;
+      if (n.data.groupId) groupIds.add(n.data.groupId);
+      if (state.nodes.some((c) => c.parentId === n.id)) containerIds.add(n.id);
+      if (n.parentId) containerIds.add(n.parentId);
+    }
+    if (groupIds.size === 0 && containerIds.size === 0) return;
 
     const dirty = new Set(state._dirtyNodeIds);
     const deleted = new Set(state._deletedNodeIds);
-    const freedIds: string[] = [];
+    const posById = new Map(state.nodes.map((n) => [n.id, n.position]));
 
     let nodes = state.nodes.map((n) => {
-      if (n.parentId !== containerId) return n;
-      dirty.add(n.id);
-      freedIds.push(n.id);
-      // 子节点恢复为顶层：清父子 / extent，坐标转回绝对
-      return {
-        ...n,
-        parentId: undefined,
-        extent: undefined,
-        selected: true,
-        position: { x: n.position.x + cx, y: n.position.y + cy },
-      };
+      let next = n;
+      // 清逻辑组标记
+      if (n.data.groupId && groupIds.has(n.data.groupId)) {
+        next = { ...next, data: { ...next.data, groupId: undefined } };
+        dirty.add(n.id);
+      }
+      // 解父子容器：子节点坐标转回绝对、清 parent / extent
+      if (n.parentId && containerIds.has(n.parentId)) {
+        const p = posById.get(n.parentId);
+        next = {
+          ...next,
+          parentId: undefined,
+          extent: undefined,
+          position: { x: next.position.x + (p?.x ?? 0), y: next.position.y + (p?.y ?? 0) },
+        };
+        dirty.add(n.id);
+      }
+      return next;
     });
 
-    if (isFrameContainer) {
-      deleted.add(containerId);
-      dirty.delete(containerId);
-      nodes = nodes.filter((n) => n.id !== containerId);
-    } else {
-      nodes = nodes.map((n) => (n.id === containerId ? { ...n, selected: true } : n));
+    // 纯 frame 组容器解组后删除（无内容意义）；内容父节点（如海报背景图）保留为独立节点
+    for (const cid of containerIds) {
+      const c = state.nodes.find((n) => n.id === cid);
+      if (c?.data.type === 'frame') {
+        deleted.add(cid);
+        dirty.delete(cid);
+        nodes = nodes.filter((n) => n.id !== cid);
+      }
     }
 
-    set({
-      nodes,
-      selectedNodeIds: isFrameContainer ? freedIds : [containerId, ...freedIds],
-      _dirtyNodeIds: dirty,
-      _deletedNodeIds: deleted,
-    });
+    set({ nodes, _dirtyNodeIds: dirty, _deletedNodeIds: deleted });
   },
 
   setMarquee: (marquee) => set({ marquee }),

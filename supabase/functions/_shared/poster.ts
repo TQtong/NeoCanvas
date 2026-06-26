@@ -284,7 +284,7 @@ export interface PosterTextNodeRow {
   height: number;
   rotation: number;
   z_index: number;
-  parent_id: string;
+  parent_id: null;
   data: Record<string, unknown>;
   created_by: string;
 }
@@ -297,7 +297,6 @@ export interface PosterTextNodeRow {
  * @param projectId - 项目标识
  * @param userId - 创建者
  * @param messageId - 触发的用户消息 id（用于派生稳定节点 id）
- * @param backgroundNodeId - 背景图节点 id（文字作为其子节点，随背景整体移动）
  * @returns canvas_nodes 文字节点插入行
  */
 export function buildPosterTextNodeRows(
@@ -306,15 +305,14 @@ export function buildPosterTextNodeRows(
   projectId: string,
   userId: string,
   messageId: string,
-  backgroundNodeId: string,
 ): PosterTextNodeRow[] {
   const lineHeight = 1.3;
   return layout.texts.map((el, index) => {
     const fontSize = Math.round(clamp(el.fontPct, 0.02, 0.14) * placement.height);
     const width = Math.round(clamp(el.wPct, 0.1, 0.95) * placement.width);
-    // 文字为背景图的子节点：坐标相对于背景图左上角 (0,0)，随背景图整体移动
-    const x = clamp(el.xPct, 0, 0.95) * placement.width;
-    const y = clamp(el.yPct, 0, 0.95) * placement.height;
+    // 文字为独立顶层节点，按绝对坐标叠在背景图之上；如需整体移动，用户可框选后「成组」
+    const x = placement.x + clamp(el.xPct, 0, 0.95) * placement.width;
+    const y = placement.y + clamp(el.yPct, 0, 0.95) * placement.height;
     const height = estimateTextHeight(el.content, fontSize, width, lineHeight);
     return {
       id: posterTextNodeId(messageId, index),
@@ -327,7 +325,7 @@ export function buildPosterTextNodeRows(
       rotation: 0,
       // 叠在背景图（z=0）之上；按角色与顺序递增，标题更靠上层
       z_index: 10 + index,
-      parent_id: backgroundNodeId,
+      parent_id: null,
       data: {
         text: el.content,
         fontFamily: POSTER_FONT_FAMILY,

@@ -51,7 +51,6 @@ export interface TransformableNodeProps {
  */
 export function TransformableNode({
   id,
-  selected,
   rotation,
   children,
   enableResize = true,
@@ -63,13 +62,17 @@ export function TransformableNode({
 }: TransformableNodeProps) {
   const reactFlow = useReactFlow();
   const updateNodeData = useCanvasStore((s) => s.updateNodeData);
+  // 仅「单独选中此节点」时显示缩放 / 旋转手柄；多选（含成组）由组变换层统一处理，避免手柄成片堆叠
+  const soleSelected = useCanvasStore(
+    (s) => s.selectedNodeIds.length === 1 && s.selectedNodeIds[0] === id,
+  );
   const rotatingRef = useRef(false);
 
   // 等比 / 自由缩放：按住 Shift 反转该类型的默认锁定（第 04 篇 4.5）。仅选中时监听，避免
   // 每个节点都常驻一对全局监听。
   const [shiftHeld, setShiftHeld] = useState(false);
   useEffect(() => {
-    if (!selected || !enableResize) return;
+    if (!soleSelected || !enableResize) return;
     const onKey = (event: KeyboardEvent) => setShiftHeld(event.shiftKey);
     window.addEventListener('keydown', onKey);
     window.addEventListener('keyup', onKey);
@@ -77,7 +80,7 @@ export function TransformableNode({
       window.removeEventListener('keydown', onKey);
       window.removeEventListener('keyup', onKey);
     };
-  }, [selected, enableResize]);
+  }, [soleSelected, enableResize]);
   const effectiveKeepAspect = shiftHeld ? !keepAspectRatio : keepAspectRatio;
 
   /** 旋转手柄拖拽：按指针相对节点中心的角度写入 rotation。 */
@@ -124,7 +127,7 @@ export function TransformableNode({
     <>
       {enableResize ? (
         <NodeResizer
-          isVisible={selected}
+          isVisible={soleSelected}
           minWidth={minWidth}
           minHeight={minHeight}
           keepAspectRatio={effectiveKeepAspect}
@@ -145,7 +148,7 @@ export function TransformableNode({
         {children}
       </div>
 
-      {enableRotate && selected ? (
+      {enableRotate && soleSelected ? (
         <div
           role="slider"
           aria-label="旋转"
@@ -153,7 +156,8 @@ export function TransformableNode({
           tabIndex={-1}
           onPointerDown={handleRotateStart}
           className={cn(
-            'nodrag nopan absolute left-1/2 top-0 z-10 -translate-x-1/2 -translate-y-9',
+            // 置于节点下方居中，避开上方浮动工具条遮挡
+            'nodrag nopan absolute bottom-0 left-1/2 z-10 -translate-x-1/2 translate-y-9',
             'flex size-6 cursor-grab items-center justify-center rounded-full border border-accent bg-card text-accent shadow-soft',
             'active:cursor-grabbing',
           )}
