@@ -18,6 +18,9 @@ import { resolveAssetView } from './signed-url';
 /** 上传桶名。 */
 export const UPLOADS_BUCKET = 'uploads';
 
+/** 头像桶名（公开读、按用户目录限写）。 */
+export const AVATARS_BUCKET = 'avatars';
+
 /** 上传参数。 */
 export interface UploadAssetParams {
   /** 待上传文件。 */
@@ -154,4 +157,43 @@ export async function uploadAsset(
   onProgress?.(1);
 
   return resolveAssetView(supabase, row);
+}
+
+/** {@link uploadAvatar} 的结果：公开 URL 与其在桶内的存储路径（便于后续清理）。 */
+export interface UploadedAvatar {
+  /** 可直接用于 `<img src>` 的公开访问地址。 */
+  url: string;
+  /** 对象在 `avatars` 桶内的相对路径。 */
+  path: string;
+}
+
+/**
+ * 上传用户头像到公开 `avatars` 桶，返回可直接展示的公开 URL。
+ *
+ * 路径首段为用户 id，满足存储 RLS（`avatars_insert_own`：仅本人可写自身目录）。
+ * 文件名带随机 id，避免浏览器缓存旧头像；不复用 `assets` 表登记（头像是档案字段，
+ * 非画布资产）。
+ *
+ * @param supabase - 浏览器端 Supabase 客户端
+ * @param userId - 当前用户标识（路径首段）
+ * @param file - 待上传图片文件
+ * @returns 公开 URL 与存储路径
+ * @throws 当上传失败时抛出
+ */
+export async function uploadAvatar(
+  supabase: TypedSupabaseClient,
+  userId: string,
+  file: File,
+): Promise<UploadedAvatar> {
+  const ext = extFromFile(file);
+  const path = `${userId}/avatar-${uuid()}.${ext}`;
+  const { error } = await supabase.storage.from(AVATARS_BUCKET).upload(path, file, {
+    contentType: file.type || 'image/png',
+    upsert: false,
+  });
+  if (error) {
+    throw new Error(`头像上传失败：${error.message}`);
+  }
+  const { data } = supabase.storage.from(AVATARS_BUCKET).getPublicUrl(path);
+  return { url: data.publicUrl, path };
 }

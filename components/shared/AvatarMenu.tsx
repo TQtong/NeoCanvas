@@ -24,6 +24,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils/cn';
+import { Avatar } from './Avatar';
 import { SettingsDialog } from './SettingsDialog';
 
 /** 受支持语言及其在菜单中的展示名（保留各自原生写法）。 */
@@ -31,18 +32,6 @@ const LOCALE_OPTIONS: ReadonlyArray<{ value: Locale; label: string }> = [
   { value: 'zh-CN', label: '中文' },
   { value: 'en', label: 'English' },
 ];
-
-/**
- * 由展示名推导头像占位字母（取首个字符并大写）。
- *
- * @param name - 用户展示名，可能为空
- * @returns 单个大写字母；无展示名时回退为 'U'
- */
-function avatarInitial(name: string | null | undefined): string {
-  const trimmed = name?.trim();
-  if (trimmed && trimmed.length > 0) return trimmed[0]!.toUpperCase();
-  return 'U';
-}
 
 /**
  * 头像菜单组件。无可见参数，状态全部取自会话状态库。
@@ -76,7 +65,6 @@ export function AvatarMenu() {
   }, []);
 
   const displayName = profile?.display_name?.trim() || 'NeoCanvas';
-  const avatarUrl = profile?.avatar_url ?? null;
 
   return (
     <>
@@ -92,12 +80,12 @@ export function AvatarMenu() {
             'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
           )}
         >
-          {avatarUrl ? (
-            // 有头像 URL 时直接呈现图片，铺满圆形容器
-            <img src={avatarUrl} alt={displayName} className="size-full object-cover" />
-          ) : (
-            <span aria-hidden>{avatarInitial(profile?.display_name)}</span>
-          )}
+          {/* 统一头像渲染：预设卡通 / 上传图 / 默认卡通(按 user id) / 首字母兜底 */}
+          <Avatar
+            url={profile?.avatar_url ?? null}
+            name={profile?.display_name}
+            seed={profile?.id ?? null}
+          />
         </button>
       </DropdownMenuTrigger>
 
