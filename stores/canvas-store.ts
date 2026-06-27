@@ -212,8 +212,8 @@ export interface CanvasState {
   addEdge: (edge: CanvasFlowEdge) => void;
   removeEdges: (ids: string[]) => void;
   /**
-   * 串接一条工作流序列边 `source → target`：强制线性链（替换源既有出边、目标既有入边），
-   * 去重已存在的同向边，并拒绝会成环的连接。
+   * 串接一条工作流序列边 `source → target`：n:m 自由连接（同一媒体节点可有多条出 / 入边），
+   * 去重已存在的同向边，并拒绝会成环的连接（保持有向无环）。
    *
    * @returns 实际创建的边 id；当被去重 / 拒环而未创建时返回 null。
    */
@@ -726,9 +726,14 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   removeEdges: (ids) => {
     const idSet = new Set(ids);
     const deleted = new Set(get()._deletedEdgeIds);
-    for (const id of ids) deleted.add(id);
+    const dirty = new Set(get()._dirtyEdgeIds);
+    for (const id of ids) {
+      deleted.add(id);
+      dirty.delete(id); // 同步清脏集：刚建即删的边不应再作为 upsert 写回
+    }
     set((state) => ({
       edges: state.edges.filter((e) => !idSet.has(e.id)),
+      _dirtyEdgeIds: dirty,
       _deletedEdgeIds: deleted,
     }));
   },
@@ -739,14 +744,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     const seqEdges = state.edges.filter((e) => e.type === SEQUENCE_EDGE_TYPE);
     // 已存在同向序列边：去重
     if (seqEdges.some((e) => e.source === source && e.target === target)) return null;
-    // 会成环：拒绝
+    // 会成环：拒绝（保持工作流为有向无环图，关键帧顺序方可良定义）
     if (wouldCreateSequenceCycle(state.edges, source, target)) return null;
 
-    // 线性链：移除源既有出边与目标既有入边，使每个节点至多一进一出
-    const supersededIds = seqEdges
-      .filter((e) => e.source === source || e.target === target)
-      .map((e) => e.id);
-
+    // n:m：不再移除源既有出边 / 目标既有入边——同一媒体节点可有多条出边与入边，自由连成 DAG
     const id = uuid();
     // 写入连接桩 id（默认右出桩 → 左入桩），持久化到 source_handle / target_handle，保证重载锚点一致
     const edge = decorateSequenceEdge({
@@ -759,19 +760,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     });
 
     const dirty = new Set(state._dirtyEdgeIds);
-    const deleted = new Set(state._deletedEdgeIds);
-    for (const sid of supersededIds) {
-      deleted.add(sid);
-      dirty.delete(sid);
-    }
     dirty.add(id);
-
-    const supersededSet = new Set(supersededIds);
-    set((s) => ({
-      edges: [...s.edges.filter((e) => !supersededSet.has(e.id)), edge],
-      _dirtyEdgeIds: dirty,
-      _deletedEdgeIds: deleted,
-    }));
+    set((s) => ({ edges: [...s.edges, edge], _dirtyEdgeIds: dirty }));
     return id;
   },
 
@@ -877,9 +867,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     }
     const row = change.new as CanvasEdgeRow;
     if (!row?.id) return;
-    // 回声抑制：本地仍有该边的在途变更（脏 / 待持久化确认 / 刚被替换或删除）时以本地为准，忽略自身
+    // 回声抑制：本地仍有该边的在途变更（脏 / 待持久化确认 / 刚被删除）时以本地为准，忽略自身
     // 写入回流——边表无 updated_at，故以脏 / 在途 / 待删三集联合识别回声，避免迟到的 INSERT 回声
-    // 复活已被 addSequenceEdge 替换或已删除的边，破坏「每节点至多一进一出」的线性链不变式。
+    // 复活已被用户删除的边。
     const local = get();
     if (
       local._dirtyEdgeIds.has(row.id) ||

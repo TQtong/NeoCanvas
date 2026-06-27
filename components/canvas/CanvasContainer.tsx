@@ -151,8 +151,8 @@ export function CanvasContainer({ initialViewport }: CanvasContainerProps) {
     setEditingNode(null);
   }, [clearSelection, setEditingNode]);
 
-  // 连线落定：按源节点类型分流——文字节点 → 图为「描述边」，图 → 图为「工作流序列边」
-  // （线性链 / 一对一、去重、拒环等约束由状态库处理）
+  // 连线落定：按源节点类型分流——文字节点 → 图为「描述边」（一对一），图 → 图为「工作流序列边」
+  //（n:m 自由连接、去重、拒环等约束由状态库处理）
   const onConnect = useCallback<OnConnect>((connection) => {
     const { source, target, sourceHandle, targetHandle } = connection;
     if (!source || !target) return;

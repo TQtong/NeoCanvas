@@ -9,9 +9,10 @@
  * @module components/canvas/edges/AnnotationEdge
  */
 
-import { memo } from 'react';
+import { memo, useState } from 'react';
 import { BaseEdge, EdgeLabelRenderer, getBezierPath, type EdgeProps } from '@xyflow/react';
 import { useTranslation } from '@/i18n';
+import { EdgeDeleteButton } from './EdgeDeleteButton';
 
 function AnnotationEdgeComponent({
   id,
@@ -22,8 +23,10 @@ function AnnotationEdgeComponent({
   sourcePosition,
   targetPosition,
   markerEnd,
+  selected,
 }: EdgeProps) {
   const { t } = useTranslation();
+  const [hovered, setHovered] = useState(false);
   const [path, labelX, labelY] = getBezierPath({
     sourceX,
     sourceY,
@@ -33,6 +36,9 @@ function AnnotationEdgeComponent({
     targetPosition,
   });
 
+  // 悬停或选中：加粗连线并以删除按钮取代「描述」徽标，给出显式删除入口
+  const active = hovered || (selected ?? false);
+
   return (
     <>
       <BaseEdge
@@ -40,16 +46,30 @@ function AnnotationEdgeComponent({
         path={path}
         markerEnd={markerEnd}
         className="!stroke-muted-foreground"
-        style={{ strokeWidth: 1.5, strokeDasharray: '5 4' }}
+        style={{ strokeWidth: active ? 2.5 : 1.5, strokeDasharray: '5 4' }}
+        interactionWidth={0}
       />
-      <EdgeLabelRenderer>
-        <div
-          className="nodrag nopan absolute rounded-full border border-border bg-card px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground shadow-soft"
-          style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)` }}
-        >
-          {t('edge.description')}
-        </div>
-      </EdgeLabelRenderer>
+      {/* 透明加宽命中路径（置于可见线之上）：让细虚线易于点中与悬停；点击冒泡至 React Flow 完成选中 */}
+      <path
+        d={path}
+        fill="none"
+        stroke="transparent"
+        strokeWidth={24}
+        style={{ pointerEvents: 'stroke', cursor: 'pointer' }}
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+      />
+      {active ? null : (
+        <EdgeLabelRenderer>
+          <div
+            className="nodrag nopan absolute rounded-full border border-border bg-card px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground shadow-soft"
+            style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)` }}
+          >
+            {t('edge.description')}
+          </div>
+        </EdgeLabelRenderer>
+      )}
+      <EdgeDeleteButton edgeId={id} x={labelX} y={labelY} show={active} onHoverChange={setHovered} />
     </>
   );
 }

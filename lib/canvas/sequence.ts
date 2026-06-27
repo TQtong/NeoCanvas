@@ -1,14 +1,15 @@
 /**
  * 工作流序列（sequence）图算法（第 04 篇画布连线、第 05 篇生成编排）。
  *
- * 用户通过 `sequence` 类型的边把若干图片 / 视频节点连成「有向链」，作为「逐段首尾帧」
- * 视频合成的关键帧顺序。本模块是这些边的唯一图算法处：给定节点与边，解析出某成员节点
- * 所在的完整有序链、判定成员归属、计算链内序号。所有遍历均带访问集（visited）环保护，
- * 即便实时回流引入异常拓扑也不会死循环。
+ * 用户通过 `sequence` 类型的边把若干图片 / 视频节点自由连成「有向无环图」（上游输出即下游
+ * 输入，参照 LibTV 等节点式工作流），作为「逐段首尾帧」视频合成的关键帧顺序。本模块是这些
+ * 边的唯一图算法处：给定节点与边，解析出「经某成员节点的最长有向路径」作为关键帧顺序、判定
+ * 成员归属、计算路径内序号。所有遍历均带在栈集环保护，即便实时回流引入异常拓扑也不会死循环。
  *
- * 约定：链是「线性」的——每个节点至多一条出边、至多一条入边（由
- * {@link stores/canvas-store} 的 `addSequenceEdge` 在连接时强制）。即便如此，本模块对
- * 多出 / 多入 / 自环 / 成环等退化拓扑仍做确定性降级，绝不抛错。
+ * 约定：连接是「n:m」的——每个媒体节点可有多条出边与多条入边（{@link stores/canvas-store}
+ * 的 `addSequenceEdge` 仅去重同向边、拒绝成环以保持有向无环）。图为线性时，「经节点的最长
+ * 路径」即退化为整条链，与历史行为一致。本模块对多出 / 多入 / 自环 / 成环等退化拓扑仍做
+ * 确定性降级，绝不抛错。
  *
  * @module lib/canvas/sequence
  */
@@ -56,11 +57,11 @@ export function decorateSequenceEdge(edge: CanvasFlowEdge): CanvasFlowEdge {
 /** 可参与序列链的节点类型（仅承载媒体的图片 / 视频）。 */
 const SEQUENCEABLE_TYPES = new Set(['image', 'video']);
 
-/** 解析得到的有序链。 */
+/** 解析得到的有序关键帧路径。 */
 export interface SequenceChain {
-  /** 按方向排列的成员节点（自链头至链尾）。 */
+  /** 经成员节点的最长有向路径成员（自上游至下游）。 */
   nodes: CanvasFlowNode[];
-  /** 是否检测到环（链头回指自身）；为真时 `nodes` 为打断环后的安全前缀。 */
+  /** 是否检测到环；为真时 `nodes` 为打断环后的安全结果。 */
   hasCycle: boolean;
 }
 
@@ -75,34 +76,87 @@ function sequenceEdges(edges: CanvasFlowEdge[]): CanvasFlowEdge[] {
 }
 
 /**
- * 由序列边构建「出边 / 入边」邻接（线性链下各为一对一）。
+ * 由序列边构建「出边 / 入边」多重邻接（n:m DAG：每节点可有多条出边与入边）。
  *
- * 退化拓扑（同一源多出边）下，后写入者覆盖前者，保证确定性。
+ * 同向重复边去重，保证一条逻辑连接只计一次；自环跳过。
  */
 function buildAdjacency(edges: CanvasFlowEdge[]): {
-  next: Map<string, string>;
-  prev: Map<string, string>;
+  next: Map<string, string[]>;
+  prev: Map<string, string[]>;
 } {
-  const next = new Map<string, string>();
-  const prev = new Map<string, string>();
+  const next = new Map<string, string[]>();
+  const prev = new Map<string, string[]>();
   for (const e of sequenceEdges(edges)) {
     if (e.source === e.target) continue; // 跳过自环
-    next.set(e.source, e.target);
-    prev.set(e.target, e.source);
+    const outs = next.get(e.source) ?? [];
+    if (!outs.includes(e.target)) outs.push(e.target);
+    next.set(e.source, outs);
+    const ins = prev.get(e.target) ?? [];
+    if (!ins.includes(e.source)) ins.push(e.source);
+    prev.set(e.target, ins);
   }
   return { next, prev };
 }
 
+/** 节点空间比较（左→右、上→下、再按 id）：多分支等长时确定性择优，贴合视觉阅读序。 */
+function compareSpatial(a: CanvasFlowNode | undefined, b: CanvasFlowNode | undefined): number {
+  const ax = a?.position.x ?? Infinity;
+  const bx = b?.position.x ?? Infinity;
+  if (ax !== bx) return ax - bx;
+  const ay = a?.position.y ?? Infinity;
+  const by = b?.position.y ?? Infinity;
+  if (ay !== by) return ay - by;
+  return (a?.id ?? '').localeCompare(b?.id ?? '');
+}
+
 /**
- * 解析某成员节点所在的完整有序链。
+ * 从 `start` 出发、沿 `adj` 方向的「最长有向路径」（节点 id 列表，不含 start 自身）。
  *
- * 步骤：自该节点沿入边回溯至链头（带 visited 环保护），再沿出边正向收集至链尾。
- * 仅返回仍存在且可参与序列的节点；若成员节点本身不可参与或不在任何序列边上，返回单元素链。
+ * 多分支时取更长者；等长按邻居空间序（{@link compareSpatial}）确定性择一。带「在栈集」
+ * （inStack）环保护：遇到回到当前递归栈上的节点即截断并标记 `onCycle`，退化拓扑（成环）下
+ * 绝不死循环。DAG 下经 memo 记忆化，复杂度 O(V+E)。
+ */
+function longestPathFrom(
+  start: string,
+  adj: Map<string, string[]>,
+  byId: Map<string, CanvasFlowNode>,
+  memo: Map<string, string[]>,
+  inStack: Set<string>,
+  onCycle: () => void,
+): string[] {
+  const cached = memo.get(start);
+  if (cached) return cached;
+
+  inStack.add(start);
+  const neighbors = [...(adj.get(start) ?? [])].sort((a, b) =>
+    compareSpatial(byId.get(a), byId.get(b)),
+  );
+  let best: string[] = [];
+  for (const n of neighbors) {
+    if (inStack.has(n)) {
+      onCycle();
+      continue; // 截断环，保证终止
+    }
+    const sub = longestPathFrom(n, adj, byId, memo, inStack, onCycle);
+    if (sub.length + 1 > best.length) best = [n, ...sub];
+  }
+  inStack.delete(start);
+  memo.set(start, best);
+  return best;
+}
+
+/**
+ * 解析「经某成员节点的最长有向序列路径」。
+ *
+ * n:m DAG 下成员可有多条出 / 入边，已无唯一「链」可言；本函数取经该节点的最长有向路径作为
+ * 关键帧顺序——上游最长入路径（反向，自远而近）+ 自身 + 下游最长出路径。图为线性时即退化
+ * 为整条链，与历史行为一致。仅返回仍存在且可参与序列的节点；成员本身不可参与或不在任何序列
+ * 边上时，返回单元素（或空）结果。所有遍历带在栈环保护，成环时做确定性降级，绝不抛错。
  *
  * @param nodes - 当前全部节点
  * @param edges - 当前全部边
- * @param memberId - 链中任一成员节点 id
- * @returns 有序链与环标记
+ * @param memberId - 路径中任一成员节点 id
+ * @returns 有序成员（自上游至下游）与环标记
  */
 export function resolveSequenceChain(
   nodes: CanvasFlowNode[],
@@ -112,33 +166,24 @@ export function resolveSequenceChain(
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const { next, prev } = buildAdjacency(edges);
 
-  // 回溯链头
-  let head = memberId;
-  const seenBack = new Set<string>([head]);
   let hasCycle = false;
-  for (;;) {
-    const p = prev.get(head);
-    if (p === undefined) break;
-    if (seenBack.has(p)) {
-      hasCycle = true;
-      break;
-    }
-    seenBack.add(p);
-    head = p;
-  }
+  const onCycle = () => {
+    hasCycle = true;
+  };
 
-  // 自链头正向收集
+  // 上游：沿入边的最长路径（自近及远），反转得「自远而近」；下游：沿出边的最长路径
+  const upstream = longestPathFrom(memberId, prev, byId, new Map(), new Set(), onCycle);
+  const downstream = longestPathFrom(memberId, next, byId, new Map(), new Set(), onCycle);
+  const orderedIds = [...[...upstream].reverse(), memberId, ...downstream];
+
   const ordered: CanvasFlowNode[] = [];
-  const seenFwd = new Set<string>();
-  let cur: string | undefined = head;
-  while (cur !== undefined && !seenFwd.has(cur)) {
-    seenFwd.add(cur);
-    const node = byId.get(cur);
+  const seen = new Set<string>();
+  for (const id of orderedIds) {
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const node = byId.get(id);
     if (node && isSequenceable(node)) ordered.push(node);
-    cur = next.get(cur);
   }
-  if (cur !== undefined && seenFwd.has(cur)) hasCycle = true;
-
   return { nodes: ordered, hasCycle };
 }
 
@@ -158,12 +203,19 @@ export function wouldCreateSequenceCycle(
 ): boolean {
   if (source === target) return true;
   const { next } = buildAdjacency(edges);
-  const seen = new Set<string>();
-  let cur: string | undefined = target;
-  while (cur !== undefined && !seen.has(cur)) {
+  // target 已能经现有出边（沿任一分支）到达 source 时，新增 source → target 即成环
+  const seen = new Set<string>([target]);
+  const stack: string[] = [target];
+  while (stack.length > 0) {
+    const cur = stack.pop();
+    if (cur === undefined) break;
     if (cur === source) return true;
-    seen.add(cur);
-    cur = next.get(cur);
+    for (const nb of next.get(cur) ?? []) {
+      if (!seen.has(nb)) {
+        seen.add(nb);
+        stack.push(nb);
+      }
+    }
   }
   return false;
 }
