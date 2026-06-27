@@ -27,7 +27,9 @@ import { useCanvasStore } from '@/stores/canvas-store';
 import { useChatStore } from '@/stores/chat-store';
 import { nodeBox, type CanvasFlowNode } from '@/lib/canvas/node-mapper';
 import { resolveSequenceChain } from '@/lib/canvas/sequence';
-import { getImageDescription } from '@/lib/canvas/annotation';
+import { getImageDescription, isDescribingNote } from '@/lib/canvas/annotation';
+import { collectGroupOverlays, flattenGroupToFile } from '@/lib/canvas/flatten';
+import { uploadAsset } from '@/lib/storage/upload';
 import { idempotencyKey, uuid } from '@/lib/utils/id';
 import { normalizeUnknownError } from '@/lib/edge/errors';
 import { buildPlaceholderNode, useGeneration } from './use-generation';
@@ -103,6 +105,13 @@ export function useSequenceVideo(): UseSequenceVideo {
       if (modelError) return { ok: false, reason: 'failed', message: modelError.message };
       if (!model) return { ok: false, reason: 'no_model' };
 
+      // 拍平合成图需登记为资产，取当前用户作 owner
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) return { ok: false, reason: 'failed', message: '登录态失效，请重新登录' };
+      const userId = user.id;
+
       const dp = (model.default_params ?? {}) as Record<string, unknown>;
       const resolution = typeof dp.resolution === 'string' ? dp.resolution : '720p';
       const durationSec = typeof dp.durationSec === 'number' ? dp.durationSec : 5;
@@ -121,14 +130,6 @@ export function useSequenceVideo(): UseSequenceVideo {
         parentId: null,
       };
 
-      // 有序关键帧（role: keyframe，顺序即合成顺序）
-      const keyframes: ReferenceMaterial[] = members.map((m) => ({
-        origin: 'node',
-        nodeId: m.node.id,
-        assetId: m.assetId,
-        role: 'keyframe',
-      }));
-
       // 逐帧描述（来自连到各图的文字便签）按序拼进提示词，让过渡更贴合用户意图
       const frameLines = members.map((m, i) => {
         const desc = getImageDescription(nodes, edges, m.node.id);
@@ -138,17 +139,8 @@ export function useSequenceVideo(): UseSequenceVideo {
         `按以下 ${members.length} 个关键帧顺序生成一段连贯过渡视频，相邻两帧之间平滑过渡：\n` +
         frameLines.join('\n');
       const summary = `按 ${members.length} 帧顺序生成视频`;
-      const params: VideoGenerationParams = {
-        modality: 'video',
-        durationSec,
-        resolution,
-        aspectRatio,
-        fps,
-        references: [],
-        keyframes,
-      };
 
-      // 即时落视频占位节点（与回流去重经客户端占位 id）
+      // 即时落视频占位节点（与回流去重经客户端占位 id）；置于合成 / 提交之前，给出即时反馈
       const placeholderNodeId = uuid();
       useCanvasStore.getState().addNode(
         buildPlaceholderNode({
@@ -159,24 +151,62 @@ export function useSequenceVideo(): UseSequenceVideo {
         }),
       );
 
-      const request: UnifiedGenerationRequest = {
-        projectId,
-        conversationId: useChatStore.getState().conversationId,
-        messageId: null,
-        modality: 'video',
-        modelKey: model.key,
-        prompt,
-        params,
-        idempotencyKey: idempotencyKey(),
-        placement,
-        placeholderNodeId,
-      };
-
       try {
+        // 描述便签（annotation 边的文字源）只喂提示词、不属于画面，拍平时排除
+        const descriptionNoteIds = new Set(
+          nodes.filter((n) => isDescribingNote(edges, n.id)).map((n) => n.id),
+        );
+
+        // 有序关键帧（role: keyframe，顺序即合成顺序）。某成员若处于「图 + 叠加文字 / 形状」的
+        // 逻辑组（如海报标题叠在底图上），先把整组拍平成一张合成图再作关键帧——让模型把「图 +
+        // 文字」当作一个整体的画面分析，而非光底图；无叠层的成员仍用原始底图资产。
+        const keyframes: ReferenceMaterial[] = [];
+        for (const m of members) {
+          // 仅图片成员做拍平（video 成员无静态底图可合成，按原始资产入帧）
+          const overlays =
+            m.node.data.type === 'image' ? collectGroupOverlays(nodes, m.node, descriptionNoteIds) : [];
+          let assetId = m.assetId;
+          if (overlays.length > 0) {
+            try {
+              const file = await flattenGroupToFile(m.node, overlays);
+              const view = await uploadAsset(supabase, { file, userId, projectId });
+              assetId = view.id;
+            } catch (flattenErr) {
+              // 单帧拍平失败不阻断整次生成：退回光底图资产，并留痕便于排查
+              // eslint-disable-next-line no-console
+              console.error('帧合成失败，退回光底图', normalizeUnknownError(flattenErr).message);
+            }
+          }
+          keyframes.push({ origin: 'node', nodeId: m.node.id, assetId, role: 'keyframe' });
+        }
+
+        const params: VideoGenerationParams = {
+          modality: 'video',
+          durationSec,
+          resolution,
+          aspectRatio,
+          fps,
+          references: [],
+          keyframes,
+        };
+
+        const request: UnifiedGenerationRequest = {
+          projectId,
+          conversationId: useChatStore.getState().conversationId,
+          messageId: null,
+          modality: 'video',
+          modelKey: model.key,
+          prompt,
+          params,
+          idempotencyKey: idempotencyKey(),
+          placement,
+          placeholderNodeId,
+        };
+
         await submit(request);
         return { ok: true };
       } catch (err) {
-        // 提交失败：撤回占位，避免遗留「永久生成中」的孤儿节点
+        // 提交 / 合成致命失败：撤回占位，避免遗留「永久生成中」的孤儿节点
         useCanvasStore.getState().removeNodes([placeholderNodeId]);
         return { ok: false, reason: 'failed', message: normalizeUnknownError(err).message };
       }

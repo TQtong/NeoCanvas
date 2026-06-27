@@ -22,7 +22,9 @@ import { uploadAsset } from '@/lib/storage/upload';
 import { useCanvasPersistence } from '@/lib/hooks/use-canvas-persistence';
 import { useRealtimeProject } from '@/lib/hooks/use-realtime-project';
 import { useCanvasMedia } from '@/lib/hooks/use-canvas-media';
+import { useSequenceVideo } from '@/lib/hooks/use-sequence-video';
 import type { CanvasFlowNode } from '@/lib/canvas/node-mapper';
+import { resolveSequenceChain } from '@/lib/canvas/sequence';
 import { uuid } from '@/lib/utils/id';
 import { createDefaultNodeData } from '@/lib/canvas/constants';
 import { CanvasContainer } from '@/components/canvas/CanvasContainer';
@@ -33,6 +35,7 @@ import { useCanvasShortcuts } from '@/components/canvas/use-canvas-shortcuts';
 import { TopBar } from '@/components/shared/TopBar';
 import { ChatPanel } from '@/components/chat/ChatPanel';
 import { useToast } from '@/components/ui/toast';
+import { useTranslation } from '@/i18n';
 import { cn } from '@/lib/utils/cn';
 
 /** 工作台属性。 */
@@ -47,6 +50,8 @@ export interface DesignWorkbenchProps {
 function WorkbenchInner({ bundle, models }: DesignWorkbenchProps) {
   const reactFlow = useReactFlow();
   const toast = useToast();
+  const { t } = useTranslation();
+  const { generate: generateSequenceVideo } = useSequenceVideo();
   const fileRef = useRef<HTMLInputElement>(null);
 
   const userId = useSessionStore((s) => s.profile?.id ?? bundle.project.owner_id);
@@ -107,10 +112,35 @@ function WorkbenchInner({ bundle, models }: DesignWorkbenchProps) {
     [bundle.project.id, reactFlow, toast, userId],
   );
 
-  // AI 工具：调起对应模态的生成——切到该模态模型、置为「纯生成」模式，展开对话并聚焦提示词
-  // 输入（第 04 篇 4.9 的「唤起轻量提示词输入再提交」一途），提交后复用统一生成流水线。
+  // AI 工具：调起对应模态的生成。
+  // 「AI 视频」特例：若当前恰好选中一条「序列链」上的成员（≥2 个已绑资产的媒体节点），直接按
+  // 帧顺序生成——与节点悬浮工具栏入口行为一致，消除「连好图序列、点了底部视频按钮却没反应」的
+  // 困惑。否则退回轻量提示词生成：切到该模态模型、置为「纯生成」模式，展开对话并聚焦提示词输入
+  //（第 04 篇 4.9），提交后复用统一生成流水线。
   const onAiTool = useCallback(
-    (modality: 'image' | 'video' | 'text') => {
+    async (modality: 'image' | 'video' | 'text') => {
+      if (modality === 'video') {
+        const { nodes, edges, selectedNodeIds } = useCanvasStore.getState();
+        const nodeId = selectedNodeIds.length === 1 ? selectedNodeIds[0] : undefined;
+        if (nodeId) {
+          const node = nodes.find((n) => n.id === nodeId);
+          const isMedia = node?.data.type === 'image' || node?.data.type === 'video';
+          const boundCount = isMedia
+            ? resolveSequenceChain(nodes, edges, nodeId).nodes.filter(
+                (n) => (n.data.type === 'image' || n.data.type === 'video') && n.data.assetId,
+              ).length
+            : 0;
+          if (boundCount >= 2) {
+            const result = await generateSequenceVideo(nodeId);
+            if (result.ok) toast.success(t('node.videoQueued'));
+            else if (result.reason === 'too_short') toast.error(t('node.videoTooShort'));
+            else if (result.reason === 'no_model') toast.error(t('node.videoNoModel'));
+            else toast.error(t('node.videoFailed'));
+            return;
+          }
+        }
+      }
+
       const match = models.find((m) => m.modality === modality) ?? models[0];
       const chat = useChatStore.getState();
       if (match) chat.setModel(match.key);
@@ -118,7 +148,7 @@ function WorkbenchInner({ bundle, models }: DesignWorkbenchProps) {
       setPanelOpen(true);
       chat.requestFocus();
     },
-    [models],
+    [models, generateSequenceVideo, t, toast],
   );
 
   return (
