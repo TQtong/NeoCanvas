@@ -21,6 +21,8 @@ export const EDGE_FUNCTIONS = {
   processGenerationQueue: 'process-generation-queue',
   pollGenerations: 'poll-generations',
   generationWebhook: 'generation-webhook',
+  regeneratePoster: 'regenerate-poster',
+  providerCredentials: 'provider-credentials',
 } as const;
 
 /** create-project 请求。 */
@@ -96,6 +98,38 @@ export type AgentOrchestrateEvent =
   | { type: 'generation_started'; generationId: string; placeholderNodeId: string }
   | { type: 'done'; assistantMessageId: string; generationIds: string[] }
   | { type: 'error'; code: string; message: string };
+
+/**
+ * regenerate-poster 请求：以「成组海报」（背景图节点 + 同组文字节点）为参考，整组重新编排。
+ *
+ * 服务端：由现有文字重建主题 → 海报编排 LLM 产出新背景提示词与新文字版式 → 背景以图生图
+ * 原地落在背景节点（placeholderNodeId = backgroundNodeId、参考原背景图）→ 删旧文字、建新的
+ * 可编辑文字节点（沿用同一 groupId，使整组保持成组）。
+ */
+export interface RegeneratePosterRequest {
+  /** 项目标识。 */
+  projectId: string;
+  /** 会话标识（可空）。 */
+  conversationId: string | null;
+  /** 海报逻辑组标识（同 groupId 的成员构成一张海报）。 */
+  groupId: string;
+  /** 作底图的背景图片节点标识（原地以其为占位重生成背景）。 */
+  backgroundNodeId: string;
+  /** 用于背景图生图的图像模型键。 */
+  modelKey: string;
+}
+
+/** regenerate-poster 响应。 */
+export interface RegeneratePosterResponse {
+  /** 背景重生成任务标识。 */
+  generationId: string;
+  /** 背景占位节点标识（即 backgroundNodeId，原地）。 */
+  placeholderNodeId: string;
+  /** 新建的可编辑文字节点标识集合。 */
+  textNodeIds: string[];
+  /** 编排助手回复（说明本次海报构思）。 */
+  reply: string;
+}
 
 /** export-canvas 选项。 */
 export interface ExportCanvasOptions {

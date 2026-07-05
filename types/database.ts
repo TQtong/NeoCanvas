@@ -22,6 +22,7 @@ import type { EdgeData } from './edges';
 import type { MessageAttachment, MessageMention } from './messages';
 import type { ModelCapabilities, ModelDefaultParams } from './models';
 import type { GenerationParams } from './generation';
+import type { ProviderCredentialRow } from './providers';
 
 /**
  * 画布视口：平移量与缩放比。持久化于 `projects.viewport`。
@@ -180,6 +181,8 @@ export type ModelCatalogRow = {
   default_params: ModelDefaultParams;
   sort_order: number;
   is_active: boolean;
+  /** 归属用户：null=内置种子（全局只读）；非空=该用户自有模型。 */
+  user_id: string | null;
   created_at: string;
 }
 
@@ -276,6 +279,17 @@ export interface Database {
           modality: Modality;
         };
         Update: Partial<ModelCatalogRow>;
+        Relationships: [];
+      };
+      provider_credentials: {
+        Row: ProviderCredentialRow;
+        Insert: Partial<Omit<ProviderCredentialRow, 'id' | 'created_at' | 'updated_at'>> & {
+          user_id: string;
+          provider: Provider;
+          key_last4: string;
+          key_secret_id: string;
+        };
+        Update: Partial<ProviderCredentialRow>;
         Relationships: [];
       };
     };

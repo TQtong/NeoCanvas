@@ -17,7 +17,6 @@ import {
 import { ApiException } from '../response.ts';
 import {
   fetchReferenceBase64,
-  requireProviderKey,
   resolveSize,
   type ModelAdapter,
   type ModelContext,
@@ -37,7 +36,8 @@ export const googleAdapter: ModelAdapter = {
     if (request.modality !== 'image') {
       throw new ApiException('unsupported_param', 'Google 适配器仅支持图像模态');
     }
-    const apiKey = requireProviderKey('GOOGLE_API_KEY', 'google');
+    const apiKey = ctx.credentials.apiKey;
+    const baseUrl = (ctx.credentials.baseUrl ?? API_BASE).replace(/\/$/, '');
     const params = request.params as ImageGenerationParams;
     const { width, height } = resolveSize(params);
 
@@ -49,7 +49,7 @@ export const googleAdapter: ModelAdapter = {
     }
 
     const response = await fetch(
-      `${API_BASE}/models/${ctx.providerModel}:generateContent?key=${apiKey}`,
+      `${baseUrl}/models/${ctx.providerModel}:generateContent?key=${apiKey}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

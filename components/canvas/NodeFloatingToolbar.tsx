@@ -10,7 +10,7 @@
  * @module components/canvas/NodeFloatingToolbar
  */
 
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import { NodeToolbar, Position } from '@xyflow/react';
 import {
   AlignCenter,
@@ -31,14 +31,16 @@ import {
 } from 'lucide-react';
 import type { ShapeNodeData, TextAlign, TextNodeData } from '@/types';
 import { useCanvasStore } from '@/stores/canvas-store';
-import { useChatStore } from '@/stores/chat-store';
 import { useSessionStore } from '@/stores/session-store';
 import { getBrowserSupabase } from '@/lib/supabase/client';
 import { resolveSequenceChain } from '@/lib/canvas/sequence';
+import { collectGroupOverlays } from '@/lib/canvas/flatten';
 import { nodeBox, type CanvasFlowNode } from '@/lib/canvas/node-mapper';
 import { createDefaultNodeData } from '@/lib/canvas/constants';
 import { uuid } from '@/lib/utils/id';
 import { useSequenceVideo } from '@/lib/hooks/use-sequence-video';
+import { useRegenerateNode } from '@/lib/hooks/use-regenerate-node';
+import { useRegeneratePoster } from '@/lib/hooks/use-regenerate-poster';
 import { uploadAsset } from '@/lib/storage/upload';
 import { IconButton } from '@/components/ui/icon-button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -163,6 +165,8 @@ export function NodeFloatingToolbar() {
   const { t } = useTranslation();
   const toast = useToast();
   const fileRef = useRef<HTMLInputElement>(null);
+  // 再生成在途标记：防连点重复提交（避免重复背景任务与重复文字节点）
+  const [regenPending, setRegenPending] = useState(false);
 
   const selectedNodeIds = useCanvasStore((s) => s.selectedNodeIds);
   const nodes = useCanvasStore((s) => s.nodes);
@@ -178,10 +182,10 @@ export function NodeFloatingToolbar() {
   const ungroupSelection = useCanvasStore((s) => s.ungroupSelection);
   const projectId = useCanvasStore((s) => s.projectId);
 
-  const addMention = useChatStore((s) => s.addMention);
-  const requestFocus = useChatStore((s) => s.requestFocus);
   const profile = useSessionStore((s) => s.profile);
   const { generate: generateSequenceVideo } = useSequenceVideo();
+  const { regenerate } = useRegenerateNode();
+  const { regeneratePoster } = useRegeneratePoster();
 
   if (selectedNodeIds.length !== 1) return null;
   const node = nodes.find((n) => n.id === selectedNodeIds[0]);
@@ -214,14 +218,37 @@ export function NodeFloatingToolbar() {
     }
   };
 
-  const onRegenerate = () => {
-    addMention({
-      nodeId: node.id,
-      nodeType: node.data.type,
-      label: node.data.type === 'image' ? '图片' : node.data.type === 'video' ? '视频' : '元素',
-      assetId: node.data.type === 'image' || node.data.type === 'video' ? node.data.assetId : null,
-    });
-    requestFocus();
+  // 「以此为参考再生成」：一键以选中节点为视觉参考，原地生成相似内容并替换选中节点本身。
+  // 分流：选中的是「成组海报」（图片 + 同组文字/形状叠层）→ 整组重新编排（新背景 + 新可编辑
+  // 文字，整组替换）；否则单节点图生图 / 图生视频相似变体。
+  const onRegenerate = async () => {
+    if (regenPending) return; // 连点保护：在途时忽略后续点击
+    setRegenPending(true);
+    try {
+      const overlays = node.data.type === 'image' ? collectGroupOverlays(nodes, node) : [];
+      const isPosterGroup = Boolean(node.data.groupId) && overlays.length > 0;
+
+      const result = isPosterGroup ? await regeneratePoster(node.id) : await regenerate(node.id);
+      if (result.ok) {
+        toast.success(isPosterGroup ? t('node.regenPosterStarted') : t('node.regenStarted'));
+        return;
+      }
+      if (result.reason === 'no_asset') toast.error(t('node.regenNoAsset'));
+      else if (result.reason === 'no_model') {
+        toast.error(
+          node.data.type === 'video' ? t('node.regenNoVideoModel') : t('node.regenNoRefModel'),
+        );
+      } else {
+        // 失败详情仅入控制台便于排查；用户侧统一走已本地化文案
+        if (result.message) {
+          // eslint-disable-next-line no-console
+          console.error('相似再生成失败', result.message);
+        }
+        toast.error(t('node.regenFailed'));
+      }
+    } finally {
+      setRegenPending(false);
+    }
   };
 
   // 添加描述：在图片上方落一个文字便签，自动连一条「描述」边并进入编辑
@@ -279,7 +306,8 @@ export function NodeFloatingToolbar() {
                 size="sm"
                 label={t('node.regenerate')}
                 className="text-accent"
-                onClick={onRegenerate}
+                disabled={regenPending}
+                onClick={() => void onRegenerate()}
               >
                 <Sparkles />
               </IconButton>

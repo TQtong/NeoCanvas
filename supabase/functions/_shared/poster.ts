@@ -297,6 +297,7 @@ export interface PosterTextNodeRow {
  * @param projectId - 项目标识
  * @param userId - 创建者
  * @param messageId - 触发的用户消息 id（用于派生稳定节点 id）
+ * @param groupId - 逻辑组标识（可选）；提供时写入文字节点 data.groupId，使其与背景成组
  * @returns canvas_nodes 文字节点插入行
  */
 export function buildPosterTextNodeRows(
@@ -305,6 +306,7 @@ export function buildPosterTextNodeRows(
   projectId: string,
   userId: string,
   messageId: string,
+  groupId?: string,
 ): PosterTextNodeRow[] {
   const lineHeight = 1.3;
   return layout.texts.map((el, index) => {
@@ -339,6 +341,7 @@ export function buildPosterTextNodeRows(
         italic: false,
         underline: false,
         backgroundColor: 'transparent',
+        ...(groupId ? { groupId } : {}),
       },
       created_by: userId,
     };

@@ -15,20 +15,21 @@ import {
   type UnifiedGenerationRequest,
 } from '../types.ts';
 import { ApiException } from '../response.ts';
-import {
-  requireProviderKey,
-  resolveSize,
-  type ModelAdapter,
-  type ModelContext,
-} from './base.ts';
+import { resolveSize, type ModelAdapter, type ModelContext } from './base.ts';
 
 const QUEUE_BASE = 'https://queue.fal.run';
+
+/** 解析 fal 队列基址：优先用户自定义端点，否则默认。 */
+function queueBase(ctx: ModelContext): string {
+  return (ctx.credentials.baseUrl ?? QUEUE_BASE).replace(/\/$/, '');
+}
 
 export const falAdapter: ModelAdapter = {
   provider: 'fal' as Provider,
 
   async submit(request: UnifiedGenerationRequest, ctx: ModelContext): Promise<SubmitResult> {
-    const apiKey = requireProviderKey('FAL_API_KEY', 'fal');
+    const apiKey = ctx.credentials.apiKey;
+    const base = queueBase(ctx);
     const input: Record<string, unknown> = { prompt: request.prompt };
     if (request.modality === 'image') {
       const params = request.params as ImageGenerationParams;
@@ -39,7 +40,7 @@ export const falAdapter: ModelAdapter = {
       if (ref) input.image_url = ref.url;
     }
 
-    const response = await fetch(`${QUEUE_BASE}/${ctx.providerModel}`, {
+    const response = await fetch(`${base}/${ctx.providerModel}`, {
       method: 'POST',
       headers: { Authorization: `Key ${apiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify(input),
@@ -56,10 +57,11 @@ export const falAdapter: ModelAdapter = {
   },
 
   async poll(externalJobId: string, ctx: ModelContext): Promise<PollResult> {
-    const apiKey = requireProviderKey('FAL_API_KEY', 'fal');
+    const apiKey = ctx.credentials.apiKey;
+    const base = queueBase(ctx);
     const headers = { Authorization: `Key ${apiKey}` };
     const statusRes = await fetch(
-      `${QUEUE_BASE}/${ctx.providerModel}/requests/${externalJobId}/status`,
+      `${base}/${ctx.providerModel}/requests/${externalJobId}/status`,
       { headers },
     );
     if (!statusRes.ok) {
@@ -69,7 +71,7 @@ export const falAdapter: ModelAdapter = {
 
     if (status.status === 'COMPLETED') {
       const resultRes = await fetch(
-        `${QUEUE_BASE}/${ctx.providerModel}/requests/${externalJobId}`,
+        `${base}/${ctx.providerModel}/requests/${externalJobId}`,
         { headers },
       );
       const result = (await resultRes.json()) as {

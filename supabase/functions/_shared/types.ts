@@ -276,6 +276,23 @@ export interface ExportCanvasRequest {
   };
 }
 
+/** regenerate-poster 请求（与 types/edge-functions.ts 逐字一致）。 */
+export interface RegeneratePosterRequest {
+  projectId: string;
+  conversationId: string | null;
+  groupId: string;
+  backgroundNodeId: string;
+  modelKey: string;
+}
+
+/** regenerate-poster 响应。 */
+export interface RegeneratePosterResponse {
+  generationId: string;
+  placeholderNodeId: string;
+  textNodeIds: string[];
+  reply: string;
+}
+
 /** 数据库 model_catalog 行（边缘侧读取所需字段）。 */
 export interface ModelCatalogRow {
   key: string;
@@ -286,6 +303,50 @@ export interface ModelCatalogRow {
   default_params: ModelDefaultParams;
   is_active: boolean;
 }
+
+// ---------------------------------------------------------------------------
+// 提供商凭证（BYOK；与 types/providers.ts 逐字一致）
+// ---------------------------------------------------------------------------
+
+/** 前端消费的提供商凭证视图（脱敏，不含明文 Key）。 */
+export interface ProviderCredential {
+  id: string;
+  provider: Provider;
+  label: string | null;
+  baseUrl: string | null;
+  keyLast4: string;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** 连通性测试结果。 */
+export interface ProviderTestResult {
+  ok: boolean;
+  status?: number;
+  message?: string;
+}
+
+/** provider-credentials 请求（以 action 判别）。 */
+export type ProviderCredentialsRequest =
+  | {
+      action: 'save';
+      provider: Provider;
+      apiKey?: string;
+      baseUrl?: string | null;
+      label?: string | null;
+      enabled?: boolean;
+    }
+  | { action: 'toggle'; provider: Provider; enabled: boolean }
+  | { action: 'delete'; id: string }
+  | { action: 'test'; provider: Provider; apiKey?: string; baseUrl?: string | null };
+
+/** provider-credentials 响应（随 action 不同）。 */
+export type ProviderCredentialsResponse =
+  | { action: 'save'; credential: ProviderCredential }
+  | { action: 'toggle'; credential: ProviderCredential }
+  | { action: 'delete'; deleted: boolean }
+  | { action: 'test'; result: ProviderTestResult };
 
 /** 数据库 generations 行（边缘侧流水线所需字段）。 */
 export interface GenerationRow {

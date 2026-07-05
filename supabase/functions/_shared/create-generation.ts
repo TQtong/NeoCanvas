@@ -92,11 +92,13 @@ export async function createGeneration(
     }
   }
 
-  // 取模型并校验
+  // 取模型并校验：限「内置模型」或「本人自有模型」（key 全局唯一，故至多一行命中）。
+  // 防止引用他人私有模型；自有未上架的模型也在此被 is_active 拦下。
   const { data: model } = await admin
     .from('model_catalog')
     .select('*')
     .eq('key', request.modelKey)
+    .or(`user_id.is.null,user_id.eq.${ownerId}`)
     .maybeSingle();
   if (!model || !(model as ModelCatalogRow).is_active) {
     throw new ApiException('model_unavailable', '模型不可用或已下架');
@@ -172,6 +174,20 @@ export async function createGeneration(
   const placeholderId = request.placeholderNodeId ?? crypto.randomUUID();
   const placement = request.placement ?? { x: 0, y: 0, width: 320, height: 320 };
   const targetModality = request.modality === 'video' ? 'video' : 'image';
+
+  // 原地重生成时，占位 id 指向一个已存在的真实节点：保留其 groupId 与 parent_id，使重生成结果
+  // 仍属同一逻辑组、不脱离原画板（landResult / 本 upsert 会整体替换 data，不保留则脱组 / 脱离画板）。
+  // 新占位（节点尚不存在）时读不到、为 undefined / null。
+  const { data: existingNode } = await admin
+    .from('canvas_nodes')
+    .select('data, parent_id')
+    .eq('id', placeholderId)
+    .maybeSingle();
+  const existingGroupId =
+    existingNode && existingNode.data && typeof existingNode.data === 'object'
+      ? (existingNode.data as Record<string, unknown>).groupId
+      : undefined;
+
   const { error: nodeError } = await admin.from('canvas_nodes').upsert(
     {
       id: placeholderId,
@@ -183,12 +199,13 @@ export async function createGeneration(
       height: placement.height,
       rotation: 0,
       z_index: 0,
-      parent_id: placement.parentId ?? null,
+      parent_id: placement.parentId ?? existingNode?.parent_id ?? null,
       data: {
         targetModality,
         promptSummary: request.prompt.slice(0, 80),
         targetWidth: placement.width,
         targetHeight: placement.height,
+        ...(typeof existingGroupId === 'string' ? { groupId: existingGroupId } : {}),
       },
       generation_id: generationId,
       created_by: ownerId,

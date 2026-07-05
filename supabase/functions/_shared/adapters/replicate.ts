@@ -15,20 +15,20 @@ import {
   type UnifiedGenerationRequest,
 } from '../types.ts';
 import { ApiException } from '../response.ts';
-import {
-  requireProviderKey,
-  resolveSize,
-  type ModelAdapter,
-  type ModelContext,
-} from './base.ts';
+import { resolveSize, type ModelAdapter, type ModelContext } from './base.ts';
 
 const API_BASE = 'https://api.replicate.com/v1';
+
+/** 解析 Replicate 基址：优先用户自定义端点，否则默认。 */
+function apiBase(ctx: ModelContext): string {
+  return (ctx.credentials.baseUrl ?? API_BASE).replace(/\/$/, '');
+}
 
 export const replicateAdapter: ModelAdapter = {
   provider: 'replicate' as Provider,
 
   async submit(request: UnifiedGenerationRequest, ctx: ModelContext): Promise<SubmitResult> {
-    const token = requireProviderKey('REPLICATE_API_TOKEN', 'replicate');
+    const token = ctx.credentials.apiKey;
     const input: Record<string, unknown> = { prompt: request.prompt };
     if (request.modality === 'image') {
       const params = request.params as ImageGenerationParams;
@@ -40,7 +40,7 @@ export const replicateAdapter: ModelAdapter = {
       if (ref) input.image = ref.url;
     }
 
-    const response = await fetch(`${API_BASE}/predictions`, {
+    const response = await fetch(`${apiBase(ctx)}/predictions`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ version: ctx.providerModel, input }),
@@ -56,9 +56,9 @@ export const replicateAdapter: ModelAdapter = {
     return { kind: 'async', externalJobId: json.id, progress: 5 };
   },
 
-  async poll(externalJobId: string): Promise<PollResult> {
-    const token = requireProviderKey('REPLICATE_API_TOKEN', 'replicate');
-    const response = await fetch(`${API_BASE}/predictions/${externalJobId}`, {
+  async poll(externalJobId: string, ctx: ModelContext): Promise<PollResult> {
+    const token = ctx.credentials.apiKey;
+    const response = await fetch(`${apiBase(ctx)}/predictions/${externalJobId}`, {
       headers: { Authorization: `Bearer ${token}` },
     });
     if (!response.ok) {

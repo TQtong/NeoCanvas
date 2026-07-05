@@ -22,7 +22,6 @@ import {
 import { ApiException } from '../response.ts';
 import {
   fetchReferenceBase64,
-  requireProviderKey,
   resolveSize,
   type ModelAdapter,
   type ModelContext,
@@ -52,8 +51,8 @@ export const siliconflowAdapter: ModelAdapter = {
     if (request.modality !== 'image') {
       throw new ApiException('unsupported_param', 'SiliconFlow 适配器仅支持图像模态');
     }
-    const apiKey = requireProviderKey('SILICONFLOW_API_KEY', 'siliconflow');
-    const baseUrl = (Deno.env.get('SILICONFLOW_BASE_URL') ?? DEFAULT_BASE).replace(/\/$/, '');
+    const apiKey = ctx.credentials.apiKey;
+    const baseUrl = (ctx.credentials.baseUrl ?? DEFAULT_BASE).replace(/\/$/, '');
 
     const params = request.params as ImageGenerationParams;
     const { width, height } = resolveSize(params);

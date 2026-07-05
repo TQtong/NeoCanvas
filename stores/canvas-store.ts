@@ -54,7 +54,7 @@ import { uuid } from '@/lib/utils/id';
 export type CanvasTool =
   | 'select'
   | 'pan'
-  | 'upload-image'
+  | 'upload-media'
   | 'frame'
   | 'shape'
   | 'draw'
@@ -148,20 +148,31 @@ export interface CanvasState {
   handleEdgesChange: (changes: EdgeChange<CanvasFlowEdge>[]) => void;
 
   // ----- 节点动作 -----
-  /** 添加一个节点。 */
-  addNode: (node: CanvasFlowNode, options?: { select?: boolean }) => void;
-  /** 批量添加节点。 */
-  addNodes: (nodes: CanvasFlowNode[], options?: { select?: boolean }) => void;
+  /** 添加一个节点。`persist:false` 仅本地添加、不标脏（用于服务端为唯一写者的场景，如失败还原）。 */
+  addNode: (node: CanvasFlowNode, options?: { select?: boolean; persist?: boolean }) => void;
+  /** 批量添加节点。`persist:false` 仅本地添加、不标脏。 */
+  addNodes: (nodes: CanvasFlowNode[], options?: { select?: boolean; persist?: boolean }) => void;
   /** 更新节点（合并顶层字段）。 */
   updateNode: (id: string, patch: Partial<CanvasFlowNode>) => void;
   /** 更新节点 data（合并），标记脏集以持久化。 */
   updateNodeData: (id: string, dataPatch: Partial<NodeData>) => void;
   /** 仅更新运行时 data 字段（如签名 URL、进度），不标记脏集、不触发持久化。 */
   setNodeRuntime: (id: string, dataPatch: Partial<NodeData>) => void;
-  /** 删除节点（连带其作为父的子节点解除父子并删自身）。 */
-  removeNodes: (ids: string[]) => void;
-  /** 替换某节点（用于占位转化等整节点替换）。 */
-  replaceNode: (id: string, node: CanvasFlowNode) => void;
+  /**
+   * 删除节点（连带其作为父的子节点解除父子并删自身、清理相连边）。
+   * `persist:false` 仅本地移除、不记录删除、不回写 DB（写入权归服务端 + 实时回流，用于原地
+   * 重生成时乐观移除将由服务端删除的节点，避免依赖 realtime DELETE 才能收敛）。
+   */
+  removeNodes: (ids: string[], options?: { persist?: boolean }) => void;
+  /**
+   * 替换某节点（用于占位转化等整节点替换）。
+   *
+   * `options.persist` 缺省为 true：标脏并经持久化控制器回写。置为 false 时只做本地即时替换、
+   * 不标脏、并清除该 id 可能存在的脏标记——用于「该行的写入权完全归服务端 + 实时回流」的场景
+   * （如原地相似再生成：服务端 createGeneration 已 upsert 占位、landResult 落图，客户端若再写
+   * 同一行会与之竞态、可能把已落的结果覆盖回空占位）。
+   */
+  replaceNode: (id: string, node: CanvasFlowNode, options?: { persist?: boolean }) => void;
 
   // ----- 选择 -----
   setSelection: (ids: string[]) => void;
@@ -402,14 +413,18 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   },
 
   addNodes: (newNodes, options) => {
-    const dirty = new Set(get()._dirtyNodeIds);
-    for (const n of newNodes) dirty.add(n.id);
     const select = options?.select ?? true;
-    set((state) => ({
-      nodes: [...state.nodes, ...newNodes],
-      selectedNodeIds: select ? newNodes.map((n) => n.id) : state.selectedNodeIds,
-      _dirtyNodeIds: dirty,
-    }));
+    const persist = options?.persist !== false;
+    set((state) => {
+      const base = {
+        nodes: [...state.nodes, ...newNodes],
+        selectedNodeIds: select ? newNodes.map((n) => n.id) : state.selectedNodeIds,
+      };
+      if (!persist) return base;
+      const dirty = new Set(state._dirtyNodeIds);
+      for (const n of newNodes) dirty.add(n.id);
+      return { ...base, _dirtyNodeIds: dirty };
+    });
   },
 
   updateNode: (id, patch) => {
@@ -440,51 +455,81 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     }));
   },
 
-  removeNodes: (ids) => {
+  removeNodes: (ids, options) => {
+    const persist = options?.persist !== false;
     const idSet = new Set(ids);
     const state = get();
+    // 与被删节点相连的边（source/target 命中其一）：随节点一并从本地移除，避免悬挂边
+    const incidentEdgeIds = new Set(
+      state.edges.filter((e) => idSet.has(e.source) || idSet.has(e.target)).map((e) => e.id),
+    );
+    const nextNodes = state.nodes
+      .filter((n) => !idSet.has(n.id))
+      // 解除以被删节点为父的子节点的父子关系
+      .map((n) =>
+        n.parentId && idSet.has(n.parentId) ? { ...n, parentId: undefined, extent: undefined } : n,
+      );
+    const nextEdges = state.edges.filter((e) => !incidentEdgeIds.has(e.id));
+    const nextSelection = state.selectedNodeIds.filter((sid) => !idSet.has(sid));
+
+    if (!persist) {
+      // 仅本地移除：不记录删除、不回写 DB；清除相关脏标记，确保客户端不再写这些行
+      const dirty = new Set(state._dirtyNodeIds);
+      const edgeDirty = new Set(state._dirtyEdgeIds);
+      for (const id of ids) dirty.delete(id);
+      for (const eid of incidentEdgeIds) edgeDirty.delete(eid);
+      set({
+        nodes: nextNodes,
+        edges: nextEdges,
+        selectedNodeIds: nextSelection,
+        _dirtyNodeIds: dirty,
+        _dirtyEdgeIds: edgeDirty,
+      });
+      return;
+    }
+
+    // 默认：记录节点 / 边删除以供持久化回写（与 React Flow 删除键的级联语义对齐，避免外键违例）
     const deleted = new Set(state._deletedNodeIds);
     const dirty = new Set(state._dirtyNodeIds);
     for (const id of ids) {
       deleted.add(id);
       dirty.delete(id);
     }
-    // 同步清理与被删节点相连的边（source/target 命中其一）：从 edges 移除、从脏边集删、并入待删边集，
-    // 避免悬挂边致持久化外键违例与序列链算法被幽灵端点污染（与 React Flow 删除键的级联语义对齐）
     const edgeDirty = new Set(state._dirtyEdgeIds);
     const edgeDeleted = new Set(state._deletedEdgeIds);
-    const incidentEdgeIds = new Set(
-      state.edges.filter((e) => idSet.has(e.source) || idSet.has(e.target)).map((e) => e.id),
-    );
     for (const eid of incidentEdgeIds) {
       edgeDeleted.add(eid);
       edgeDirty.delete(eid);
     }
-    set((s) => ({
-      // 删除目标节点，并解除以其为父的子节点的父子关系
-      nodes: s.nodes
-        .filter((n) => !idSet.has(n.id))
-        .map((n) =>
-          n.parentId && idSet.has(n.parentId)
-            ? { ...n, parentId: undefined, extent: undefined }
-            : n,
-        ),
-      edges: s.edges.filter((e) => !incidentEdgeIds.has(e.id)),
-      selectedNodeIds: s.selectedNodeIds.filter((sid) => !idSet.has(sid)),
+    set({
+      nodes: nextNodes,
+      edges: nextEdges,
+      selectedNodeIds: nextSelection,
       _deletedNodeIds: deleted,
       _dirtyNodeIds: dirty,
       _dirtyEdgeIds: edgeDirty,
       _deletedEdgeIds: edgeDeleted,
-    }));
+    });
   },
 
-  replaceNode: (id, node) => {
-    const dirty = new Set(get()._dirtyNodeIds);
-    dirty.add(node.id);
-    set((state) => ({
-      nodes: state.nodes.map((n) => (n.id === id ? node : n)),
-      _dirtyNodeIds: dirty,
-    }));
+  replaceNode: (id, node, options) => {
+    const persist = options?.persist !== false;
+    set((state) => {
+      const nodes = state.nodes.map((n) => (n.id === id ? node : n));
+      if (persist) {
+        const dirty = new Set(state._dirtyNodeIds);
+        dirty.add(node.id);
+        return { nodes, _dirtyNodeIds: dirty };
+      }
+      // 不持久化：清除该行的脏标记，确保客户端不再回写此行（写入权交给服务端 + 实时回流）
+      if (state._dirtyNodeIds.has(id) || state._dirtyNodeIds.has(node.id)) {
+        const dirty = new Set(state._dirtyNodeIds);
+        dirty.delete(id);
+        dirty.delete(node.id);
+        return { nodes, _dirtyNodeIds: dirty };
+      }
+      return { nodes };
+    });
   },
 
   setSelection: (ids) => set({ selectedNodeIds: ids }),

@@ -79,3 +79,6 @@ verify_jwt = false
 
 [functions.generation-webhook]
 verify_jwt = false
+
+[functions.provider-credentials]
+verify_jwt = true

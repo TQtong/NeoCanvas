@@ -16,9 +16,14 @@ import {
   type VideoGenerationParams,
 } from '../types.ts';
 import { ApiException } from '../response.ts';
-import { requireProviderKey, resolveSize, type ModelAdapter, type ModelContext } from './base.ts';
+import { resolveSize, type ModelAdapter, type ModelContext } from './base.ts';
 
 const ARK_BASE = 'https://ark.cn-beijing.volces.com/api/v3';
+
+/** 解析 Ark 端点：优先用户自定义端点，否则默认。 */
+function arkBase(ctx: ModelContext): string {
+  return (ctx.credentials.baseUrl ?? ARK_BASE).replace(/\/$/, '');
+}
 
 /** 视频任务内容项。 */
 interface ArkContentItem {
@@ -32,6 +37,7 @@ async function submitVideo(
   request: UnifiedGenerationRequest,
   ctx: ModelContext,
   apiKey: string,
+  baseUrl: string,
 ): Promise<SubmitResult> {
   const params = request.params as VideoGenerationParams;
   // Ark Seedance 以文本命令参数承载比例 / 时长 / 分辨率
@@ -55,7 +61,7 @@ async function submitVideo(
     }
   }
 
-  const response = await fetch(`${ARK_BASE}/contents/generations/tasks`, {
+  const response = await fetch(`${baseUrl}/contents/generations/tasks`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ model: ctx.providerModel, content }),
@@ -80,11 +86,12 @@ async function submitImage(
   request: UnifiedGenerationRequest,
   ctx: ModelContext,
   apiKey: string,
+  baseUrl: string,
 ): Promise<SubmitResult> {
   const params = request.params as ImageGenerationParams;
   const { width, height } = resolveSize(params);
 
-  const response = await fetch(`${ARK_BASE}/images/generations`, {
+  const response = await fetch(`${baseUrl}/images/generations`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -135,15 +142,16 @@ export const volcengineAdapter: ModelAdapter = {
   provider: 'volcengine' as Provider,
 
   submit(request: UnifiedGenerationRequest, ctx: ModelContext): Promise<SubmitResult> {
-    const apiKey = requireProviderKey('ARK_API_KEY', 'volcengine');
-    if (request.modality === 'video') return submitVideo(request, ctx, apiKey);
-    if (request.modality === 'image') return submitImage(request, ctx, apiKey);
+    const apiKey = ctx.credentials.apiKey;
+    const baseUrl = arkBase(ctx);
+    if (request.modality === 'video') return submitVideo(request, ctx, apiKey, baseUrl);
+    if (request.modality === 'image') return submitImage(request, ctx, apiKey, baseUrl);
     return Promise.reject(new ApiException('unsupported_param', 'Ark 适配器仅支持图像 / 视频'));
   },
 
-  async poll(externalJobId: string): Promise<PollResult> {
-    const apiKey = requireProviderKey('ARK_API_KEY', 'volcengine');
-    const response = await fetch(`${ARK_BASE}/contents/generations/tasks/${externalJobId}`, {
+  async poll(externalJobId: string, ctx: ModelContext): Promise<PollResult> {
+    const apiKey = ctx.credentials.apiKey;
+    const response = await fetch(`${arkBase(ctx)}/contents/generations/tasks/${externalJobId}`, {
       headers: { Authorization: `Bearer ${apiKey}` },
     });
     if (!response.ok) {

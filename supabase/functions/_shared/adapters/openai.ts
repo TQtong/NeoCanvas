@@ -15,12 +15,7 @@ import {
   type UnifiedGenerationRequest,
 } from '../types.ts';
 import { ApiException } from '../response.ts';
-import {
-  requireProviderKey,
-  resolveSize,
-  type ModelAdapter,
-  type ModelContext,
-} from './base.ts';
+import { resolveSize, type ModelAdapter, type ModelContext } from './base.ts';
 
 const API_BASE = 'https://api.openai.com/v1';
 
@@ -37,7 +32,8 @@ export const openaiAdapter: ModelAdapter = {
     if (request.modality !== 'image') {
       throw new ApiException('unsupported_param', 'OpenAI 适配器仅支持图像模态');
     }
-    const apiKey = requireProviderKey('OPENAI_API_KEY', 'openai');
+    const apiKey = ctx.credentials.apiKey;
+    const baseUrl = (ctx.credentials.baseUrl ?? API_BASE).replace(/\/$/, '');
     const params = request.params as ImageGenerationParams;
     const { width, height } = resolveSize(params);
     const size = toOpenAISize(width, height);
@@ -58,7 +54,7 @@ export const openaiAdapter: ModelAdapter = {
         const blob = await res.blob();
         form.append('image[]', blob, `reference.${ref.mimeType.split('/')[1] ?? 'png'}`);
       }
-      response = await fetch(`${API_BASE}/images/edits`, {
+      response = await fetch(`${baseUrl}/images/edits`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${apiKey}` },
         body: form,
@@ -71,7 +67,7 @@ export const openaiAdapter: ModelAdapter = {
         size,
       };
       if (params.quality && params.quality !== 'auto') body.quality = params.quality;
-      response = await fetch(`${API_BASE}/images/generations`, {
+      response = await fetch(`${baseUrl}/images/generations`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
         body: JSON.stringify(body),

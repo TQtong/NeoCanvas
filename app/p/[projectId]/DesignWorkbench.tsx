@@ -69,41 +69,61 @@ function WorkbenchInner({ bundle, models }: DesignWorkbenchProps) {
   const history = useCanvasHistory(bundle.project.id);
   useCanvasShortcuts(history);
 
-  // 上传图片工具：选文件 → 上传 → 在视口中心落图片节点
-  const onUploadImage = useCallback(() => fileRef.current?.click(), []);
+  // 上传媒体工具：选文件 → 上传 → 在视口中心落图片 / 视频节点（按资产种类分支）
+  const onUploadMedia = useCallback(() => fileRef.current?.click(), []);
 
   const handleFile = useCallback(
     async (file: File) => {
       try {
+        // 客户端直传到 uploads 私有桶并登记资产；kind 由 MIME 自动判定（图片 / 视频）
         const asset = await uploadAsset(getBrowserSupabase(), {
           file,
           userId,
           projectId: bundle.project.id,
         });
-        const maxSide = 400;
-        const ratio = asset.width && asset.height ? asset.width / asset.height : 1;
+        // 依资产宽高按比例缩放到合适落位尺寸；缺尺寸时视频退回 16:9、图片退回 1:1
+        const maxSide = asset.kind === 'video' ? 480 : 400;
+        const fallbackRatio = asset.kind === 'video' ? 16 / 9 : 1;
+        const ratio = asset.width && asset.height ? asset.width / asset.height : fallbackRatio;
         const width = ratio >= 1 ? maxSide : Math.round(maxSide * ratio);
         const height = ratio >= 1 ? Math.round(maxSide / ratio) : maxSide;
         const center = reactFlow.screenToFlowPosition({
           x: window.innerWidth / 2,
           y: window.innerHeight / 2,
         });
-        const node: CanvasFlowNode = {
-          id: uuid(),
-          type: 'image',
+        // 共享落位字段：视口中心居中落点 + 尺寸 + 层级
+        const layout = {
           position: { x: center.x - width / 2, y: center.y - height / 2 },
-          data: createDefaultNodeData('image', {
-            assetId: asset.id,
-            src: asset.url,
-            thumbnailSrc: asset.thumbnailUrl,
-            naturalWidth: asset.width,
-            naturalHeight: asset.height,
-          }),
           width,
           height,
           zIndex: 0,
           style: { width, height },
         };
+        // 运行时即注入签名 URL，让节点即刻可见；刷新后由 useCanvasMedia 按 assetId 重新解析
+        const node: CanvasFlowNode =
+          asset.kind === 'video'
+            ? {
+                id: uuid(),
+                type: 'video',
+                data: createDefaultNodeData('video', {
+                  assetId: asset.id,
+                  src: asset.url,
+                  posterSrc: asset.thumbnailUrl,
+                }),
+                ...layout,
+              }
+            : {
+                id: uuid(),
+                type: 'image',
+                data: createDefaultNodeData('image', {
+                  assetId: asset.id,
+                  src: asset.url,
+                  thumbnailSrc: asset.thumbnailUrl,
+                  naturalWidth: asset.width,
+                  naturalHeight: asset.height,
+                }),
+                ...layout,
+              };
         useCanvasStore.getState().addNode(node, { select: true });
       } catch (err) {
         toast.error(err instanceof Error ? err.message : '上传失败');
@@ -164,12 +184,12 @@ function WorkbenchInner({ bundle, models }: DesignWorkbenchProps) {
         <div className="absolute inset-0 pt-14">
           <CanvasContainer initialViewport={bundle.project.viewport} />
         </div>
-        <CanvasBottomToolbar onUploadImage={onUploadImage} onAiTool={onAiTool} />
+        <CanvasBottomToolbar onUploadMedia={onUploadMedia} onAiTool={onAiTool} />
         <CanvasCornerControls />
         <input
           ref={fileRef}
           type="file"
-          accept="image/*"
+          accept="image/*,video/*"
           hidden
           onChange={(e) => {
             const file = e.target.files?.[0];

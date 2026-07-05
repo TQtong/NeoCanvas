@@ -15,6 +15,7 @@ import { type AssetCandidate, type GenerationRow, type ModelCatalogRow } from '.
 import { exceptionToResponse, fail, handleCorsPreflight, ok } from '../_shared/response.ts';
 import { createAdminClient } from '../_shared/supabase.ts';
 import { landResult, markFailed, resolveProviderModel } from '../_shared/pipeline.ts';
+import { resolveProviderCredential } from '../_shared/credentials.ts';
 import { getAdapter } from '../_shared/adapters/registry.ts';
 import { type ModelContext } from '../_shared/adapters/base.ts';
 
@@ -97,6 +98,12 @@ async function pollViaAdapter(
   const modelRow = model as ModelCatalogRow | null;
   if (!modelRow) return null;
   try {
+    // 回调推进同样按任务归属用户解析凭证（用户凭证 → 环境变量回退）
+    const credentials = await resolveProviderCredential(
+      admin,
+      generation.provider,
+      generation.project_id,
+    );
     const ctx: ModelContext = {
       modelKey: modelRow.key,
       capabilities: modelRow.capabilities,
@@ -104,6 +111,7 @@ async function pollViaAdapter(
       references: [],
       // 轮询 / 回调阶段不需要关键帧（提交已完成），置空满足上下文契约
       keyframes: [],
+      credentials,
     };
     const result = await getAdapter(generation.provider).poll(generation.external_job_id, ctx);
     if (result.status === 'succeeded') return { done: 'succeeded', candidates: result.candidates };

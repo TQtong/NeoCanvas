@@ -15,6 +15,7 @@ export * from './generation';
 export * from './models';
 export * from './api';
 export * from './database';
+export * from './providers';
 export * from './edge-functions';
 export * from './realtime';
 export * from './view-models';

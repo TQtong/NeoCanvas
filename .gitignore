@@ -32,6 +32,7 @@ next-env.d.ts
 # 编辑器 / 系统
 .DS_Store
 .idea/
+.claude/
 .vscode/*
 !.vscode/extensions.json
 Thumbs.db

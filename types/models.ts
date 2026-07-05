@@ -86,6 +86,10 @@ export interface ModelCatalogEntry {
   defaultParams: ModelDefaultParams;
   /** 选择条排序。 */
   sortOrder: number;
+  /** 是否上架（管理面板需区分启停；选择条只取已上架者）。 */
+  isActive: boolean;
+  /** 归属用户：null=内置种子（只读）；非空=该用户自有模型（可管理）。 */
+  userId: string | null;
 }
 
 /**

@@ -40,6 +40,12 @@ export interface ModelContext {
    * 排列，相邻两帧构成一段（前者首帧、后者尾帧）。仅视频图生视频模型消费；非序列请求为空数组。
    */
   keyframes: ResolvedReference[];
+  /**
+   * 已解析的提供商凭证（BYOK）。由 {@link import('../credentials.ts').resolveProviderCredential}
+   * 在构建上下文时解析：优先取请求归属用户在该 provider 的启用凭证（Vault 解密），无则回退
+   * 环境变量。适配器只从此处取 Key / 端点，**不再各自读 `Deno.env`**（密钥解析单点化）。
+   */
+  credentials: { apiKey: string; baseUrl?: string };
 }
 
 /** 模型适配器统一接口。 */
@@ -50,15 +56,6 @@ export interface ModelAdapter {
   submit(request: UnifiedGenerationRequest, ctx: ModelContext): Promise<SubmitResult>;
   /** 查询一次异步生成的状态与进度。 */
   poll(externalJobId: string, ctx: ModelContext): Promise<PollResult>;
-}
-
-/** 读取必需环境变量，缺失即以 model_unavailable 抛出。 */
-export function requireProviderKey(name: string, provider: Provider): string {
-  const value = Deno.env.get(name);
-  if (!value) {
-    throw new ApiException('model_unavailable', `${provider} 未配置密钥（${name}）`);
-  }
-  return value;
 }
 
 /**

@@ -55,7 +55,8 @@ select vault.create_secret('600000', 'generation_timeout_ms');
 
 ```bash
 supabase functions deploy create-project submit-generation agent-orchestrate \
-  process-generation-queue poll-generations generation-webhook export-canvas
+  process-generation-queue poll-generations generation-webhook export-canvas \
+  regenerate-poster provider-credentials
 
 # 注入函数密钥（外部模型密钥仅存于此，绝不下发客户端）
 supabase secrets set \
@@ -69,8 +70,15 @@ supabase secrets set \
   MAX_INFLIGHT_GENERATIONS=8
 ```
 
+> **BYOK（前端配置密钥）**：自迁移 0016 起，登录用户可在「设置 → 模型提供商」直接配置自己的
+> provider 与 API Key（经 `provider-credentials` 函数加密写入 Vault，明文绝不回流客户端）。生成时
+> 密钥解析顺序为 **用户凭证（启用）→ 上述环境变量回退**。因此上面的 `*_API_KEY` 变为「可选的全局
+> 默认」：配了即作为未自带密钥用户的兜底；纯 BYOK 部署可不设。编排 LLM（`ORCHESTRATOR_LLM_*`）
+> 与内容审核（`MODERATION_API_KEY`）仍为系统级环境变量，不纳入 BYOK。
+
 > `SUPABASE_URL` / `SUPABASE_ANON_KEY` / `SUPABASE_SERVICE_ROLE_KEY` 由 Supabase 平台自动注入
-> 到函数环境，无需手动设置。`config.toml` 已为三个内部函数关闭网关 JWT 校验。
+> 到函数环境，无需手动设置。`config.toml` 已为三个内部函数关闭网关 JWT 校验，并为
+> `provider-credentials` 开启 JWT 校验。
 
 ## 七、配置认证
 

@@ -24,6 +24,7 @@ import {
 import { ApiException } from './response.ts';
 import { type SupabaseClient } from './supabase.ts';
 import { type ModelContext, type ResolvedReference } from './adapters/base.ts';
+import { resolveProviderCredential } from './credentials.ts';
 import { moderateOutputImages, moderateReferenceImages } from './moderation.ts';
 import { makeImageThumbnail, THUMBNAIL_MIME } from './image.ts';
 
@@ -227,12 +228,15 @@ export async function buildModelContext(
 ): Promise<ModelContext> {
   const references = await resolveReferences(admin, request);
   const keyframes = await resolveKeyframes(admin, request);
+  // 密钥解析单点：按请求归属用户解析该 provider 的 Key / 端点（用户凭证 → 环境变量回退）
+  const credentials = await resolveProviderCredential(admin, model.provider, request.projectId);
   return {
     modelKey: model.key,
     capabilities: model.capabilities,
     providerModel: resolveProviderModel(model.key, model.provider, model.default_params),
     references,
     keyframes,
+    credentials,
   };
 }
 
@@ -440,19 +444,23 @@ export async function landResult(
     return;
   }
 
-  // 3) 读取占位节点位置 / 尺寸，规划余产出排布
+  // 3) 读取占位节点位置 / 尺寸 / 组归属，规划余产出排布
   let placeholderPos = { x: 0, y: 0 };
   let placeholderSize = { width: 320, height: 320 };
+  let placeholderGroupId: string | undefined;
   const hasPlaceholder = Boolean(generation.placeholder_node_id);
   if (hasPlaceholder) {
     const { data: placeholder } = await admin
       .from('canvas_nodes')
-      .select('position_x, position_y, width, height')
+      .select('position_x, position_y, width, height, data')
       .eq('id', generation.placeholder_node_id)
       .maybeSingle();
     if (placeholder) {
       placeholderPos = { x: placeholder.position_x, y: placeholder.position_y };
       placeholderSize = { width: placeholder.width ?? 320, height: placeholder.height ?? 320 };
+      // 保留占位节点的 groupId，使原地重生成（占位由真实节点改写而来）落库后仍属同一逻辑组
+      const pdata = placeholder.data as Record<string, unknown> | null;
+      if (pdata && typeof pdata.groupId === 'string') placeholderGroupId = pdata.groupId;
     }
   }
 
@@ -472,7 +480,14 @@ export async function landResult(
 
   const extraStart = hasPlaceholder ? 1 : 0;
   const firstNode = hasPlaceholder
-    ? { type: survivors[0].kind, assetId: survivors[0].id, data: nodeData(survivors[0]) }
+    ? {
+        type: survivors[0].kind,
+        assetId: survivors[0].id,
+        // 合并占位的 groupId（若有），使原地重生成结果不脱组
+        data: placeholderGroupId
+          ? { ...nodeData(survivors[0]), groupId: placeholderGroupId }
+          : nodeData(survivors[0]),
+      }
     : null;
   const extraNodes = survivors.slice(extraStart).map((m, idx) => {
     const i = idx + (hasPlaceholder ? 1 : 0);
