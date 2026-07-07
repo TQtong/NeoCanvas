@@ -12,6 +12,7 @@
 import {
   Frame,
   ImageIcon,
+  MessageSquare,
   PenLine,
   Shapes,
   Sparkles,
@@ -35,6 +36,7 @@ const MENTION_TYPE_ICON: Record<NodeType, LucideIcon> = {
   drawing: PenLine,
   video: Video,
   generation_placeholder: Sparkles,
+  media_panel: MessageSquare,
   frame: Frame,
 };
 

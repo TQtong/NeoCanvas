@@ -10,6 +10,7 @@ import 'server-only';
  */
 
 import type {
+  AssetRow,
   CanvasEdgeRow,
   CanvasNodeRow,
   ConversationRow,
@@ -17,6 +18,7 @@ import type {
   ProjectRow,
 } from '@/types';
 import type { TypedSupabaseClient } from '@/lib/supabase/types';
+import { resolveAssetViews } from '@/lib/storage/signed-url';
 import { MESSAGES_PAGE_SIZE } from './mappers';
 
 /** 设计页初始数据包。 */
@@ -33,6 +35,51 @@ export interface ProjectBundle {
   messages: MessageRow[];
   /** 是否还有更早的历史消息可加载（keyset 分页）。 */
   hasMoreMessages: boolean;
+}
+
+/**
+ * 为服务端初始快照补齐媒体节点的运行时 URL。
+ *
+ * 客户端仍会用 `useCanvasMedia` 做补漏与过期续签；这里先把首屏所需的 `src`
+ * 注入到非持久化 data 字段，避免刷新后 image/video 节点在异步解析前长期显示为空白骨架。
+ */
+async function attachRuntimeMediaUrls(
+  supabase: TypedSupabaseClient,
+  nodes: CanvasNodeRow[],
+): Promise<CanvasNodeRow[]> {
+  const assetIds = Array.from(
+    new Set(
+      nodes
+        .filter((node) => (node.type === 'image' || node.type === 'video') && node.asset_id)
+        .map((node) => node.asset_id as string),
+    ),
+  );
+  if (assetIds.length === 0) return nodes;
+
+  const { data } = await supabase.from('assets').select('*').in('id', assetIds);
+  const assetRows = (data ?? []) as AssetRow[];
+  if (assetRows.length === 0) return nodes;
+
+  const views = await resolveAssetViews(supabase, assetRows);
+  const byAssetId = new Map(views.map((view) => [view.id, view]));
+
+  return nodes.map((node) => {
+    if (node.type !== 'image' && node.type !== 'video') return node;
+    if (!node.asset_id) return node;
+    const view = byAssetId.get(node.asset_id);
+    if (!view?.url) return node;
+
+    return {
+      ...node,
+      data: {
+        ...node.data,
+        src: view.url,
+        ...(node.type === 'image'
+          ? { thumbnailSrc: view.thumbnailUrl }
+          : { posterSrc: view.thumbnailUrl }),
+      },
+    };
+  });
 }
 
 /**
@@ -87,9 +134,11 @@ export async function loadProjectBundle(
     messages = page.slice().reverse();
   }
 
+  const nodes = await attachRuntimeMediaUrls(supabase, nodesResult.data ?? []);
+
   return {
     project,
-    nodes: nodesResult.data ?? [],
+    nodes,
     edges: edgesResult.data ?? [],
     conversation,
     messages,

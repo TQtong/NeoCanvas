@@ -71,6 +71,7 @@ export const NODE_TYPES = [
   'drawing',
   'video',
   'generation_placeholder',
+  'media_panel',
   'frame',
 ] as const;
 export type NodeType = (typeof NODE_TYPES)[number];

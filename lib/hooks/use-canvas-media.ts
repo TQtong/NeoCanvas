@@ -22,11 +22,10 @@ import { resolveAssetView } from '@/lib/storage/signed-url';
  * @param projectId - 当前项目（用于触发重置）
  */
 export function useCanvasMedia(projectId: string): void {
-  // 已解析过的 assetId 缓存，避免重复请求
-  const resolved = useRef<Set<string>>(new Set());
+  const resolving = useRef<Set<string>>(new Set());
 
   useEffect(() => {
-    resolved.current = new Set();
+    resolving.current = new Set();
   }, [projectId]);
 
   useEffect(() => {
@@ -40,26 +39,39 @@ export function useCanvasMedia(projectId: string): void {
       for (const node of state.nodes) {
         if (node.data.type === 'image' || node.data.type === 'video') {
           const assetId = node.data.assetId;
-          if (assetId && !node.data.src && !resolved.current.has(`${node.id}:${assetId}`)) {
+          const key = assetId ? `${node.id}:${assetId}` : null;
+          if (
+            assetId &&
+            key &&
+            !node.data.src &&
+            !resolving.current.has(key)
+          ) {
             pending.push({ nodeId: node.id, assetId });
+            resolving.current.add(key);
           }
         }
       }
       if (pending.length === 0) return;
 
-      const uniqueAssetIds = Array.from(new Set(pending.map((p) => p.assetId)));
-      const { data: rows } = await supabase.from('assets').select('*').in('id', uniqueAssetIds);
-      const byId = new Map<string, AssetRow>((rows ?? []).map((r) => [r.id, r]));
+      try {
+        const uniqueAssetIds = Array.from(new Set(pending.map((p) => p.assetId)));
+        const { data: rows } = await supabase.from('assets').select('*').in('id', uniqueAssetIds);
+        const byId = new Map<string, AssetRow>((rows ?? []).map((r) => [r.id, r]));
 
-      for (const { nodeId, assetId } of pending) {
-        const row = byId.get(assetId);
-        resolved.current.add(`${nodeId}:${assetId}`);
-        if (!row) continue;
-        const view = await resolveAssetView(supabase, row);
-        useCanvasStore.getState().setNodeRuntime(nodeId, {
-          src: view.url,
-          thumbnailSrc: view.thumbnailUrl,
-        });
+        for (const { nodeId, assetId } of pending) {
+          const row = byId.get(assetId);
+          if (!row) continue;
+          const view = await resolveAssetView(supabase, row);
+          if (!view.url) continue;
+          useCanvasStore.getState().setNodeRuntime(nodeId, {
+            src: view.url,
+            thumbnailSrc: view.thumbnailUrl,
+          });
+        }
+      } finally {
+        for (const { nodeId, assetId } of pending) {
+          resolving.current.delete(`${nodeId}:${assetId}`);
+        }
       }
     };
 

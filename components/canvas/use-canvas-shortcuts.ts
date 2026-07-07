@@ -13,7 +13,6 @@
 import { useEffect } from 'react';
 import { useReactFlow } from '@xyflow/react';
 import { useCanvasStore } from '@/stores/canvas-store';
-import { useChatStore } from '@/stores/chat-store';
 import type { UseCanvasHistory } from './use-canvas-history';
 
 /** 判断焦点是否在可编辑元素中。 */
@@ -93,10 +92,6 @@ export function useCanvasShortcuts(history: UseCanvasHistory): void {
 
       // 单键工具切换与动作
       switch (key) {
-        case 'c':
-          event.preventDefault();
-          useChatStore.getState().requestFocus();
-          break;
         case 'v':
           store.setTool('select');
           break;

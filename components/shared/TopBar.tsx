@@ -18,12 +18,7 @@ import {
   type FormEvent,
   type KeyboardEvent,
 } from 'react';
-import {
-  ChevronDown,
-  PanelRightClose,
-  PanelRightOpen,
-  Share2,
-} from 'lucide-react';
+import { ChevronDown, Share2 } from 'lucide-react';
 import { useTranslation } from '@/i18n';
 import { getBrowserSupabase } from '@/lib/supabase/client';
 import { IconButton } from '@/components/ui/icon-button';
@@ -46,10 +41,6 @@ export interface TopBarProps {
   projectId: string;
   /** 项目标题（受控初值；本地编辑态在提交后由上层数据流回灌）。 */
   title: string;
-  /** 右侧面板是否展开。 */
-  panelOpen: boolean;
-  /** 切换右侧面板展开 / 收起。 */
-  onTogglePanel: () => void;
 }
 
 /**
@@ -58,7 +49,7 @@ export interface TopBarProps {
  * @param props - 见 {@link TopBarProps}
  * @returns 顶栏条
  */
-export function TopBar({ projectId, title, panelOpen, onTogglePanel }: TopBarProps) {
+export function TopBar({ projectId, title }: TopBarProps) {
   const { t } = useTranslation();
   const { success, error: toastError } = useToast();
 
@@ -210,16 +201,6 @@ export function TopBar({ projectId, title, panelOpen, onTogglePanel }: TopBarPro
         <Tooltip content={t('common.share')}>
           <IconButton label={t('common.share')} onClick={() => void handleShare()}>
             <Share2 />
-          </IconButton>
-        </Tooltip>
-
-        <Tooltip content={panelOpen ? t('design.collapsePanel') : t('design.expandPanel')}>
-          <IconButton
-            label={panelOpen ? t('design.collapsePanel') : t('design.expandPanel')}
-            active={panelOpen}
-            onClick={onTogglePanel}
-          >
-            {panelOpen ? <PanelRightClose /> : <PanelRightOpen />}
           </IconButton>
         </Tooltip>
 

@@ -20,6 +20,7 @@
  */
 
 import type { BackgroundVariant, NodeType, ShapeKind, TextAlign } from './enums';
+import type { AspectRatio, GenerationResultMode, ImageQuality } from './generation';
 
 /**
  * 裁剪框，单位为原始媒体像素，描述从原图截取的矩形区域。
@@ -71,6 +72,7 @@ export interface DrawingPoint {
  * 所有节点 data 共有的桥接字段。
  */
 export type NodeDataBase = {
+  [key: string]: unknown;
   /** 节点类型判别标签，恒等于所属 `canvas_nodes.type` 列。 */
   type: NodeType;
   /** 旋转角（度），来自 `canvas_nodes.rotation` 列；由内容容器以 CSS 变换应用。 */
@@ -82,6 +84,58 @@ export type NodeDataBase = {
    */
   groupId?: string;
 };
+
+/** 媒体节点在画布生成工作流中的角色。 */
+export type MediaRole = 'primary' | 'candidate';
+
+/** 图片尺寸预设：按当前比例换算长边像素。 */
+export type ImageSizePreset = '1k' | '2k' | '4k' | '8k' | 'custom';
+
+/**
+ * 媒体节点的默认生成配置。它属于图片/视频本身，而不是某条流程消息。
+ */
+export interface MediaGenerationSettings {
+  /** 当前用于后续生成的模型 key。 */
+  modelKey: string | null;
+  /** 单次希望生成的候选数量；默认 1，提交时受模型能力上限约束。 */
+  count: number;
+  /** 输出比例。 */
+  aspectRatio?: AspectRatio;
+  /** 图片尺寸预设；自定义时使用 width / height。 */
+  sizePreset?: ImageSizePreset;
+  /** 显式输出宽度。 */
+  width?: number;
+  /** 显式输出高度。 */
+  height?: number;
+  /** 图片质量档。 */
+  quality?: ImageQuality;
+  /** 视频时长。 */
+  durationSec?: number;
+  /** 视频分辨率。 */
+  resolution?: string;
+  /** 视频帧率。 */
+  fps?: number;
+  /** 视频运动强度。 */
+  motionStrength?: number;
+}
+
+/** 图片/视频节点共享的媒体工作流字段。 */
+export interface MediaWorkflowFields {
+  /** 图片/视频本身的内容描述；区别于消息里的流程描述。 */
+  mediaDescription: string;
+  /** 后续生成默认使用的参数。 */
+  generationSettings: MediaGenerationSettings;
+  /** 主媒体或候选媒体。 */
+  mediaRole: MediaRole;
+  /** 候选所属的主媒体节点 id。主媒体为 null。 */
+  candidateOf: string | null;
+  /** 候选在主媒体历史中的顺序。主媒体为 null。 */
+  candidateIndex: number | null;
+  /** 产生该媒体版本的生成任务 id。 */
+  sourceGenerationId: string | null;
+  /** 是否收起该主媒体的候选历史。候选节点自身忽略该字段。 */
+  candidatesCollapsed: boolean;
+}
 
 /**
  * 图片节点数据。真实媒体经 `assetId` 关联 `assets`，运行时解析为签名 URL。
@@ -110,7 +164,7 @@ export type ImageNodeData = NodeDataBase & {
   src?: string | null;
   /** 运行时注入：缩略图签名 URL，不持久化。 */
   thumbnailSrc?: string | null;
-};
+} & MediaWorkflowFields;
 
 /**
  * 文本节点数据。直接驱动可就地编辑的文本框。
@@ -208,7 +262,7 @@ export type VideoNodeData = NodeDataBase & {
   src?: string | null;
   /** 运行时注入：封面签名 URL，不持久化。 */
   posterSrc?: string | null;
-};
+} & MediaWorkflowFields;
 
 /**
  * 生成占位节点数据。任务完成后该节点被原地改写为 image / video 节点。
@@ -231,6 +285,10 @@ export type GenerationPlaceholderNodeData = NodeDataBase & {
   statusLabel?: string;
   /** 运行时注入：失败原因（失败态展示与重试）。 */
   errorMessage?: string | null;
+  /** 候选占位归属的主媒体节点。 */
+  targetNodeId?: string | null;
+  /** 占位完成后的落图语义。 */
+  resultMode?: GenerationResultMode;
 };
 
 /**
@@ -248,6 +306,15 @@ export type FrameNodeData = NodeDataBase & {
   showGrid: boolean;
 };
 
+/** 媒体侧卡节点：承载某个图片/视频目标的对话与生成配置。 */
+export type MediaPanelNodeData = NodeDataBase & {
+  type: 'media_panel';
+  /** 被管理的主图片/视频节点 id。 */
+  targetNodeId: string;
+  /** 侧卡是否折叠。 */
+  collapsed: boolean;
+};
+
 /**
  * 画布节点数据判别联合：所有节点类型 data 的并集，以 `type` narrow。
  * 既是 `canvas_nodes.data` 的映射目标，又是 React Flow 节点 `data` 的类型。
@@ -259,6 +326,7 @@ export type NodeData =
   | DrawingNodeData
   | VideoNodeData
   | GenerationPlaceholderNodeData
+  | MediaPanelNodeData
   | FrameNodeData;
 
 /**

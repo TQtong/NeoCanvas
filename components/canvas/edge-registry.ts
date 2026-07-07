@@ -11,9 +11,11 @@
 import type { EdgeTypes } from '@xyflow/react';
 import { SequenceEdge } from './edges/SequenceEdge';
 import { AnnotationEdge } from './edges/AnnotationEdge';
+import { MediaCandidateEdge } from './edges/MediaCandidateEdge';
 
 /** 边类型注册表，传入 ReactFlow 的 edgeTypes。 */
 export const edgeTypes: EdgeTypes = {
   sequence: SequenceEdge,
   annotation: AnnotationEdge,
+  media_candidate: MediaCandidateEdge,
 };

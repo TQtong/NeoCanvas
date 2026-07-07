@@ -24,6 +24,7 @@ export type NodeType =
   | 'drawing'
   | 'video'
   | 'generation_placeholder'
+  | 'media_panel'
   | 'frame';
 export type Provider = 'openai' | 'google' | 'volcengine' | 'fal' | 'replicate' | 'siliconflow';
 export type Scene = 'design' | 'branding' | 'ecommerce' | 'video';
@@ -97,6 +98,7 @@ export interface ImageGenerationParams {
   aspectRatio?: AspectRatio;
   width?: number;
   height?: number;
+  sizePreset?: '1k' | '2k' | '4k' | '8k' | 'custom';
   count: number;
   quality?: ImageQuality;
   seed?: number;
@@ -137,6 +139,8 @@ export interface NodePlacement {
   parentId?: string | null;
 }
 
+export type GenerationResultMode = 'new_primary' | 'candidate_for_target';
+
 export interface UnifiedGenerationRequest {
   projectId: string;
   conversationId: string | null;
@@ -147,6 +151,8 @@ export interface UnifiedGenerationRequest {
   params: GenerationParams;
   idempotencyKey: string;
   placement?: NodePlacement;
+  targetNodeId?: string | null;
+  resultMode?: GenerationResultMode;
   placeholderNodeId?: string;
 }
 
@@ -252,6 +258,16 @@ export interface SubmitGenerationResponse {
   generationId: string;
   placeholderNodeId: string;
   deduplicated: boolean;
+}
+
+export interface SwapMediaCandidateRequest {
+  projectId: string;
+  primaryNodeId: string;
+  candidateNodeId: string;
+}
+
+export interface SwapMediaCandidateResponse {
+  swapped: boolean;
 }
 
 export interface AgentOrchestrateRequest {
@@ -364,6 +380,8 @@ export interface GenerationRow {
   external_job_id: string | null;
   result_asset_id: string | null;
   placeholder_node_id: string | null;
+  target_node_id: string | null;
+  result_mode: GenerationResultMode;
   error: string | null;
   idempotency_key: string | null;
   moderation_status: string;

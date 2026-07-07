@@ -22,6 +22,7 @@ import type {
 import { createDefaultNodeDataUnion, DEFAULT_NODE_SIZE } from './constants';
 import { decorateSequenceEdge, SEQUENCE_EDGE_TYPE } from './sequence';
 import { ANNOTATION_EDGE_TYPE, decorateAnnotationEdge } from './annotation';
+import { decorateMediaCandidateEdge, MEDIA_CANDIDATE_EDGE_TYPE } from './media-candidate';
 
 /** 本项目的 React Flow 节点类型别名。 */
 export type CanvasFlowNode = Node<NodeData>;
@@ -216,6 +217,7 @@ export function rowToEdge(row: CanvasEdgeRow): CanvasFlowEdge {
   // 序列 / 描述边：加载时统一施加渲染装饰（动画 / 虚线 + 末端箭头），与创建路径外观一致
   if (edge.type === SEQUENCE_EDGE_TYPE) return decorateSequenceEdge(edge);
   if (edge.type === ANNOTATION_EDGE_TYPE) return decorateAnnotationEdge(edge);
+  if (edge.type === MEDIA_CANDIDATE_EDGE_TYPE) return decorateMediaCandidateEdge(edge);
   return edge;
 }
 

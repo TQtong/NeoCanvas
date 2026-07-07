@@ -19,6 +19,10 @@
 import { Handle, Position } from '@xyflow/react';
 import { cn } from '@/lib/utils/cn';
 import { SEQUENCE_HANDLE_IN, SEQUENCE_HANDLE_OUT } from '@/lib/canvas/sequence';
+import {
+  MEDIA_CANDIDATE_HANDLE_IN,
+  MEDIA_CANDIDATE_HANDLE_OUT,
+} from '@/lib/canvas/media-candidate';
 
 /** 连接桩属性。 */
 export interface NodeConnectHandlesProps {
@@ -43,6 +47,10 @@ function handleClass(selected: boolean): string {
   );
 }
 
+/** 自动候选关系边使用的隐藏桩，不参与用户手动连线。 */
+const candidateHandleClass =
+  '!pointer-events-none !size-1 !border-0 !bg-transparent !opacity-0';
+
 /**
  * 序列入 / 出连接桩。
  */
@@ -57,11 +65,23 @@ export function NodeConnectHandles({ selected }: NodeConnectHandlesProps) {
         title="序列入点：从上一张图连入"
       />
       <Handle
+        type="target"
+        position={Position.Left}
+        id={MEDIA_CANDIDATE_HANDLE_IN}
+        className={candidateHandleClass}
+      />
+      <Handle
         type="source"
         position={Position.Right}
         id={SEQUENCE_HANDLE_OUT}
         className={handleClass(selected)}
         title="拖动连接下一张图，串成视频序列"
+      />
+      <Handle
+        type="source"
+        position={Position.Right}
+        id={MEDIA_CANDIDATE_HANDLE_OUT}
+        className={candidateHandleClass}
       />
     </>
   );

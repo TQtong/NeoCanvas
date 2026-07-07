@@ -15,6 +15,7 @@ import { DrawingNode } from './nodes/DrawingNode';
 import { VideoNode } from './nodes/VideoNode';
 import { GenerationPlaceholderNode } from './nodes/GenerationPlaceholderNode';
 import { FrameNode } from './nodes/FrameNode';
+import { MediaPanelNode } from './nodes/MediaPanelNode';
 
 /** 节点类型注册表，传入 ReactFlow 的 nodeTypes。 */
 export const nodeTypes: NodeTypes = {
@@ -24,5 +25,6 @@ export const nodeTypes: NodeTypes = {
   drawing: DrawingNode,
   video: VideoNode,
   generation_placeholder: GenerationPlaceholderNode,
+  media_panel: MediaPanelNode,
   frame: FrameNode,
 };

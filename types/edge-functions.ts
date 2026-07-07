@@ -23,6 +23,7 @@ export const EDGE_FUNCTIONS = {
   generationWebhook: 'generation-webhook',
   regeneratePoster: 'regenerate-poster',
   providerCredentials: 'provider-credentials',
+  swapMediaCandidate: 'swap-media-candidate',
 } as const;
 
 /** create-project 请求。 */
@@ -66,6 +67,22 @@ export interface SubmitGenerationResponse {
   placeholderNodeId: string;
   /** 是否为幂等命中（复用既有任务）。 */
   deduplicated: boolean;
+}
+
+/** swap-media-candidate 请求。 */
+export interface SwapMediaCandidateRequest {
+  /** 当前项目。 */
+  projectId: string;
+  /** 主媒体节点 id。 */
+  primaryNodeId: string;
+  /** 候选媒体节点 id。 */
+  candidateNodeId: string;
+}
+
+/** swap-media-candidate 响应。 */
+export interface SwapMediaCandidateResponse {
+  /** 是否完成替换。 */
+  swapped: boolean;
 }
 
 /** agent-orchestrate 请求。 */

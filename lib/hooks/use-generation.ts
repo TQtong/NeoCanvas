@@ -145,6 +145,8 @@ export function useGeneration(): UseGeneration {
         params: row.params as GenerationParams,
         idempotencyKey: idempotencyKey(),
         placement: effectivePlacement,
+        targetNodeId: row.target_node_id,
+        resultMode: row.result_mode,
         placeholderNodeId: newPlaceholderId,
       };
 

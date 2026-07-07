@@ -20,7 +20,6 @@ import { getBrowserSupabase } from '@/lib/supabase/client';
 import { invokeEdge } from '@/lib/edge/client';
 import { normalizeUnknownError } from '@/lib/edge/errors';
 import { useCanvasStore } from '@/stores/canvas-store';
-import { useChatStore } from '@/stores/chat-store';
 import { nodeBox } from '@/lib/canvas/node-mapper';
 import { collectGroupOverlays } from '@/lib/canvas/flatten';
 import { buildPlaceholderNode } from './use-generation';
@@ -100,7 +99,7 @@ export function useRegeneratePoster(): UseRegeneratePoster {
           EDGE_FUNCTIONS.regeneratePoster,
           {
             projectId,
-            conversationId: useChatStore.getState().conversationId,
+            conversationId: null,
             groupId,
             backgroundNodeId,
             modelKey: model.key,

@@ -82,3 +82,6 @@ verify_jwt = false
 
 [functions.provider-credentials]
 verify_jwt = true
+
+[functions.swap-media-candidate]
+verify_jwt = true

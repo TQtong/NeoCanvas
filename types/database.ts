@@ -105,6 +105,7 @@ export type ConversationRow = {
   id: string;
   project_id: string;
   title: string;
+  target_node_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -140,6 +141,8 @@ export type GenerationRow = {
   external_job_id: string | null;
   result_asset_id: string | null;
   placeholder_node_id: string | null;
+  target_node_id: string | null;
+  result_mode: 'new_primary' | 'candidate_for_target';
   error: string | null;
   idempotency_key: string | null;
   /** 内容安全审核状态：pending / passed / blocked。 */

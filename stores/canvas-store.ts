@@ -23,8 +23,10 @@ import type {
   CanvasEdgeRow,
   CanvasNodeRow,
   GenerationRow,
+  ImageNodeData,
   NodeData,
   RealtimeChange,
+  VideoNodeData,
   Viewport,
 } from '@/types';
 import type { AlignmentGuide } from '@/lib/canvas/alignment';
@@ -69,6 +71,47 @@ export interface MarqueeState {
   startY: number;
   currentX: number;
   currentY: number;
+}
+
+interface MediaRuntimeFields {
+  src: string;
+  thumbnailSrc?: string | null;
+  posterSrc?: string | null;
+}
+
+function isMediaPanelTarget(node: CanvasFlowNode | undefined): boolean {
+  return (
+    node?.data.type === 'image' ||
+    node?.data.type === 'video' ||
+    node?.data.type === 'generation_placeholder'
+  );
+}
+
+function effectiveNodeDeleteIds(nodes: CanvasFlowNode[], ids: Iterable<string>): Set<string> {
+  const requested = new Set(ids);
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+  const targetIds = new Set(
+    Array.from(requested).filter((id) => isMediaPanelTarget(byId.get(id))),
+  );
+  const effective = new Set<string>();
+
+  for (const id of requested) {
+    const node = byId.get(id);
+    if (!node) continue;
+    if (node.data.type === 'media_panel') {
+      if (targetIds.has(node.data.targetNodeId)) effective.add(id);
+      continue;
+    }
+    effective.add(id);
+  }
+
+  for (const node of nodes) {
+    if (node.data.type === 'media_panel' && targetIds.has(node.data.targetNodeId)) {
+      effective.add(node.id);
+    }
+  }
+
+  return effective;
 }
 
 /** 持久化脏集快照（供持久化控制器消费）。 */
@@ -125,6 +168,7 @@ export interface CanvasState {
   _pendingEdgeIds: Set<string>;
   /** 节点服务端版本（updated_at），用于回声抑制与最后写入胜出。 */
   _nodeVersions: Record<string, string>;
+  _assetRuntime: Record<string, MediaRuntimeFields>;
   /** 已 flush、写回未确认的节点 id（在途持久化）；用于抑制自身写入的回声。 */
   _pendingNodeIds: Set<string>;
   /** 视口是否脏。 */
@@ -292,6 +336,68 @@ function notOlderThan(a: string | undefined, b: string | undefined): boolean {
   return new Date(a).getTime() >= new Date(b).getTime();
 }
 
+function isMediaRuntimeNode(
+  node: CanvasFlowNode,
+): node is CanvasFlowNode & { data: ImageNodeData | VideoNodeData } {
+  return node.data.type === 'image' || node.data.type === 'video';
+}
+
+function runtimeFieldsFromNode(
+  node: CanvasFlowNode,
+): { assetId: string; fields: MediaRuntimeFields } | null {
+  if (!isMediaRuntimeNode(node) || !node.data.assetId || !node.data.src) return null;
+
+  const fields: MediaRuntimeFields = { src: node.data.src };
+  if (node.data.type === 'image') {
+    fields.thumbnailSrc = node.data.thumbnailSrc;
+  }
+  if (node.data.type === 'video') {
+    fields.posterSrc = node.data.posterSrc;
+  }
+
+  return { assetId: node.data.assetId, fields };
+}
+
+function mergeAssetRuntime(
+  current: Record<string, MediaRuntimeFields>,
+  nodes: CanvasFlowNode[],
+): Record<string, MediaRuntimeFields> {
+  let next = current;
+  for (const node of nodes) {
+    const runtime = runtimeFieldsFromNode(node);
+    if (!runtime) continue;
+    if (next === current) next = { ...current };
+    next[runtime.assetId] = runtime.fields;
+  }
+  return next;
+}
+
+function hydrateRuntimeMediaFields(
+  node: CanvasFlowNode,
+  localNodes: CanvasFlowNode[],
+  assetRuntime: Record<string, MediaRuntimeFields>,
+): CanvasFlowNode {
+  if (!isMediaRuntimeNode(node) || !node.data.assetId) return node;
+
+  const runtimeSource =
+    assetRuntime[node.data.assetId] ??
+    localNodes
+      .map((localNode) => runtimeFieldsFromNode(localNode))
+      .find((runtime) => runtime?.assetId === node.data.assetId)?.fields;
+  if (!runtimeSource) return node;
+
+  const runtimeFields: Record<string, unknown> = { src: runtimeSource.src };
+  if (node.data.type === 'image') {
+    runtimeFields.thumbnailSrc = runtimeSource.thumbnailSrc;
+  }
+  if (node.data.type === 'video') {
+    runtimeFields.posterSrc = runtimeSource.posterSrc;
+  }
+
+  // 媒体 URL 是运行时字段。候选替换时 DB 只回流 asset_id，复用本地已签名 URL 避免短暂白屏。
+  return { ...node, data: { ...node.data, ...runtimeFields } as NodeData };
+}
+
 export const useCanvasStore = create<CanvasState>((set, get) => ({
   projectId: null,
   nodes: [],
@@ -312,6 +418,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   _dirtyEdgeIds: new Set(),
   _deletedEdgeIds: new Set(),
   _nodeVersions: {},
+  _assetRuntime: {},
   _pendingNodeIds: new Set(),
   _pendingEdgeIds: new Set(),
   _viewportDirty: false,
@@ -319,9 +426,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   hydrate: ({ projectId, nodeRows, edgeRows, viewport }) => {
     const versions: Record<string, string> = {};
     for (const row of nodeRows) versions[row.id] = row.updated_at;
+    const nodes = nodeRows.map(rowToNode).sort((a, b) => (a.zIndex ?? 0) - (b.zIndex ?? 0));
     set({
       projectId,
-      nodes: nodeRows.map(rowToNode).sort((a, b) => (a.zIndex ?? 0) - (b.zIndex ?? 0)),
+      nodes,
       edges: edgeRows.map(rowToEdge),
       viewport,
       selectedNodeIds: [],
@@ -333,6 +441,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       _dirtyEdgeIds: new Set(),
       _deletedEdgeIds: new Set(),
       _nodeVersions: versions,
+      _assetRuntime: mergeAssetRuntime({}, nodes),
       _pendingNodeIds: new Set(),
       _pendingEdgeIds: new Set(),
       _viewportDirty: false,
@@ -356,6 +465,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       _dirtyEdgeIds: new Set(),
       _deletedEdgeIds: new Set(),
       _nodeVersions: {},
+      _assetRuntime: {},
       _pendingNodeIds: new Set(),
       _pendingEdgeIds: new Set(),
       _viewportDirty: false,
@@ -363,11 +473,24 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   },
 
   handleNodesChange: (changes) => {
+    const state = get();
+    const requestedRemoveIds = changes
+      .filter((change) => change.type === 'remove')
+      .map((change) => change.id);
+    const effectiveRemoveIds = effectiveNodeDeleteIds(state.nodes, requestedRemoveIds);
+    const existingRemoveIds = new Set(requestedRemoveIds);
+    const effectiveChanges: NodeChange<CanvasFlowNode>[] = changes.filter(
+      (change) => change.type !== 'remove' || effectiveRemoveIds.has(change.id),
+    );
+    for (const id of effectiveRemoveIds) {
+      if (!existingRemoveIds.has(id)) effectiveChanges.push({ id, type: 'remove' });
+    }
+
     const dirty = new Set(get()._dirtyNodeIds);
     const deleted = new Set(get()._deletedNodeIds);
     const selected = new Set(get().selectedNodeIds);
 
-    for (const change of changes) {
+    for (const change of effectiveChanges) {
       if (change.type === 'position' && change.dragging !== undefined) {
         dirty.add(change.id);
       } else if (change.type === 'dimensions' && change.resizing) {
@@ -385,7 +508,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     // 注：不做「选中成员→整组选中」联动——单击成员即单独选中它，便于单独编辑（替换 / 再生成等）；
     // 整组一起移动由 CanvasContainer 的 onNodeDrag 主动跟随保证。
     set({
-      nodes: applyNodeChanges(changes, get().nodes),
+      nodes: applyNodeChanges(effectiveChanges, get().nodes),
       selectedNodeIds: Array.from(selected),
       _dirtyNodeIds: dirty,
       _deletedNodeIds: deleted,
@@ -416,9 +539,11 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     const select = options?.select ?? true;
     const persist = options?.persist !== false;
     set((state) => {
+      const nodes = [...state.nodes, ...newNodes];
       const base = {
-        nodes: [...state.nodes, ...newNodes],
+        nodes,
         selectedNodeIds: select ? newNodes.map((n) => n.id) : state.selectedNodeIds,
+        _assetRuntime: mergeAssetRuntime(state._assetRuntime, newNodes),
       };
       if (!persist) return base;
       const dirty = new Set(state._dirtyNodeIds);
@@ -439,26 +564,42 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   updateNodeData: (id, dataPatch) => {
     const dirty = new Set(get()._dirtyNodeIds);
     dirty.add(id);
-    set((state) => ({
-      nodes: state.nodes.map((n) =>
+    set((state) => {
+      const nodes = state.nodes.map((n) =>
         n.id === id ? { ...n, data: { ...n.data, ...dataPatch } as NodeData } : n,
-      ),
-      _dirtyNodeIds: dirty,
-    }));
+      );
+      const changed = nodes.find((n) => n.id === id);
+      return {
+        nodes,
+        _dirtyNodeIds: dirty,
+        _assetRuntime: changed
+          ? mergeAssetRuntime(state._assetRuntime, [changed])
+          : state._assetRuntime,
+      };
+    });
   },
 
   setNodeRuntime: (id, dataPatch) => {
-    set((state) => ({
-      nodes: state.nodes.map((n) =>
+    set((state) => {
+      const nodes = state.nodes.map((n) =>
         n.id === id ? { ...n, data: { ...n.data, ...dataPatch } as NodeData } : n,
-      ),
-    }));
+      );
+      const changed = nodes.find((n) => n.id === id);
+      return {
+        nodes,
+        _assetRuntime: changed
+          ? mergeAssetRuntime(state._assetRuntime, [changed])
+          : state._assetRuntime,
+      };
+    });
   },
 
   removeNodes: (ids, options) => {
     const persist = options?.persist !== false;
-    const idSet = new Set(ids);
     const state = get();
+    const idSet = effectiveNodeDeleteIds(state.nodes, ids);
+    if (idSet.size === 0) return;
+    const effectiveIds = Array.from(idSet);
     // 与被删节点相连的边（source/target 命中其一）：随节点一并从本地移除，避免悬挂边
     const incidentEdgeIds = new Set(
       state.edges.filter((e) => idSet.has(e.source) || idSet.has(e.target)).map((e) => e.id),
@@ -476,7 +617,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       // 仅本地移除：不记录删除、不回写 DB；清除相关脏标记，确保客户端不再写这些行
       const dirty = new Set(state._dirtyNodeIds);
       const edgeDirty = new Set(state._dirtyEdgeIds);
-      for (const id of ids) dirty.delete(id);
+      for (const id of effectiveIds) dirty.delete(id);
       for (const eid of incidentEdgeIds) edgeDirty.delete(eid);
       set({
         nodes: nextNodes,
@@ -491,7 +632,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     // 默认：记录节点 / 边删除以供持久化回写（与 React Flow 删除键的级联语义对齐，避免外键违例）
     const deleted = new Set(state._deletedNodeIds);
     const dirty = new Set(state._dirtyNodeIds);
-    for (const id of ids) {
+    for (const id of effectiveIds) {
       deleted.add(id);
       dirty.delete(id);
     }
@@ -516,19 +657,20 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     const persist = options?.persist !== false;
     set((state) => {
       const nodes = state.nodes.map((n) => (n.id === id ? node : n));
+      const assetRuntime = mergeAssetRuntime(state._assetRuntime, [node]);
       if (persist) {
         const dirty = new Set(state._dirtyNodeIds);
         dirty.add(node.id);
-        return { nodes, _dirtyNodeIds: dirty };
+        return { nodes, _dirtyNodeIds: dirty, _assetRuntime: assetRuntime };
       }
       // 不持久化：清除该行的脏标记，确保客户端不再回写此行（写入权交给服务端 + 实时回流）
       if (state._dirtyNodeIds.has(id) || state._dirtyNodeIds.has(node.id)) {
         const dirty = new Set(state._dirtyNodeIds);
         dirty.delete(id);
         dirty.delete(node.id);
-        return { nodes, _dirtyNodeIds: dirty };
+        return { nodes, _dirtyNodeIds: dirty, _assetRuntime: assetRuntime };
       }
-      return { nodes };
+      return { nodes, _assetRuntime: assetRuntime };
     });
   },
 
@@ -891,14 +1033,18 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
     const node = rowToNode(row);
     set((state) => {
+      const nodeWithRuntime = hydrateRuntimeMediaFields(node, state.nodes, state._assetRuntime);
       const exists = state.nodes.some((n) => n.id === row.id);
       // 保留本地选择 / 编辑等瞬态
       const merged = exists
-        ? state.nodes.map((n) => (n.id === row.id ? { ...n, ...node, selected: n.selected } : n))
-        : [...state.nodes, node];
+        ? state.nodes.map((n) =>
+            n.id === row.id ? { ...n, ...nodeWithRuntime, selected: n.selected } : n,
+          )
+        : [...state.nodes, nodeWithRuntime];
       return {
         nodes: merged,
         _nodeVersions: { ...state._nodeVersions, [row.id]: row.updated_at },
+        _assetRuntime: mergeAssetRuntime(state._assetRuntime, [nodeWithRuntime]),
       };
     });
   },

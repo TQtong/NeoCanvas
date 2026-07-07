@@ -31,10 +31,11 @@ import type {
 } from '@/types';
 import { getBrowserSupabase } from '@/lib/supabase/client';
 import { useCanvasStore } from '@/stores/canvas-store';
-import { useChatStore } from '@/stores/chat-store';
 import { nodeBox } from '@/lib/canvas/node-mapper';
+import { candidatePlacementForTarget } from '@/lib/canvas/media-workflow';
 import { getImageDescription } from '@/lib/canvas/annotation';
-import { idempotencyKey } from '@/lib/utils/id';
+import { composeReferenceImageEditPrompt } from '@/lib/generation/reference-prompt';
+import { idempotencyKey, uuid } from '@/lib/utils/id';
 import { normalizeUnknownError } from '@/lib/edge/errors';
 import { buildPlaceholderNode, useGeneration } from './use-generation';
 
@@ -54,10 +55,6 @@ export interface UseRegenerateNode {
   /** 以选中节点为参考、原地生成相似变体。 */
   regenerate: (nodeId: string) => Promise<RegenerateResult>;
 }
-
-/** 图片相似变体的基础提示词（图生图：参考图承载主体，文字仅作风格约束）。 */
-const SIMILAR_IMAGE_PROMPT =
-  '以所选图片为参考，生成一张主体、风格、配色与构图都与之相似的全新变体；保持整体观感一致，可在细节、光影与姿态上自然变化。画面中不要出现多余文字。';
 
 /** 视频相似变体的基础提示词（图生视频：参考帧承载画面）。 */
 const SIMILAR_VIDEO_PROMPT =
@@ -147,10 +144,16 @@ export function useRegenerateNode(): UseRegenerateNode {
         },
       ];
 
-      // 提示词：基础相似指令 + 连到该节点的「描述」便签（若有，作为额外可控指引）
+      // 提示词：图片走“参考图局部编辑”强约束；视频仍以参考帧相似运镜为主。
       const description = getImageDescription(nodes, edges, nodeId);
-      const basePrompt = modality === 'video' ? SIMILAR_VIDEO_PROMPT : SIMILAR_IMAGE_PROMPT;
-      const prompt = description ? `${basePrompt}\n额外要求：${description}` : basePrompt;
+      const mediaDescription = node.data.mediaDescription?.trim();
+      const instruction = [mediaDescription, description].filter(Boolean).join('\n');
+      const prompt =
+        modality === 'video'
+          ? instruction
+            ? `${SIMILAR_VIDEO_PROMPT}\n额外要求：${instruction}`
+            : SIMILAR_VIDEO_PROMPT
+          : composeReferenceImageEditPrompt(instruction);
 
       // 参数与落位：
       // - 图片：输出比例偏向源框朝向（pickAspectRatio），落位完全沿用源框 → 真正「原地」；
@@ -193,21 +196,26 @@ export function useRegenerateNode(): UseRegenerateNode {
         };
       }
 
-      // 即时原地反馈：把选中节点就地替换为生成占位（同一 id、同一落位）。
-      // 关键（persist:false）：这一行的写入权完全归服务端——createGeneration 会 upsert 该占位、
-      // landResult 落回新图、再经实时回流到画布。客户端只做本地即时替换、绝不回写此行，否则
-      // 600ms 防抖的占位写可能与服务端「同步落图」竞态，把已生成的图覆盖回空占位（丢图）。
-      const original = node;
-      useCanvasStore.getState().replaceNode(
-        nodeId,
-        buildPlaceholderNode({ placement, modality, promptSummary: REGEN_SUMMARY, nodeId }),
-        { persist: false },
+      const existingCandidateCount = nodes.filter(
+        (n) =>
+          (n.data.type === 'image' || n.data.type === 'video') && n.data.candidateOf === nodeId,
+      ).length;
+      placement = candidatePlacementForTarget(node, existingCandidateCount);
+      const placeholderNodeId = uuid();
+      useCanvasStore.getState().addNode(
+        buildPlaceholderNode({
+          placement,
+          modality,
+          promptSummary: REGEN_SUMMARY,
+          nodeId: placeholderNodeId,
+        }),
+        { select: false, persist: false },
       );
 
       try {
         const request: UnifiedGenerationRequest = {
           projectId,
-          conversationId: useChatStore.getState().conversationId,
+          conversationId: null,
           messageId: null,
           modality,
           modelKey: model.key,
@@ -215,16 +223,14 @@ export function useRegenerateNode(): UseRegenerateNode {
           params,
           idempotencyKey: idempotencyKey(),
           placement,
-          // 关键：占位 id = 选中节点 id → 服务端原地改写该节点，完成后落回相似新图
-          placeholderNodeId: nodeId,
+          placeholderNodeId,
+          targetNodeId: nodeId,
+          resultMode: 'candidate_for_target',
         };
         await submit(request);
         return { ok: true };
       } catch (err) {
-        // 提交失败：本地还原原节点（同样 persist:false）。提交前的失败（校验 / 限流 / 网络）
-        // 服务端未写库，DB 仍是原节点，本地还原即与 DB 一致；万一服务端已提交，实时回流会以
-        // 服务端状态校正，本地还原只是过渡，不与服务端竞态写库。
-        useCanvasStore.getState().replaceNode(nodeId, original, { persist: false });
+        useCanvasStore.getState().removeNodes([placeholderNodeId], { persist: false });
         return { ok: false, reason: 'failed', message: normalizeUnknownError(err).message };
       }
     },

@@ -9,13 +9,14 @@
  * @module components/canvas/nodes/ImageNode
  */
 
-import { memo, useEffect, useState } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
 import type { NodeProps } from '@xyflow/react';
 import { ImageOff } from 'lucide-react';
 import type { ImageFilters, ImageNodeData } from '@/types';
 import type { CanvasFlowNode } from '@/lib/canvas/node-mapper';
 import { Skeleton } from '@/components/ui/skeleton';
 import { TransformableNode } from '../TransformableNode';
+import { MediaCandidateToggle } from './MediaCandidateToggle';
 import { NodeConnectHandles } from './NodeConnectHandles';
 
 /** 把滤镜参数序列化为 CSS filter 函数链。 */
@@ -51,9 +52,11 @@ function cropStyle(data: ImageNodeData): React.CSSProperties {
 function ImageNodeComponent({ id, data, selected }: NodeProps<CanvasFlowNode>) {
   const d = data as ImageNodeData;
   // 渐进加载：原图 onLoad 前以模糊缩略图垫底；媒体源切换（占位转化 / 替换）时重置
+  const imageRef = useRef<HTMLImageElement | null>(null);
   const [loaded, setLoaded] = useState(false);
   useEffect(() => {
-    setLoaded(false);
+    const image = imageRef.current;
+    setLoaded(Boolean(d.src && image?.complete && image.naturalWidth > 0));
   }, [d.src]);
 
   return (
@@ -63,6 +66,12 @@ function ImageNodeComponent({ id, data, selected }: NodeProps<CanvasFlowNode>) {
           className="relative size-full overflow-hidden bg-muted/40"
           style={{ borderRadius: d.cornerRadius, opacity: d.opacity }}
         >
+          {d.mediaRole === 'candidate' ? (
+            <div className="absolute left-2 top-2 z-10 rounded-md bg-background/85 px-2 py-1 text-[11px] font-medium text-foreground shadow-soft backdrop-blur">
+              候选
+            </div>
+          ) : null}
+          <MediaCandidateToggle targetId={id} collapsed={d.candidatesCollapsed} />
           {d.src ? (
             <>
               {/* 缩略图占位层：原图就绪前以模糊缩略图先行呈现，提升大图加载观感 */}
@@ -84,10 +93,12 @@ function ImageNodeComponent({ id, data, selected }: NodeProps<CanvasFlowNode>) {
               {/* 原图：经签名 URL 加载，禁用 next/image（已由 Storage 变换处理）；加载完成淡入 */}
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
+                ref={imageRef}
                 src={d.src}
                 alt={d.alt}
                 draggable={false}
                 onLoad={() => setLoaded(true)}
+                onError={() => setLoaded(false)}
                 className="absolute inset-0 select-none transition-opacity duration-300"
                 style={{
                   ...cropStyle(d),

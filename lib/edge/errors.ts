@@ -36,6 +36,62 @@ export function isApiClientError(value: unknown): value is ApiClientError {
   return value instanceof ApiClientError;
 }
 
+/** 根据 HTTP 状态粗略映射为稳定错误码。 */
+function codeFromHttpStatus(status?: number): ErrorCode {
+  if (status === 401) return 'unauthorized';
+  if (status === 403) return 'forbidden';
+  if (status === 404) return 'not_found';
+  if (status === 409) return 'conflict';
+  if (status === 429) return 'rate_limited';
+  if (status === 400 || status === 422) return 'invalid_params';
+  if (status === 502 || status === 503 || status === 504) return 'provider_error';
+  return 'internal_error';
+}
+
+/** 判断未知值是否像 Response，兼容 functions-js 的 error.context。 */
+function isResponseLike(
+  value: unknown,
+): value is {
+  status?: number;
+  text: () => Promise<string>;
+} {
+  return Boolean(
+    value &&
+      typeof value === 'object' &&
+      'text' in value &&
+      typeof (value as { text?: unknown }).text === 'function',
+  );
+}
+
+/** 从 Edge Function 非 2xx 响应恢复统一错误；非封套响应也保留状态与原文。 */
+async function parseHttpEdgeError(context: unknown): Promise<ApiClientError | null> {
+  if (!isResponseLike(context)) return null;
+  const status = typeof context.status === 'number' ? context.status : undefined;
+
+  let text = '';
+  try {
+    text = await context.text();
+  } catch {
+    text = '';
+  }
+
+  if (!text.trim()) return null;
+
+  try {
+    const payload = JSON.parse(text) as ApiResponse<never>;
+    if (payload && payload.success === false && payload.error) {
+      return new ApiClientError(payload.error);
+    }
+  } catch {
+    // 非 JSON 响应继续走原文兜底。
+  }
+
+  return new ApiClientError({
+    code: codeFromHttpStatus(status),
+    message: `Edge 函数请求失败${status ? `（${status}）` : ''}：${text.trim().slice(0, 200)}`,
+  });
+}
+
 /**
  * 由 PostgREST / supabase-js 错误归一为 ApiClientError。
  *
@@ -82,6 +138,8 @@ export async function fromEdgeInvokeError(error: unknown): Promise<ApiClientErro
 
   if (error instanceof FunctionsHttpError) {
     // 结构化封套在 context（Response）里，且响应体只能读取一次
+    const parsed = await parseHttpEdgeError(error.context);
+    if (parsed) return parsed;
     try {
       const payload = (await error.context.json()) as ApiResponse<never>;
       if (payload && payload.success === false && payload.error) {

@@ -52,6 +52,8 @@ export interface ImageGenerationParams {
   width?: number;
   /** 显式输出高（px）。 */
   height?: number;
+  /** UI 尺寸预设；提交给服务端用于回填配置，提供商适配器只消费 width / height。 */
+  sizePreset?: '1k' | '2k' | '4k' | '8k' | 'custom';
   /** 产出数量（单次最大数受能力画像约束）。 */
   count: number;
   /** 质量档。 */
@@ -133,6 +135,9 @@ export interface NodePlacement {
   parentId?: string | null;
 }
 
+/** 生成结果落到画布时的语义。 */
+export type GenerationResultMode = 'new_primary' | 'candidate_for_target';
+
 /**
  * 统一生成请求：`submit-generation` 接受的请求体（第 06 篇第四节提交生成）。
  */
@@ -155,6 +160,10 @@ export interface UnifiedGenerationRequest {
   idempotencyKey: string;
   /** 占位落位（缺省时由服务端置于视口 / 画布中心）。 */
   placement?: NodePlacement;
+  /** 结果归属的主媒体节点。候选生成时必填；新主媒体生成时可为空。 */
+  targetNodeId?: string | null;
+  /** 结果是新主媒体，还是某个主媒体的候选历史。 */
+  resultMode?: GenerationResultMode;
   /**
    * 客户端预创建的占位节点标识（可选）。提供时服务端以该 id upsert 占位节点，使画布
    * 占位即时可见且与实时回流去重；缺省时由服务端生成占位 id。

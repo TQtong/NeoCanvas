@@ -34,6 +34,11 @@ const GENERATIONS_BUCKET = 'generations';
 /** 签名 URL 有效期（秒）：供适配器取参考图 / 产出审核。 */
 const REFERENCE_TTL = 3600;
 
+/** 媒体候选关系边类型与隐藏连接桩。 */
+const MEDIA_CANDIDATE_EDGE_TYPE = 'media_candidate';
+const MEDIA_CANDIDATE_HANDLE_OUT = 'media-candidate-out';
+const MEDIA_CANDIDATE_HANDLE_IN = 'media-candidate-in';
+
 /** MIME → 文件扩展名。 */
 function extFromMime(mime: string): string {
   const map: Record<string, string> = {
@@ -369,6 +374,216 @@ function nodeData(meta: AssetMeta): Record<string, unknown> {
   return meta.kind === 'video' ? videoContent() : imageContent(meta.width, meta.height);
 }
 
+/** 由生成任务参数回填媒体节点默认配置。 */
+function generationSettings(generation: GenerationRow): Record<string, unknown> {
+  const params = generation.params as Record<string, unknown>;
+  const out: Record<string, unknown> = {
+    modelKey: generation.model_key,
+    count: typeof params.count === 'number' ? params.count : 1,
+  };
+  for (const key of [
+    'aspectRatio',
+    'width',
+    'height',
+    'sizePreset',
+    'quality',
+    'durationSec',
+    'resolution',
+    'fps',
+    'motionStrength',
+  ]) {
+    if (params[key] != null) out[key] = params[key];
+  }
+  return out;
+}
+
+/** 构造媒体节点 data，区分主媒体与候选媒体。 */
+function mediaNodeData(
+  meta: AssetMeta,
+  generation: GenerationRow,
+  options: {
+    role: 'primary' | 'candidate';
+    candidateOf: string | null;
+    candidateIndex: number | null;
+    mediaDescription: string;
+    groupId?: string;
+  },
+): Record<string, unknown> {
+  return {
+    ...nodeData(meta),
+    mediaDescription: options.mediaDescription,
+    generationSettings: generationSettings(generation),
+    mediaRole: options.role,
+    candidateOf: options.candidateOf,
+    candidateIndex: options.candidateIndex,
+    sourceGenerationId: generation.id,
+    candidatesCollapsed: false,
+    ...(options.groupId ? { groupId: options.groupId } : {}),
+  };
+}
+
+/** 候选默认排在主媒体右侧，并按树状分叉展开。 */
+const MEDIA_PANEL_GAP = 24;
+const MEDIA_PANEL_COLLAPSED_HEIGHT = 56;
+const CANDIDATE_HORIZONTAL_GAP_MIN = 280;
+const CANDIDATE_HORIZONTAL_GAP_RATIO = 1;
+const CANDIDATE_BRANCH_X_STEP_MIN = 88;
+const CANDIDATE_BRANCH_X_STEP_RATIO = 0.28;
+const CANDIDATE_COLUMN_GAP_MIN = 144;
+const CANDIDATE_COLUMN_GAP_RATIO = 0.45;
+const CANDIDATE_BRANCH_GAP_MIN = 96;
+const CANDIDATE_BRANCH_GAP_RATIO = 0.35;
+const CANDIDATE_CENTER_CORRIDOR_ROWS = 0.75;
+const CANDIDATE_SLOTS_PER_COLUMN = 4;
+
+function candidatePosition(
+  targetPos: { x: number; y: number },
+  size: { width: number; height: number },
+  index: number,
+): { x: number; y: number } {
+  const horizontalGap = Math.max(
+    CANDIDATE_HORIZONTAL_GAP_MIN,
+    Math.round(size.width * CANDIDATE_HORIZONTAL_GAP_RATIO),
+  );
+  const verticalStep =
+    size.height +
+    MEDIA_PANEL_GAP +
+    MEDIA_PANEL_COLLAPSED_HEIGHT +
+    Math.max(CANDIDATE_BRANCH_GAP_MIN, Math.round(size.height * CANDIDATE_BRANCH_GAP_RATIO));
+  const rowOffset = candidateBranchRowOffset(index);
+  const column = candidateBranchColumn(index);
+  const branchXStep = Math.max(
+    CANDIDATE_BRANCH_X_STEP_MIN,
+    Math.round(size.width * CANDIDATE_BRANCH_X_STEP_RATIO),
+  );
+  const columnGap = Math.max(
+    CANDIDATE_COLUMN_GAP_MIN,
+    Math.round(size.width * CANDIDATE_COLUMN_GAP_RATIO),
+  );
+  return {
+    x:
+      targetPos.x +
+      size.width +
+      horizontalGap +
+      column * (size.width + columnGap) +
+      Math.abs(rowOffset) * branchXStep,
+    y: targetPos.y + rowOffset * verticalStep,
+  };
+}
+
+/** 候选按树状分叉排布，并始终避开主路线所在的中心走廊。 */
+function candidateBranchRowOffset(index: number): number {
+  const safeIndex = Math.max(0, Math.floor(index));
+  const columnIndex = safeIndex % CANDIDATE_SLOTS_PER_COLUMN;
+  const pairIndex = Math.floor(columnIndex / 2);
+  const distance = pairIndex + CANDIDATE_CENTER_CORRIDOR_ROWS;
+  return columnIndex % 2 === 0 ? -distance : distance;
+}
+
+/** 每列放固定数量候选，放满后向右开新列，避免无限向上/下延伸。 */
+function candidateBranchColumn(index: number): number {
+  const safeIndex = Math.max(0, Math.floor(index));
+  return Math.floor(safeIndex / CANDIDATE_SLOTS_PER_COLUMN);
+}
+
+/** 确保本次生成产生的候选节点都有专属候选关系边。 */
+async function ensureMediaCandidateEdges(
+  admin: SupabaseClient,
+  generation: GenerationRow,
+  targetNodeId: string | null,
+  ownerId: string,
+): Promise<void> {
+  if (!targetNodeId) return;
+  const { data: candidates, error: candidateError } = await admin
+    .from('canvas_nodes')
+    .select('id, position_x, position_y, width, height, z_index')
+    .eq('project_id', generation.project_id)
+    .eq('generation_id', generation.id)
+    .eq('data->>candidateOf', targetNodeId);
+  if (candidateError) {
+    throw new ApiException(
+      'internal_error',
+      `读取候选节点失败：${candidateError.message}`,
+    );
+  }
+  const candidateRows = candidates ?? [];
+  const candidateIds = candidateRows.map((row) => row.id as string);
+  if (candidateIds.length === 0) return;
+
+  const { data: existing, error: edgeReadError } = await admin
+    .from('canvas_edges')
+    .select('target_node_id')
+    .eq('project_id', generation.project_id)
+    .eq('source_node_id', targetNodeId)
+    .eq('type', MEDIA_CANDIDATE_EDGE_TYPE)
+    .in('target_node_id', candidateIds);
+  if (edgeReadError) {
+    throw new ApiException('internal_error', `读取候选关系边失败：${edgeReadError.message}`);
+  }
+  const existingTargets = new Set((existing ?? []).map((row) => row.target_node_id as string));
+  const rows = candidateIds
+    .filter((id) => !existingTargets.has(id))
+    .map((id) => ({
+      project_id: generation.project_id,
+      source_node_id: targetNodeId,
+      target_node_id: id,
+      source_handle: MEDIA_CANDIDATE_HANDLE_OUT,
+      target_handle: MEDIA_CANDIDATE_HANDLE_IN,
+      type: MEDIA_CANDIDATE_EDGE_TYPE,
+      data: {
+        label: '候选',
+        generationId: generation.id,
+      },
+    }));
+  if (rows.length > 0) {
+    const { error: insertError } = await admin.from('canvas_edges').insert(rows);
+    if (insertError) {
+      throw new ApiException('internal_error', `创建候选关系边失败：${insertError.message}`);
+    }
+  }
+
+  const { data: existingPanels, error: panelReadError } = await admin
+    .from('canvas_nodes')
+    .select('data')
+    .eq('project_id', generation.project_id)
+    .eq('type', 'media_panel')
+    .in('data->>targetNodeId', candidateIds);
+  if (panelReadError) {
+    throw new ApiException('internal_error', `读取候选媒体对话失败：${panelReadError.message}`);
+  }
+  const panelTargetIds = new Set(
+    (existingPanels ?? [])
+      .map((row) => (row.data as Record<string, unknown> | null)?.targetNodeId)
+      .filter((value): value is string => typeof value === 'string'),
+  );
+  const panelRows = candidateRows
+    .filter((row) => !panelTargetIds.has(row.id as string))
+    .map((row) => {
+      const width = (row.width as number | null) ?? 320;
+      const height = (row.height as number | null) ?? 320;
+      return {
+        project_id: generation.project_id,
+        type: 'media_panel',
+        position_x: (row.position_x as number) ?? 0,
+        position_y: ((row.position_y as number) ?? 0) + height + MEDIA_PANEL_GAP,
+        width,
+        height: MEDIA_PANEL_COLLAPSED_HEIGHT,
+        rotation: 0,
+        z_index: ((row.z_index as number | null) ?? 0) + 1,
+        data: {
+          targetNodeId: row.id,
+          collapsed: true,
+        },
+        created_by: ownerId,
+      };
+    });
+  if (panelRows.length === 0) return;
+  const { error: panelInsertError } = await admin.from('canvas_nodes').insert(panelRows);
+  if (panelInsertError) {
+    throw new ApiException('internal_error', `创建候选媒体对话失败：${panelInsertError.message}`);
+  }
+}
+
 /**
  * 结果落库（完成阶段）。把成功的候选转存 + 缩略图、产出端审核、再经单一事务原子写库：
  * 资产入库、占位节点原地转真实节点、其余产出新建节点、任务置 succeeded。
@@ -448,6 +663,14 @@ export async function landResult(
   let placeholderPos = { x: 0, y: 0 };
   let placeholderSize = { width: 320, height: 320 };
   let placeholderGroupId: string | undefined;
+  let targetPos = placeholderPos;
+  let targetSize = placeholderSize;
+  let targetMediaDescription = '';
+  const resultMode = generation.result_mode ?? 'new_primary';
+  const targetNodeId =
+    resultMode === 'candidate_for_target'
+      ? generation.target_node_id
+      : generation.placeholder_node_id;
   const hasPlaceholder = Boolean(generation.placeholder_node_id);
   if (hasPlaceholder) {
     const { data: placeholder } = await admin
@@ -465,6 +688,35 @@ export async function landResult(
   }
 
   // 4) 构建首节点（占位原地改写）与余节点载荷
+  if (targetNodeId) {
+    const { data: target } = await admin
+      .from('canvas_nodes')
+      .select('position_x, position_y, width, height, data')
+      .eq('id', targetNodeId)
+      .maybeSingle();
+    if (target) {
+      targetPos = { x: target.position_x, y: target.position_y };
+      targetSize = {
+        width: target.width ?? placeholderSize.width,
+        height: target.height ?? placeholderSize.height,
+      };
+      const tdata = target.data as Record<string, unknown> | null;
+      if (tdata && typeof tdata.mediaDescription === 'string') {
+        targetMediaDescription = tdata.mediaDescription;
+      }
+    }
+  }
+
+  let existingCandidateCount = 0;
+  if (targetNodeId) {
+    const { count } = await admin
+      .from('canvas_nodes')
+      .select('id', { count: 'exact', head: true })
+      .eq('project_id', generation.project_id)
+      .eq('data->>candidateOf', targetNodeId);
+    existingCandidateCount = count ?? 0;
+  }
+
   const toAssetJson = (m: AssetMeta) => ({
     id: m.id,
     kind: m.kind,
@@ -484,21 +736,37 @@ export async function landResult(
         type: survivors[0].kind,
         assetId: survivors[0].id,
         // 合并占位的 groupId（若有），使原地重生成结果不脱组
-        data: placeholderGroupId
-          ? { ...nodeData(survivors[0]), groupId: placeholderGroupId }
-          : nodeData(survivors[0]),
+        data: mediaNodeData(survivors[0], generation, {
+          role: resultMode === 'candidate_for_target' ? 'candidate' : 'primary',
+          candidateOf: resultMode === 'candidate_for_target' ? targetNodeId : null,
+          candidateIndex: resultMode === 'candidate_for_target' ? existingCandidateCount : null,
+          mediaDescription: targetMediaDescription,
+          groupId: placeholderGroupId,
+        }),
       }
     : null;
   const extraNodes = survivors.slice(extraStart).map((m, idx) => {
     const i = idx + (hasPlaceholder ? 1 : 0);
+    const candidateOf =
+      resultMode === 'candidate_for_target' ? targetNodeId : generation.placeholder_node_id;
+    const candidateIdx =
+      resultMode === 'candidate_for_target' ? existingCandidateCount + i : i - 1;
+    const pos = candidateOf
+      ? candidatePosition(targetPos, targetSize, candidateIdx)
+      : { x: placeholderPos.x + i * (placeholderSize.width + 24), y: placeholderPos.y };
     return {
       type: m.kind,
-      positionX: placeholderPos.x + i * (placeholderSize.width + 24),
-      positionY: placeholderPos.y,
-      width: placeholderSize.width,
-      height: placeholderSize.height,
+      positionX: pos.x,
+      positionY: pos.y,
+      width: targetSize.width,
+      height: targetSize.height,
       assetId: m.id,
-      data: nodeData(m),
+      data: mediaNodeData(m, generation, {
+        role: 'candidate',
+        candidateOf,
+        candidateIndex: candidateIdx,
+        mediaDescription: targetMediaDescription,
+      }),
     };
   });
 
@@ -516,6 +784,8 @@ export async function landResult(
   if (error) {
     throw new ApiException('internal_error', `结果落库失败：${error.message}`);
   }
+
+  await ensureMediaCandidateEdges(admin, generation, targetNodeId, ownerId);
 }
 
 /**

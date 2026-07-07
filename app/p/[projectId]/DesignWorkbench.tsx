@@ -9,34 +9,32 @@
  * @module app/p/[projectId]/DesignWorkbench
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { ReactFlowProvider, useReactFlow } from '@xyflow/react';
 import type { ModelCatalogEntry } from '@/types';
 import type { ProjectBundle } from '@/lib/data/load-project';
 import { useCanvasStore } from '@/stores/canvas-store';
-import { useChatStore } from '@/stores/chat-store';
 import { useSessionStore } from '@/stores/session-store';
-import { messageRowToView } from '@/lib/data/mappers';
 import { getBrowserSupabase } from '@/lib/supabase/client';
 import { uploadAsset } from '@/lib/storage/upload';
 import { useCanvasPersistence } from '@/lib/hooks/use-canvas-persistence';
 import { useRealtimeProject } from '@/lib/hooks/use-realtime-project';
 import { useCanvasMedia } from '@/lib/hooks/use-canvas-media';
 import { useSequenceVideo } from '@/lib/hooks/use-sequence-video';
-import type { CanvasFlowNode } from '@/lib/canvas/node-mapper';
 import { resolveSequenceChain } from '@/lib/canvas/sequence';
-import { uuid } from '@/lib/utils/id';
-import { createDefaultNodeData } from '@/lib/canvas/constants';
+import {
+  createCanvasNode,
+  createMediaTargetWithPanelNodes,
+  type FlowPoint,
+} from '@/lib/canvas/media-workflow';
 import { CanvasContainer } from '@/components/canvas/CanvasContainer';
 import { CanvasBottomToolbar } from '@/components/canvas/CanvasBottomToolbar';
 import { CanvasCornerControls } from '@/components/canvas/CanvasCornerControls';
 import { useCanvasHistory } from '@/components/canvas/use-canvas-history';
 import { useCanvasShortcuts } from '@/components/canvas/use-canvas-shortcuts';
 import { TopBar } from '@/components/shared/TopBar';
-import { ChatPanel } from '@/components/chat/ChatPanel';
 import { useToast } from '@/components/ui/toast';
 import { useTranslation } from '@/i18n';
-import { cn } from '@/lib/utils/cn';
 
 /** 工作台属性。 */
 export interface DesignWorkbenchProps {
@@ -53,16 +51,14 @@ function WorkbenchInner({ bundle, models }: DesignWorkbenchProps) {
   const { t } = useTranslation();
   const { generate: generateSequenceVideo } = useSequenceVideo();
   const fileRef = useRef<HTMLInputElement>(null);
+  const pendingUploadPositionRef = useRef<FlowPoint | null>(null);
 
   const userId = useSessionStore((s) => s.profile?.id ?? bundle.project.owner_id);
-  const [panelOpen, setPanelOpen] = useState(true);
   const title = useCanvasStore((s) => s.projectId) ? bundle.project.title : bundle.project.title;
-
-  const conversationId = bundle.conversation?.id ?? null;
 
   // 持久化、实时、媒体解析
   useCanvasPersistence(bundle.project.id, userId, (msg) => toast.error(msg));
-  useRealtimeProject(bundle.project.id, conversationId);
+  useRealtimeProject(bundle.project.id);
   useCanvasMedia(bundle.project.id);
 
   // 撤销 / 重做与快捷键
@@ -70,7 +66,10 @@ function WorkbenchInner({ bundle, models }: DesignWorkbenchProps) {
   useCanvasShortcuts(history);
 
   // 上传媒体工具：选文件 → 上传 → 在视口中心落图片 / 视频节点（按资产种类分支）
-  const onUploadMedia = useCallback(() => fileRef.current?.click(), []);
+  const onUploadMedia = useCallback((position?: FlowPoint) => {
+    pendingUploadPositionRef.current = position ?? null;
+    fileRef.current?.click();
+  }, []);
 
   const handleFile = useCallback(
     async (file: File) => {
@@ -87,46 +86,42 @@ function WorkbenchInner({ bundle, models }: DesignWorkbenchProps) {
         const ratio = asset.width && asset.height ? asset.width / asset.height : fallbackRatio;
         const width = ratio >= 1 ? maxSide : Math.round(maxSide * ratio);
         const height = ratio >= 1 ? Math.round(maxSide / ratio) : maxSide;
-        const center = reactFlow.screenToFlowPosition({
-          x: window.innerWidth / 2,
-          y: window.innerHeight / 2,
-        });
+        const center =
+          pendingUploadPositionRef.current ??
+          reactFlow.screenToFlowPosition({
+            x: window.innerWidth / 2,
+            y: window.innerHeight / 2,
+          });
+        pendingUploadPositionRef.current = null;
         // 共享落位字段：视口中心居中落点 + 尺寸 + 层级
-        const layout = {
-          position: { x: center.x - width / 2, y: center.y - height / 2 },
-          width,
-          height,
-          zIndex: 0,
-          style: { width, height },
-        };
+        const position = { x: center.x - width / 2, y: center.y - height / 2 };
         // 运行时即注入签名 URL，让节点即刻可见；刷新后由 useCanvasMedia 按 assetId 重新解析
-        const node: CanvasFlowNode =
-          asset.kind === 'video'
-            ? {
-                id: uuid(),
-                type: 'video',
-                data: createDefaultNodeData('video', {
+        const { target, panel } = createMediaTargetWithPanelNodes({
+          modality: asset.kind === 'video' ? 'video' : 'image',
+          position,
+          size: { width, height },
+          mediaData:
+            asset.kind === 'video'
+              ? {
                   assetId: asset.id,
                   src: asset.url,
                   posterSrc: asset.thumbnailUrl,
-                }),
-                ...layout,
-              }
-            : {
-                id: uuid(),
-                type: 'image',
-                data: createDefaultNodeData('image', {
+                }
+              : {
                   assetId: asset.id,
                   src: asset.url,
                   thumbnailSrc: asset.thumbnailUrl,
                   naturalWidth: asset.width,
                   naturalHeight: asset.height,
-                }),
-                ...layout,
-              };
-        useCanvasStore.getState().addNode(node, { select: true });
+                },
+        });
+        const store = useCanvasStore.getState();
+        store.addNodes([target, panel], { select: false });
+        store.setSelection([target.id]);
       } catch (err) {
         toast.error(err instanceof Error ? err.message : '上传失败');
+      } finally {
+        pendingUploadPositionRef.current = null;
       }
     },
     [bundle.project.id, reactFlow, toast, userId],
@@ -161,30 +156,66 @@ function WorkbenchInner({ bundle, models }: DesignWorkbenchProps) {
         }
       }
 
-      const match = models.find((m) => m.modality === modality) ?? models[0];
-      const chat = useChatStore.getState();
-      if (match) chat.setModel(match.key);
-      chat.setAgentMode('generate');
-      setPanelOpen(true);
-      chat.requestFocus();
+      const center = reactFlow.screenToFlowPosition({
+        x: window.innerWidth / 2,
+        y: window.innerHeight / 2,
+      });
+      const store = useCanvasStore.getState();
+      const zIndex = Math.max(0, ...store.nodes.map((n) => n.zIndex ?? 0)) + 1;
+
+      if (modality === 'text') {
+        const node = createCanvasNode('text', { x: center.x - 120, y: center.y - 32 }, { zIndex });
+        store.addNode(node, { select: true });
+        store.setEditingNode(node.id);
+        return;
+      }
+
+      const match = models.find((m) => m.modality === modality && m.isActive);
+      const size = modality === 'video' ? { width: 480, height: 270 } : { width: 320, height: 320 };
+      const { target, panel } = createMediaTargetWithPanelNodes({
+        modality,
+        position: { x: center.x - size.width / 2, y: center.y - size.height / 2 },
+        size,
+        zIndex,
+        mediaData: {
+          generationSettings: {
+            modelKey: match?.key ?? null,
+            count: 1,
+            aspectRatio: match?.defaultParams.aspectRatio ?? (modality === 'video' ? '16:9' : '1:1'),
+            sizePreset:
+              modality === 'image' && match?.defaultParams.width && match.defaultParams.height
+                ? 'custom'
+                : modality === 'image'
+                  ? '1k'
+                  : undefined,
+            width: match?.defaultParams.width,
+            height: match?.defaultParams.height,
+            quality: match?.defaultParams.quality,
+            durationSec: match?.defaultParams.durationSec ?? (modality === 'video' ? 5 : undefined),
+            resolution: match?.defaultParams.resolution ?? (modality === 'video' ? '720p' : undefined),
+            fps: match?.defaultParams.fps ?? (modality === 'video' ? 24 : undefined),
+            motionStrength: match?.defaultParams.motionStrength,
+          },
+        },
+      });
+      store.addNodes([target, panel], { select: false });
+      store.setSelection([target.id]);
     },
-    [models, generateSequenceVideo, t, toast],
+    [models, generateSequenceVideo, reactFlow, t, toast],
   );
 
   return (
     <div className="relative flex h-screen w-full overflow-hidden bg-background">
       {/* 左侧画布区 */}
       <div className="relative flex-1">
-        <TopBar
-          projectId={bundle.project.id}
-          title={title}
-          panelOpen={panelOpen}
-          onTogglePanel={() => setPanelOpen((v) => !v)}
-        />
+        <TopBar projectId={bundle.project.id} title={title} />
         <div className="absolute inset-0 pt-14">
-          <CanvasContainer initialViewport={bundle.project.viewport} />
+          <CanvasContainer
+            initialViewport={bundle.project.viewport}
+            onUploadMediaAt={onUploadMedia}
+          />
         </div>
-        <CanvasBottomToolbar onUploadMedia={onUploadMedia} onAiTool={onAiTool} />
+        <CanvasBottomToolbar onUploadMedia={() => onUploadMedia()} onAiTool={onAiTool} />
         <CanvasCornerControls />
         <input
           ref={fileRef}
@@ -198,16 +229,6 @@ function WorkbenchInner({ bundle, models }: DesignWorkbenchProps) {
           }}
         />
       </div>
-
-      {/* 右侧对话面板（可收起） */}
-      <aside
-        className={cn(
-          'h-full shrink-0 border-l border-border bg-card transition-[width] duration-300',
-          panelOpen ? 'w-[380px]' : 'w-0 overflow-hidden border-l-0',
-        )}
-      >
-        {panelOpen ? <ChatPanel projectId={bundle.project.id} /> : null}
-      </aside>
     </div>
   );
 }
@@ -236,16 +257,8 @@ export function DesignWorkbench({ bundle, models }: DesignWorkbenchProps) {
       edgeRows: bundle.edges,
       viewport: bundle.project.viewport,
     });
-    useChatStore.getState().hydrate({
-      conversationId: bundle.conversation?.id ?? '',
-      messages: bundle.messages.map(messageRowToView),
-      selectedModelKey: bundle.project.default_model_key,
-      agentMode: 'generate',
-      hasMoreMessages: bundle.hasMoreMessages,
-    });
     return () => {
       useCanvasStore.getState().reset();
-      useChatStore.getState().reset();
     };
   }, [bundle]);
 

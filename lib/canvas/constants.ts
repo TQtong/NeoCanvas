@@ -13,6 +13,7 @@ import type {
   GenerationPlaceholderNodeData,
   ImageFilters,
   ImageNodeData,
+  MediaPanelNodeData,
   NodeData,
   NodeDataOf,
   NodeType,
@@ -56,6 +57,7 @@ export const DEFAULT_NODE_SIZE: Record<NodeType, { width: number; height: number
   drawing: { width: 200, height: 200 },
   video: { width: 480, height: 270 },
   generation_placeholder: { width: 320, height: 320 },
+  media_panel: { width: 360, height: 56 },
   frame: { width: 800, height: 600 },
 };
 
@@ -78,6 +80,18 @@ const defaultImageData = (): ImageNodeData => ({
   type: 'image',
   rotation: 0,
   assetId: null,
+  mediaDescription: '',
+  generationSettings: {
+    modelKey: null,
+    count: 1,
+    aspectRatio: '1:1',
+    sizePreset: '1k',
+  },
+  mediaRole: 'primary',
+  candidateOf: null,
+  candidateIndex: null,
+  sourceGenerationId: null,
+  candidatesCollapsed: false,
   naturalWidth: null,
   naturalHeight: null,
   crop: null,
@@ -132,6 +146,20 @@ const defaultVideoData = (): VideoNodeData => ({
   type: 'video',
   rotation: 0,
   assetId: null,
+  mediaDescription: '',
+  generationSettings: {
+    modelKey: null,
+    count: 1,
+    aspectRatio: '16:9',
+    durationSec: 5,
+    resolution: '720p',
+    fps: 24,
+  },
+  mediaRole: 'primary',
+  candidateOf: null,
+  candidateIndex: null,
+  sourceGenerationId: null,
+  candidatesCollapsed: false,
   posterAssetId: null,
   autoplay: false,
   muted: true,
@@ -164,6 +192,13 @@ const defaultFrameData = (): FrameNodeData => ({
   showGrid: false,
 });
 
+const defaultMediaPanelData = (): MediaPanelNodeData => ({
+  type: 'media_panel',
+  rotation: 0,
+  targetNodeId: '',
+  collapsed: true,
+});
+
 /** 默认 data 工厂表，按类型取对应工厂。 */
 const DEFAULT_DATA_FACTORIES: { [K in NodeType]: () => NodeDataOf<K> } = {
   image: defaultImageData,
@@ -172,6 +207,7 @@ const DEFAULT_DATA_FACTORIES: { [K in NodeType]: () => NodeDataOf<K> } = {
   drawing: defaultDrawingData,
   video: defaultVideoData,
   generation_placeholder: defaultPlaceholderData,
+  media_panel: defaultMediaPanelData,
   frame: defaultFrameData,
 };
 

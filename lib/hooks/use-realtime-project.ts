@@ -14,7 +14,6 @@ import { useEffect, useState } from 'react';
 import { getBrowserSupabase } from '@/lib/supabase/client';
 import { subscribeProject } from '@/lib/realtime/project-channel';
 import { useCanvasStore } from '@/stores/canvas-store';
-import { useChatStore } from '@/stores/chat-store';
 
 /** 实时连接状态。 */
 export type RealtimeStatus = 'connecting' | 'subscribed' | 'closed' | 'error' | 'timed_out';
@@ -23,13 +22,9 @@ export type RealtimeStatus = 'connecting' | 'subscribed' | 'closed' | 'error' | 
  * 装配项目实时订阅。
  *
  * @param projectId - 项目标识
- * @param conversationId - 主会话标识（用于对话多设备同步）
  * @returns 当前实时连接状态
  */
-export function useRealtimeProject(
-  projectId: string,
-  conversationId: string | null,
-): RealtimeStatus {
+export function useRealtimeProject(projectId: string): RealtimeStatus {
   const [status, setStatus] = useState<RealtimeStatus>('connecting');
 
   useEffect(() => {
@@ -47,16 +42,11 @@ export function useRealtimeProject(
 
       unsubscribe = subscribeProject(
         supabase,
-        { projectId, conversationId },
+        { projectId },
         {
           onNodeChange: (change) => useCanvasStore.getState().applyRemoteNode(change),
           onEdgeChange: (change) => useCanvasStore.getState().applyRemoteEdge(change),
-          // 生成变更同时驱动画布占位卡片与对话「生成中」徽标
-          onGenerationChange: (change) => {
-            useCanvasStore.getState().applyRemoteGeneration(change);
-            useChatStore.getState().applyRemoteGeneration(change);
-          },
-          onMessageChange: (change) => useChatStore.getState().applyRemoteMessage(change),
+          onGenerationChange: (change) => useCanvasStore.getState().applyRemoteGeneration(change),
           onStatusChange: (s) => setStatus(s),
         },
       );
@@ -67,7 +57,7 @@ export function useRealtimeProject(
       unsubscribe();
       setStatus('closed');
     };
-  }, [projectId, conversationId]);
+  }, [projectId]);
 
   return status;
 }

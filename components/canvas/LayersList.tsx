@@ -17,6 +17,7 @@ import {
   Frame,
   GripVertical,
   ImageIcon,
+  MessageSquare,
   PenLine,
   Shapes,
   Sparkles,
@@ -37,6 +38,7 @@ const TYPE_ICON: Record<NodeType, LucideIcon> = {
   drawing: PenLine,
   video: Video,
   generation_placeholder: Sparkles,
+  media_panel: MessageSquare,
   frame: Frame,
 };
 
@@ -58,6 +60,8 @@ function nodeLabel(node: CanvasFlowNode): string {
       return data.name || '画板';
     case 'generation_placeholder':
       return data.promptSummary.slice(0, 24) || '生成中';
+    case 'media_panel':
+      return '媒体对话';
     default:
       return '元素';
   }

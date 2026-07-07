@@ -3,6 +3,7 @@
  *
  * 边在本产品中有多类用途：
  * - `lineage`：记录「生成血缘」（某图由某参考节点派生而来），多由服务端写入；
+ * - `media_candidate`：记录「主媒体 → 候选历史」的候选归属关系；
  * - `sequence`：用户手动串接的「工作流序列」，把若干图片 / 视频节点按方向自由连成有向无环图
  *   （n:m，上游输出即下游输入），生成时取「经某节点的最长路径」作为「逐段首尾帧」视频合成的
  *   关键帧顺序（第 04 篇画布连线、第 05 篇生成编排）；
@@ -16,10 +17,11 @@
  * 边类型取值。
  * - `default`：普通连线；
  * - `lineage`：生成血缘；
+ * - `media_candidate`：媒体候选关系；
  * - `sequence`：工作流序列（图片有向无环图 → 视频）；
  * - `annotation`：图片描述（文字节点 → 图）。
  */
-export const EDGE_TYPES = ['default', 'lineage', 'sequence', 'annotation'] as const;
+export const EDGE_TYPES = ['default', 'lineage', 'media_candidate', 'sequence', 'annotation'] as const;
 export type EdgeType = (typeof EDGE_TYPES)[number];
 
 /**

@@ -33,6 +33,7 @@ next-env.d.ts
 .DS_Store
 .idea/
 .claude/
+.codex/
 .vscode/*
 !.vscode/extensions.json
 Thumbs.db

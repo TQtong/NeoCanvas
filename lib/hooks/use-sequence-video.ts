@@ -24,7 +24,6 @@ import type {
 } from '@/types';
 import { getBrowserSupabase } from '@/lib/supabase/client';
 import { useCanvasStore } from '@/stores/canvas-store';
-import { useChatStore } from '@/stores/chat-store';
 import { nodeBox, type CanvasFlowNode } from '@/lib/canvas/node-mapper';
 import { resolveSequenceChain } from '@/lib/canvas/sequence';
 import { getImageDescription, isDescribingNote } from '@/lib/canvas/annotation';
@@ -192,7 +191,7 @@ export function useSequenceVideo(): UseSequenceVideo {
 
         const request: UnifiedGenerationRequest = {
           projectId,
-          conversationId: useChatStore.getState().conversationId,
+          conversationId: null,
           messageId: null,
           modality: 'video',
           modelKey: model.key,

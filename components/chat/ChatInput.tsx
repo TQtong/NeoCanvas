@@ -18,6 +18,7 @@ import {
   Cuboid,
   Frame,
   ImageIcon,
+  MessageSquare,
   PenLine,
   Paperclip,
   Shapes,
@@ -50,6 +51,7 @@ const MENTION_ICON: Record<NodeType, LucideIcon> = {
   drawing: PenLine,
   video: Video,
   generation_placeholder: Sparkles,
+  media_panel: MessageSquare,
   frame: Frame,
 };
 

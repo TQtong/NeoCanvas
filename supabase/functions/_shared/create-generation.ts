@@ -28,6 +28,11 @@ const MAX_INFLIGHT = Number(Deno.env.get('MAX_INFLIGHT_GENERATIONS') ?? '8');
 const RATE_WINDOW_SECS = Number(Deno.env.get('RATE_LIMIT_WINDOW_SECS') ?? '60');
 const RATE_MAX = Number(Deno.env.get('RATE_LIMIT_MAX') ?? '30');
 
+/** 媒体候选关系边类型与隐藏连接桩。 */
+const MEDIA_CANDIDATE_EDGE_TYPE = 'media_candidate';
+const MEDIA_CANDIDATE_HANDLE_OUT = 'media-candidate-out';
+const MEDIA_CANDIDATE_HANDLE_IN = 'media-candidate-in';
+
 /**
  * 校验请求中引用的资产是否归属当前用户，杜绝越权引用他人资产 / 提及节点。
  *
@@ -63,6 +68,87 @@ async function assertReferencesOwned(
   }
 }
 
+/** 创建候选占位时写入专属候选关系边。 */
+async function ensureCandidatePlaceholderEdge(
+  admin: SupabaseClient,
+  request: UnifiedGenerationRequest,
+  placeholderId: string,
+  generationId: string,
+): Promise<void> {
+  if ((request.resultMode ?? 'new_primary') !== 'candidate_for_target' || !request.targetNodeId) {
+    return;
+  }
+  const { data: existing, error: readError } = await admin
+    .from('canvas_edges')
+    .select('id')
+    .eq('project_id', request.projectId)
+    .eq('source_node_id', request.targetNodeId)
+    .eq('target_node_id', placeholderId)
+    .eq('type', MEDIA_CANDIDATE_EDGE_TYPE)
+    .maybeSingle();
+  if (readError) {
+    throw new ApiException('internal_error', `读取候选关系边失败：${readError.message}`);
+  }
+  if (existing) return;
+
+  const { error } = await admin.from('canvas_edges').insert({
+    project_id: request.projectId,
+    source_node_id: request.targetNodeId,
+    target_node_id: placeholderId,
+    source_handle: MEDIA_CANDIDATE_HANDLE_OUT,
+    target_handle: MEDIA_CANDIDATE_HANDLE_IN,
+    type: MEDIA_CANDIDATE_EDGE_TYPE,
+    data: {
+      label: '候选',
+      generationId,
+    },
+  });
+  if (error) {
+    throw new ApiException('internal_error', `创建候选关系边失败：${error.message}`);
+  }
+}
+
+/** 创建候选占位时同步创建其折叠媒体对话面板。 */
+async function ensureCandidatePlaceholderPanel(
+  admin: SupabaseClient,
+  request: UnifiedGenerationRequest,
+  placeholderId: string,
+  ownerId: string,
+): Promise<void> {
+  if ((request.resultMode ?? 'new_primary') !== 'candidate_for_target') return;
+  const placement = request.placement ?? { x: 0, y: 0, width: 320, height: 320 };
+  const { data: existing, error: readError } = await admin
+    .from('canvas_nodes')
+    .select('id')
+    .eq('project_id', request.projectId)
+    .eq('type', 'media_panel')
+    .eq('data->>targetNodeId', placeholderId)
+    .maybeSingle();
+  if (readError) {
+    throw new ApiException('internal_error', `读取候选媒体对话失败：${readError.message}`);
+  }
+  if (existing) return;
+
+  const { error } = await admin.from('canvas_nodes').insert({
+    project_id: request.projectId,
+    type: 'media_panel',
+    position_x: placement.x,
+    position_y: placement.y + placement.height + 24,
+    width: placement.width,
+    height: 56,
+    rotation: 0,
+    z_index: 1,
+    data: {
+      targetNodeId: placeholderId,
+      collapsed: true,
+    },
+    created_by: ownerId,
+  });
+  if (error) {
+    throw new ApiException('internal_error', `创建候选媒体对话失败：${error.message}`);
+  }
+}
+
 /**
  * 创建一条 pending 生成任务与其占位节点，并入队 + 唤起消费。
  *
@@ -76,6 +162,11 @@ export async function createGeneration(
   request: UnifiedGenerationRequest,
   ownerId: string,
 ): Promise<SubmitGenerationResponse> {
+  const resultMode = request.resultMode ?? 'new_primary';
+  if (resultMode === 'candidate_for_target' && !request.targetNodeId) {
+    throw new ApiException('invalid_params', '候选生成缺少目标媒体节点');
+  }
+
   // 幂等：同一幂等键复用既有任务
   if (request.idempotencyKey) {
     const { data: existing } = await admin
@@ -146,6 +237,8 @@ export async function createGeneration(
     provider: modelRow.provider,
     prompt: request.prompt,
     params: request.params,
+    target_node_id: request.targetNodeId ?? null,
+    result_mode: resultMode,
     status: 'pending',
     progress: 0,
     moderation_status: 'passed',
@@ -183,10 +276,13 @@ export async function createGeneration(
     .select('data, parent_id')
     .eq('id', placeholderId)
     .maybeSingle();
-  const existingGroupId =
+  const existingData =
     existingNode && existingNode.data && typeof existingNode.data === 'object'
-      ? (existingNode.data as Record<string, unknown>).groupId
-      : undefined;
+      ? (existingNode.data as Record<string, unknown>)
+      : null;
+  const existingGroupId = existingData?.groupId;
+  const existingMediaDescription = existingData?.mediaDescription;
+  const existingGenerationSettings = existingData?.generationSettings;
 
   const { error: nodeError } = await admin.from('canvas_nodes').upsert(
     {
@@ -205,7 +301,17 @@ export async function createGeneration(
         promptSummary: request.prompt.slice(0, 80),
         targetWidth: placement.width,
         targetHeight: placement.height,
+        ...(request.targetNodeId ? { targetNodeId: request.targetNodeId } : {}),
+        resultMode,
         ...(typeof existingGroupId === 'string' ? { groupId: existingGroupId } : {}),
+        ...(typeof existingMediaDescription === 'string'
+          ? { mediaDescription: existingMediaDescription }
+          : {}),
+        ...(existingGenerationSettings &&
+        typeof existingGenerationSettings === 'object' &&
+        !Array.isArray(existingGenerationSettings)
+          ? { generationSettings: existingGenerationSettings }
+          : {}),
       },
       generation_id: generationId,
       created_by: ownerId,
@@ -215,6 +321,8 @@ export async function createGeneration(
   if (nodeError) {
     throw new ApiException('internal_error', `创建占位节点失败：${nodeError.message}`);
   }
+  await ensureCandidatePlaceholderEdge(admin, request, placeholderId, generationId);
+  await ensureCandidatePlaceholderPanel(admin, request, placeholderId, ownerId);
 
   // 关联占位节点
   await admin

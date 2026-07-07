@@ -16,6 +16,7 @@ import type { VideoNodeData } from '@/types';
 import type { CanvasFlowNode } from '@/lib/canvas/node-mapper';
 import { Skeleton } from '@/components/ui/skeleton';
 import { TransformableNode } from '../TransformableNode';
+import { MediaCandidateToggle } from './MediaCandidateToggle';
 import { NodeConnectHandles } from './NodeConnectHandles';
 
 function VideoNodeComponent({ id, data, selected }: NodeProps<CanvasFlowNode>) {
@@ -40,6 +41,12 @@ function VideoNodeComponent({ id, data, selected }: NodeProps<CanvasFlowNode>) {
           className="relative size-full overflow-hidden bg-black"
           style={{ borderRadius: d.cornerRadius }}
         >
+          {d.mediaRole === 'candidate' ? (
+            <div className="absolute left-2 top-2 z-10 rounded-md bg-background/85 px-2 py-1 text-[11px] font-medium text-foreground shadow-soft backdrop-blur">
+              候选
+            </div>
+          ) : null}
+          <MediaCandidateToggle targetId={id} collapsed={d.candidatesCollapsed} />
           {d.src ? (
             <video
               ref={videoRef}

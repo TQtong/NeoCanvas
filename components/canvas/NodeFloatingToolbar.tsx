@@ -16,12 +16,16 @@ import {
   AlignCenter,
   AlignLeft,
   AlignRight,
+  ArrowLeftRight,
   ArrowDownToLine,
   ArrowUpToLine,
   Bold,
   Clapperboard,
   Copy,
+  Eye,
+  EyeOff,
   Italic,
+  MessageSquare,
   Replace,
   Sparkles,
   StickyNote,
@@ -29,7 +33,7 @@ import {
   Underline,
   Ungroup,
 } from 'lucide-react';
-import type { ShapeNodeData, TextAlign, TextNodeData } from '@/types';
+import type { NodeData, ShapeNodeData, TextAlign, TextNodeData } from '@/types';
 import { useCanvasStore } from '@/stores/canvas-store';
 import { useSessionStore } from '@/stores/session-store';
 import { getBrowserSupabase } from '@/lib/supabase/client';
@@ -37,16 +41,41 @@ import { resolveSequenceChain } from '@/lib/canvas/sequence';
 import { collectGroupOverlays } from '@/lib/canvas/flatten';
 import { nodeBox, type CanvasFlowNode } from '@/lib/canvas/node-mapper';
 import { createDefaultNodeData } from '@/lib/canvas/constants';
+import { createCanvasNode } from '@/lib/canvas/media-workflow';
 import { uuid } from '@/lib/utils/id';
 import { useSequenceVideo } from '@/lib/hooks/use-sequence-video';
 import { useRegenerateNode } from '@/lib/hooks/use-regenerate-node';
 import { useRegeneratePoster } from '@/lib/hooks/use-regenerate-poster';
+import { useSwapMediaCandidate } from '@/lib/hooks/use-swap-media-candidate';
 import { uploadAsset } from '@/lib/storage/upload';
 import { IconButton } from '@/components/ui/icon-button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Tooltip } from '@/components/ui/tooltip';
 import { useToast } from '@/components/ui/toast';
 import { useTranslation } from '@/i18n';
+
+const MEDIA_PANEL_GAP = 24;
+const MEDIA_PANEL_EXPANDED_HEIGHT = 560;
+
+/** 沿候选链找到真正的根主媒体，支持“候选的候选”替换根目标。 */
+function resolveRootPrimaryNodeId(nodes: CanvasFlowNode[], candidateNode: CanvasFlowNode): string | null {
+  if (candidateNode.data.type !== 'image' && candidateNode.data.type !== 'video') return null;
+  let ownerId = candidateNode.data.candidateOf;
+  if (!ownerId) return null;
+
+  const visited = new Set<string>([candidateNode.id]);
+  while (ownerId && !visited.has(ownerId)) {
+    const owner = nodes.find((n) => n.id === ownerId);
+    if (!owner || (owner.data.type !== 'image' && owner.data.type !== 'video')) {
+      return ownerId;
+    }
+    if (!owner.data.candidateOf) return owner.id;
+    visited.add(owner.id);
+    ownerId = owner.data.candidateOf;
+  }
+
+  return candidateNode.data.candidateOf;
+}
 
 /** 文本属性子面板。 */
 function TextProperties({ id, data }: { id: string; data: TextNodeData }) {
@@ -167,6 +196,7 @@ export function NodeFloatingToolbar() {
   const fileRef = useRef<HTMLInputElement>(null);
   // 再生成在途标记：防连点重复提交（避免重复背景任务与重复文字节点）
   const [regenPending, setRegenPending] = useState(false);
+  const [swapPending, setSwapPending] = useState(false);
 
   const selectedNodeIds = useCanvasStore((s) => s.selectedNodeIds);
   const nodes = useCanvasStore((s) => s.nodes);
@@ -175,10 +205,12 @@ export function NodeFloatingToolbar() {
   const duplicateSelection = useCanvasStore((s) => s.duplicateSelection);
   const bringToFront = useCanvasStore((s) => s.bringToFront);
   const sendToBack = useCanvasStore((s) => s.sendToBack);
+  const updateNode = useCanvasStore((s) => s.updateNode);
   const updateNodeData = useCanvasStore((s) => s.updateNodeData);
   const addNode = useCanvasStore((s) => s.addNode);
   const addAnnotationEdge = useCanvasStore((s) => s.addAnnotationEdge);
   const setEditingNode = useCanvasStore((s) => s.setEditingNode);
+  const setSelection = useCanvasStore((s) => s.setSelection);
   const ungroupSelection = useCanvasStore((s) => s.ungroupSelection);
   const projectId = useCanvasStore((s) => s.projectId);
 
@@ -186,12 +218,29 @@ export function NodeFloatingToolbar() {
   const { generate: generateSequenceVideo } = useSequenceVideo();
   const { regenerate } = useRegenerateNode();
   const { regeneratePoster } = useRegeneratePoster();
+  const { swap } = useSwapMediaCandidate();
 
   if (selectedNodeIds.length !== 1) return null;
   const node = nodes.find((n) => n.id === selectedNodeIds[0]);
   if (!node) return null;
 
-  const isMedia = node.data.type === 'image' || node.data.type === 'video';
+  const mediaData = node.data.type === 'image' || node.data.type === 'video' ? node.data : null;
+  const isMedia = Boolean(mediaData);
+  const candidateOf = mediaData?.candidateOf ?? null;
+  const isCandidate = mediaData?.mediaRole === 'candidate' && Boolean(candidateOf);
+  const primaryCandidateNodeId =
+    isCandidate && mediaData ? resolveRootPrimaryNodeId(nodes, node) : null;
+  const candidateCount = mediaData
+    ? nodes.filter((n) => {
+        if (n.data.type === 'image' || n.data.type === 'video') {
+          return n.data.candidateOf === node.id;
+        }
+        if (n.data.type === 'generation_placeholder') {
+          return n.data.resultMode === 'candidate_for_target' && n.data.targetNodeId === node.id;
+        }
+        return false;
+      }).length
+    : 0;
 
   // 选中节点处于一条「序列链」（≥2 个已绑定资产的媒体成员）时，提供「按顺序生成视频」
   const canGenerateVideo =
@@ -251,6 +300,109 @@ export function NodeFloatingToolbar() {
     }
   };
 
+  const onSwapCandidate = async () => {
+    if (!projectId || !primaryCandidateNodeId || swapPending) return;
+    const primaryBefore = nodes.find((n) => n.id === primaryCandidateNodeId);
+    const candidateBefore = node;
+    const candidateIndex =
+      mediaData && 'candidateIndex' in mediaData ? mediaData.candidateIndex : null;
+    if (
+      !primaryBefore ||
+      (primaryBefore.data.type !== 'image' && primaryBefore.data.type !== 'video') ||
+      (candidateBefore.data.type !== 'image' && candidateBefore.data.type !== 'video')
+    ) {
+      return;
+    }
+    setSwapPending(true);
+    try {
+      await swap({
+        projectId,
+        primaryNodeId: primaryCandidateNodeId,
+        candidateNodeId: node.id,
+      });
+      const store = useCanvasStore.getState();
+      const latestPrimary = store.nodes.find((n) => n.id === primaryCandidateNodeId);
+      const latestCandidate = store.nodes.find((n) => n.id === node.id);
+      const stillWaitingForRealtime =
+        latestPrimary?.data.type === primaryBefore.data.type &&
+        latestCandidate?.data.type === candidateBefore.data.type &&
+        (latestPrimary.data.type === 'image' || latestPrimary.data.type === 'video') &&
+        latestPrimary.data.assetId === primaryBefore.data.assetId &&
+        (latestCandidate.data.type === 'image' || latestCandidate.data.type === 'video') &&
+        latestCandidate.data.assetId === candidateBefore.data.assetId;
+
+      if (latestPrimary && latestCandidate && stillWaitingForRealtime) {
+        const primaryData = {
+          ...candidateBefore.data,
+          mediaRole: 'primary',
+          candidateOf: null,
+          candidateIndex: null,
+        } as NodeData;
+        const candidateData = {
+          ...primaryBefore.data,
+          mediaRole: 'candidate',
+          candidateOf: primaryCandidateNodeId,
+          candidateIndex,
+        } as NodeData;
+
+        store.replaceNode(
+          primaryCandidateNodeId,
+          { ...latestPrimary, type: candidateBefore.type, data: primaryData },
+          { persist: false },
+        );
+        store.replaceNode(
+          node.id,
+          { ...latestCandidate, type: primaryBefore.type, data: candidateData },
+          { persist: false },
+        );
+      }
+      toast.success('已替换主媒体');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '替换主媒体失败');
+    } finally {
+      setSwapPending(false);
+    }
+  };
+
+  const onOpenMediaPanel = () => {
+    if (!isMedia) return;
+    const box = nodeBox(node);
+    const panelPosition = { x: box.x, y: box.y + box.height + MEDIA_PANEL_GAP };
+    const existing = nodes.find(
+      (n) => n.data.type === 'media_panel' && n.data.targetNodeId === node.id,
+    );
+    if (existing) {
+      updateNode(existing.id, {
+        position: panelPosition,
+        width: box.width,
+        height: MEDIA_PANEL_EXPANDED_HEIGHT,
+        style: { width: box.width, height: MEDIA_PANEL_EXPANDED_HEIGHT },
+      });
+      updateNodeData(existing.id, { collapsed: false });
+      bringToFront([existing.id]);
+      setSelection([existing.id]);
+      return;
+    }
+    const zIndex = Math.max(0, ...nodes.map((n) => n.zIndex ?? 0)) + 1;
+    addNode(
+      createCanvasNode(
+        'media_panel',
+        panelPosition,
+        {
+          size: { width: box.width, height: MEDIA_PANEL_EXPANDED_HEIGHT },
+          zIndex,
+          data: { targetNodeId: node.id, collapsed: false },
+        },
+      ),
+      { select: true },
+    );
+  };
+
+  const onToggleCandidates = () => {
+    if (!mediaData) return;
+    updateNodeData(node.id, { candidatesCollapsed: !mediaData.candidatesCollapsed });
+  };
+
   // 添加描述：在图片上方落一个文字便签，自动连一条「描述」边并进入编辑
   const onAddDescription = () => {
     const box = nodeBox(node);
@@ -301,6 +453,37 @@ export function NodeFloatingToolbar() {
       <div className="glass flex items-center gap-0.5 rounded-xl p-1">
         {isMedia ? (
           <>
+            {isCandidate ? (
+              <Tooltip content="替换主媒体">
+                <IconButton
+                  size="sm"
+                  label="替换主媒体"
+                  className="text-accent"
+                  disabled={swapPending}
+                  onClick={() => void onSwapCandidate()}
+                >
+                  <ArrowLeftRight />
+                </IconButton>
+              </Tooltip>
+            ) : null}
+            {isMedia ? (
+              <Tooltip content="媒体对话">
+                <IconButton size="sm" label="媒体对话" onClick={onOpenMediaPanel}>
+                  <MessageSquare />
+                </IconButton>
+              </Tooltip>
+            ) : null}
+            {candidateCount > 0 && mediaData ? (
+              <Tooltip content={mediaData.candidatesCollapsed ? '展开候选' : '收起候选'}>
+                <IconButton
+                  size="sm"
+                  label={mediaData.candidatesCollapsed ? '展开候选' : '收起候选'}
+                  onClick={onToggleCandidates}
+                >
+                  {mediaData.candidatesCollapsed ? <Eye /> : <EyeOff />}
+                </IconButton>
+              </Tooltip>
+            ) : null}
             <Tooltip content={t('node.regenerate')}>
               <IconButton
                 size="sm"
@@ -409,16 +592,18 @@ export function NodeFloatingToolbar() {
             <ArrowDownToLine />
           </IconButton>
         </Tooltip>
-        <Tooltip content={t('node.delete')}>
-          <IconButton
-            size="sm"
-            label={t('node.delete')}
-            className="hover:text-danger"
-            onClick={() => removeNodes([node.id])}
-          >
-            <Trash2 />
-          </IconButton>
-        </Tooltip>
+        {node.data.type === 'media_panel' ? null : (
+          <Tooltip content={t('node.delete')}>
+            <IconButton
+              size="sm"
+              label={t('node.delete')}
+              className="hover:text-danger"
+              onClick={() => removeNodes([node.id])}
+            >
+              <Trash2 />
+            </IconButton>
+          </Tooltip>
+        )}
       </div>
     </NodeToolbar>
   );
