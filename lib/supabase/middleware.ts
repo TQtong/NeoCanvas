@@ -10,11 +10,18 @@
 
 import { NextResponse, type NextRequest } from 'next/server';
 import { createServerClient, type CookieOptions } from '@supabase/ssr';
-import { getPublicEnv } from '@/lib/env';
+import { getPublicEnv, getServerSupabaseUrl, getSupabaseAuthCookieName } from '@/lib/env';
 import type { Database } from '@/types';
 
 /** 无需登录即可访问的路径前缀。 */
-const PUBLIC_PATHS = ['/login', '/auth', '/_next', '/favicon', '/api/health'];
+const PUBLIC_PATHS = [
+  '/login',
+  '/auth',
+  '/_next',
+  '/favicon',
+  '/api/health',
+  '/api/auth/local-login',
+];
 
 /**
  * 判断路径是否公开（无需登录）。
@@ -23,7 +30,9 @@ const PUBLIC_PATHS = ['/login', '/auth', '/_next', '/favicon', '/api/health'];
  * @returns 是否公开
  */
 function isPublicPath(pathname: string): boolean {
-  return PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`) || pathname.startsWith(p));
+  return PUBLIC_PATHS.some(
+    (p) => pathname === p || pathname.startsWith(`${p}/`) || pathname.startsWith(p),
+  );
 }
 
 /**
@@ -35,9 +44,11 @@ function isPublicPath(pathname: string): boolean {
 export async function updateSession(request: NextRequest): Promise<NextResponse> {
   let response = NextResponse.next({ request });
 
-  const { supabaseUrl, supabaseAnonKey } = getPublicEnv();
+  const { supabaseAnonKey, siteUrl } = getPublicEnv();
+  const supabaseUrl = getServerSupabaseUrl();
 
   const supabase = createServerClient<Database>(supabaseUrl, supabaseAnonKey, {
+    cookieOptions: { name: getSupabaseAuthCookieName() },
     cookies: {
       getAll() {
         return request.cookies.getAll();
@@ -64,17 +75,14 @@ export async function updateSession(request: NextRequest): Promise<NextResponse>
 
   // 未登录访问受保护路由 → 重定向到登录页，并携带回跳地址
   if (!user && !isPublicPath(pathname)) {
-    const redirectUrl = request.nextUrl.clone();
-    redirectUrl.pathname = '/login';
+    const redirectUrl = new URL('/login', siteUrl);
     redirectUrl.searchParams.set('redirect', pathname + request.nextUrl.search);
     return NextResponse.redirect(redirectUrl);
   }
 
   // 已登录访问登录页 → 重定向到主页
   if (user && pathname === '/login') {
-    const redirectUrl = request.nextUrl.clone();
-    redirectUrl.pathname = '/';
-    redirectUrl.search = '';
+    const redirectUrl = new URL('/', siteUrl);
     return NextResponse.redirect(redirectUrl);
   }
 

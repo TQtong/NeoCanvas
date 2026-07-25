@@ -10,7 +10,7 @@
  */
 
 import { createBrowserClient } from '@supabase/ssr';
-import { getPublicEnv } from '@/lib/env';
+import { getPublicEnv, getSupabaseAuthCookieName } from '@/lib/env';
 import type { Database } from '@/types';
 import type { TypedSupabaseClient } from './types';
 
@@ -26,7 +26,9 @@ let cached: TypedSupabaseClient | null = null;
 export function getBrowserSupabase(): TypedSupabaseClient {
   if (cached) return cached;
   const { supabaseUrl, supabaseAnonKey } = getPublicEnv();
-  const client = createBrowserClient<Database>(supabaseUrl, supabaseAnonKey);
+  const client = createBrowserClient<Database>(supabaseUrl, supabaseAnonKey, {
+    cookieOptions: { name: getSupabaseAuthCookieName() },
+  });
   cached = client;
 
   // 把登录用户的 JWT 绑定到 Realtime WebSocket：Realtime 的 postgres_changes 以「订阅者

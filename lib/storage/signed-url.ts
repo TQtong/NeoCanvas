@@ -10,12 +10,35 @@
 
 import type { AssetRow, AssetView } from '@/types';
 import type { TypedSupabaseClient } from '@/lib/supabase/types';
+import { getPublicEnv } from '@/lib/env';
 
 /** 签名 URL 默认有效期（秒）：1 小时。 */
 export const SIGNED_URL_TTL = 3600;
 
 /** 缩略图变换的目标宽度（px）。 */
 export const THUMBNAIL_WIDTH = 480;
+
+/**
+ * 把服务端通过 Docker 内部地址生成的 Storage URL 改写为浏览器可访问的公开地址。
+ *
+ * 签名由路径与查询参数中的 token 承载，替换 origin 不会改变签名内容。浏览器端调用时
+ * 返回值本来就是公开地址，因此此操作也是幂等的。
+ *
+ * @param signedUrl - Supabase Storage 返回的签名 URL
+ * @returns 使用 `NEXT_PUBLIC_SUPABASE_URL` origin 的签名 URL
+ */
+export function toPublicStorageUrl(signedUrl: string): string {
+  try {
+    const signed = new URL(signedUrl);
+    const publicSupabase = new URL(getPublicEnv().supabaseUrl);
+    signed.protocol = publicSupabase.protocol;
+    signed.hostname = publicSupabase.hostname;
+    signed.port = publicSupabase.port;
+    return signed.toString();
+  } catch {
+    return signedUrl;
+  }
+}
 
 /**
  * 为单个对象创建签名 URL。
@@ -36,9 +59,13 @@ export async function createSignedUrl(
 ): Promise<string | null> {
   const { data, error } = await supabase.storage
     .from(bucket)
-    .createSignedUrl(path, expiresIn, transformWidth ? { transform: { width: transformWidth } } : undefined);
+    .createSignedUrl(
+      path,
+      expiresIn,
+      transformWidth ? { transform: { width: transformWidth } } : undefined,
+    );
   if (error || !data) return null;
-  return data.signedUrl;
+  return toPublicStorageUrl(data.signedUrl);
 }
 
 /**
@@ -79,11 +106,17 @@ export async function resolveAssetView(
   row: AssetRow,
   expiresIn: number = SIGNED_URL_TTL,
 ): Promise<AssetView> {
-  const url = (await createSignedUrl(supabase, row.storage_bucket, row.storage_path, expiresIn)) ?? '';
+  const url =
+    (await createSignedUrl(supabase, row.storage_bucket, row.storage_path, expiresIn)) ?? '';
 
   let thumbnailUrl: string | null = null;
   if (row.thumbnail_path) {
-    thumbnailUrl = await createSignedUrl(supabase, row.storage_bucket, row.thumbnail_path, expiresIn);
+    thumbnailUrl = await createSignedUrl(
+      supabase,
+      row.storage_bucket,
+      row.thumbnail_path,
+      expiresIn,
+    );
   } else if (row.kind === 'image') {
     thumbnailUrl = await createSignedUrl(
       supabase,

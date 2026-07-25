@@ -9,6 +9,8 @@
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Docker 生产镜像只携带 Next.js 自动追踪出的最小运行依赖。
+  output: 'standalone',
   reactStrictMode: true,
   experimental: {
     serverActions: {

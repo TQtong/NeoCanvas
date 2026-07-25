@@ -21,6 +21,7 @@ yarn-error.log*
 .env*.local
 .env.development
 .env.production
+.env.docker
 
 # 部署
 .vercel

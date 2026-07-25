@@ -71,6 +71,9 @@ verify_jwt = true
 [functions.export-canvas]
 verify_jwt = true
 
+[functions.regenerate-poster]
+verify_jwt = true
+
 [functions.process-generation-queue]
 verify_jwt = false
 

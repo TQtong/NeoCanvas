@@ -27,7 +27,10 @@ export default async function LoginPage({
   searchParams: Promise<{ redirect?: string; error?: string }>;
 }) {
   const { redirect: redirectParam, error: errorParam } = await searchParams;
-  const redirectTo = redirectParam && redirectParam.startsWith('/') ? redirectParam : '/';
+  const redirectTo =
+    redirectParam && redirectParam.startsWith('/') && !redirectParam.startsWith('//')
+      ? redirectParam
+      : '/';
   const initialError = errorParam
     ? (AUTH_ERROR_MESSAGES[errorParam] ?? '登录失败，请重试')
     : undefined;

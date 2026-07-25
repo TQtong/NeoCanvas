@@ -11,7 +11,7 @@ import 'server-only';
 
 import { cookies } from 'next/headers';
 import { createServerClient, type CookieOptions } from '@supabase/ssr';
-import { getPublicEnv } from '@/lib/env';
+import { getPublicEnv, getServerSupabaseUrl, getSupabaseAuthCookieName } from '@/lib/env';
 import type { Database } from '@/types';
 import type { TypedSupabaseClient } from './types';
 
@@ -24,10 +24,12 @@ import type { TypedSupabaseClient } from './types';
  * @returns 服务端强类型 Supabase 客户端
  */
 export async function createServerSupabase(): Promise<TypedSupabaseClient> {
-  const { supabaseUrl, supabaseAnonKey } = getPublicEnv();
+  const { supabaseAnonKey } = getPublicEnv();
+  const supabaseUrl = getServerSupabaseUrl();
   const cookieStore = await cookies();
 
   return createServerClient<Database>(supabaseUrl, supabaseAnonKey, {
+    cookieOptions: { name: getSupabaseAuthCookieName() },
     cookies: {
       getAll() {
         return cookieStore.getAll();
