@@ -75,6 +75,9 @@ supabase secrets set \
 > 密钥解析顺序为 **用户凭证（启用）→ 上述环境变量回退**。因此上面的 `*_API_KEY` 变为「可选的全局
 > 默认」：配了即作为未自带密钥用户的兜底；纯 BYOK 部署可不设。编排 LLM（`ORCHESTRATOR_LLM_*`）
 > 与内容审核（`MODERATION_API_KEY`）仍为系统级环境变量，不纳入 BYOK。
+> 图片 / 视频节点中的模型选择只展示「用户已启用提供商」下与当前节点模态一致的活跃模型；处理已有
+> 媒体时还会继续按参考图、图生视频等能力过滤。
+> 提供商详情会自动填入官方 API 端点；仅使用兼容代理或自建网关时才需要覆盖，保存后按用户凭据回填。
 
 > `SUPABASE_URL` / `SUPABASE_ANON_KEY` / `SUPABASE_SERVICE_ROLE_KEY` 由 Supabase 平台自动注入
 > 到函数环境，无需手动设置。`config.toml` 已为三个内部函数关闭网关 JWT 校验，并为
@@ -123,7 +126,7 @@ npm run build      # 生产构建
 ## 模型说明
 
 `model_catalog` 种子内置：GPT Image 2（OpenAI，默认）、Seedance 2.0（Ark，视频，异步）、
-Nano Banana Pro（Google，图像）。Seedream（Ark，图像）已登记但未上架。新增模型只需：
+Nano Banana Pro（Google，图像）与 Seedream（Ark，图像）。新增模型只需：
 实现适配器（`supabase/functions/_shared/adapters/`）→ 在 `registry.ts` 登记 → 在
 `model_catalog` 追加一行；前端选择条、参数 UI 与流水线由数据驱动自动纳入。
 各模型的提供商端点 id 可经 `model_catalog.default_params.providerModel` 或环境变量覆盖

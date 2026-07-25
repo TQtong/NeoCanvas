@@ -65,6 +65,9 @@ export function validateParams(
   request: UnifiedGenerationRequest,
 ): void {
   const params = request.params;
+  if (capabilities.requiresReferenceImages && params.references.length === 0) {
+    throw new ApiException('invalid_params', '当前模型必须提供一张参考图');
+  }
   if (params.references.length > 0 && !capabilities.supportsReferenceImages) {
     if (request.modality === 'video' && capabilities.supportsImageToVideo) {
       // 视频图生视频允许参考首帧
@@ -94,14 +97,16 @@ export function validateParams(
 
   if (params.modality === 'video') {
     const p = params as VideoGenerationParams;
-    if (capabilities.videoResolutions && !capabilities.videoResolutions.includes(p.resolution)) {
-      throw new ApiException('unsupported_param', `模型不支持分辨率 ${p.resolution}`);
+    if (
+      capabilities.videoResolutions?.length &&
+      !capabilities.videoResolutions.includes(p.resolution)
+    ) {
+      // 兼容已打开页面或历史节点仍携带旧模型参数：降级到当前模型首个有效分辨率。
+      p.resolution = capabilities.videoResolutions[0];
     }
     if (capabilities.videoDurationRange) {
       const { min, max } = capabilities.videoDurationRange;
-      if (p.durationSec < min || p.durationSec > max) {
-        throw new ApiException('invalid_params', `时长须在 ${min}~${max} 秒之间`);
-      }
+      p.durationSec = Math.min(max, Math.max(min, p.durationSec));
     }
     // 关键帧序列（逐段首尾帧）：需模型声明支持关键帧序列、至少 2 帧、且与单首帧参考互斥
     const keyframes = p.keyframes ?? [];
@@ -501,10 +506,7 @@ async function ensureMediaCandidateEdges(
     .eq('generation_id', generation.id)
     .eq('data->>candidateOf', targetNodeId);
   if (candidateError) {
-    throw new ApiException(
-      'internal_error',
-      `读取候选节点失败：${candidateError.message}`,
-    );
+    throw new ApiException('internal_error', `读取候选节点失败：${candidateError.message}`);
   }
   const candidateRows = candidates ?? [];
   const candidateIds = candidateRows.map((row) => row.id as string);
@@ -749,8 +751,7 @@ export async function landResult(
     const i = idx + (hasPlaceholder ? 1 : 0);
     const candidateOf =
       resultMode === 'candidate_for_target' ? targetNodeId : generation.placeholder_node_id;
-    const candidateIdx =
-      resultMode === 'candidate_for_target' ? existingCandidateCount + i : i - 1;
+    const candidateIdx = resultMode === 'candidate_for_target' ? existingCandidateCount + i : i - 1;
     const pos = candidateOf
       ? candidatePosition(targetPos, targetSize, candidateIdx)
       : { x: placeholderPos.x + i * (placeholderSize.width + 24), y: placeholderPos.y };

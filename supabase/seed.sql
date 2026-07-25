@@ -1,8 +1,7 @@
 -- ============================================================================
 -- 种子数据：model_catalog
 --
--- 主页选择条展示三个具体模型（GPT Image 2 默认、Seedance 2.0、Nano Banana Pro）。
--- 另登记 Seedream 作为 is_active=false 的预留模型，演示「数据驱动扩展」而不改 UI。
+-- 登记 OpenAI、Google 与火山方舟的图片 / 视频模型；节点按已配置提供商与媒体模态过滤展示。
 -- capabilities / default_params 的字段名与 types/models.ts 对齐（camelCase）。
 -- ============================================================================
 
@@ -83,7 +82,7 @@ values
     30,
     true
   ),
-  -- ④ Seedream（火山方舟 Ark，图像，预留：登记但不上架）
+  -- ④ Seedream（火山方舟 Ark，图像）
   (
     'seedream-3.0',
     'Seedream 3.0',
@@ -103,7 +102,7 @@ values
     ),
     jsonb_build_object('aspectRatio', '1:1', 'count', 1),
     40,
-    false
+    true
   )
 on conflict (key) do update
   set display_name = excluded.display_name,

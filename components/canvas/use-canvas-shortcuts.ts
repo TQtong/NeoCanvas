@@ -37,6 +37,15 @@ export function useCanvasShortcuts(history: UseCanvasHistory): void {
       const meta = event.metaKey || event.ctrlKey;
       const key = event.key.toLowerCase();
 
+      // React Flow 的内部选中状态与画布 Zustand 快照可能短暂不同步，显式处理删除键。
+      if (!meta && (key === 'delete' || key === 'backspace')) {
+        if (store.selectedNodeIds.length > 0) {
+          event.preventDefault();
+          store.removeNodes(store.selectedNodeIds);
+        }
+        return;
+      }
+
       // 组合键
       if (meta) {
         switch (key) {

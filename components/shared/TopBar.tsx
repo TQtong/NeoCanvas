@@ -3,7 +3,7 @@
 /**
  * 设计页顶栏（第 01 篇、第 04 篇 4.x）。
  *
- * 绝对定位于画布之上的半透明条：左端为 Logo + 项目名（双击就地重命名）+ 版本切换占位，
+ * 绝对定位于画布之上的半透明条：左端为返回首页 + Logo + 项目名（双击就地重命名）+ 版本切换占位，
  * 右端为分享、面板展开 / 收起与头像菜单。重命名提交时把新标题写回 `projects.title`，
  * 分享则复制当前页地址到剪贴板，两者均以轻量提示条反馈。
  *
@@ -18,7 +18,8 @@ import {
   type FormEvent,
   type KeyboardEvent,
 } from 'react';
-import { ChevronDown, Share2 } from 'lucide-react';
+import Link from 'next/link';
+import { ArrowLeft, ChevronDown, Share2 } from 'lucide-react';
 import { useTranslation } from '@/i18n';
 import { getBrowserSupabase } from '@/lib/supabase/client';
 import { IconButton } from '@/components/ui/icon-button';
@@ -134,12 +135,24 @@ export function TopBar({ projectId, title }: TopBarProps) {
 
   return (
     <header className="glass absolute inset-x-0 top-0 z-40 flex h-14 items-center justify-between px-4">
-      {/* 左端：Logo + 项目名 + 版本切换占位 */}
+      {/* 左端：返回首页 + Logo + 项目名 + 版本切换占位 */}
       <div className="flex min-w-0 items-center gap-2">
-        <span
-          aria-hidden
-          className="size-6 shrink-0 rounded-full bg-accent shadow-soft"
-        />
+        <Tooltip content={t('design.backHome')}>
+          <Link
+            href="/"
+            aria-label={t('design.backHome')}
+            title={t('design.backHome')}
+            className={cn(
+              'inline-flex size-9 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors duration-150',
+              'hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+              '[&_svg]:size-[18px]',
+            )}
+          >
+            <ArrowLeft />
+          </Link>
+        </Tooltip>
+
+        <span aria-hidden className="size-6 shrink-0 rounded-full bg-accent shadow-soft" />
 
         {editing ? (
           <form onSubmit={handleSubmit} className="min-w-0">

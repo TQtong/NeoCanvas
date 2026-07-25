@@ -207,6 +207,8 @@ export interface ModelCapabilities {
   maxOutputs: number;
   supportsNegativePrompt: boolean;
   supportsReferenceImages: boolean;
+  /** 是否必须提供参考图（图片编辑 / 图生视频等不能纯文本生成的模型）。 */
+  requiresReferenceImages?: boolean;
   supportsImageToVideo: boolean;
   supportsSeed: boolean;
   qualities: ImageQuality[];

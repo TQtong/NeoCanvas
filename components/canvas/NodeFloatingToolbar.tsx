@@ -56,9 +56,13 @@ import { useTranslation } from '@/i18n';
 
 const MEDIA_PANEL_GAP = 24;
 const MEDIA_PANEL_EXPANDED_HEIGHT = 560;
+const FLOATING_TOOLBAR_Z_INDEX = 2_147_483_647;
 
 /** 沿候选链找到真正的根主媒体，支持“候选的候选”替换根目标。 */
-function resolveRootPrimaryNodeId(nodes: CanvasFlowNode[], candidateNode: CanvasFlowNode): string | null {
+function resolveRootPrimaryNodeId(
+  nodes: CanvasFlowNode[],
+  candidateNode: CanvasFlowNode,
+): string | null {
   if (candidateNode.data.type !== 'image' && candidateNode.data.type !== 'video') return null;
   let ownerId = candidateNode.data.candidateOf;
   if (!ownerId) return null;
@@ -194,6 +198,7 @@ export function NodeFloatingToolbar() {
   const { t } = useTranslation();
   const toast = useToast();
   const fileRef = useRef<HTMLInputElement>(null);
+  const deleteHandledAtRef = useRef(0);
   // 再生成在途标记：防连点重复提交（避免重复背景任务与重复文字节点）
   const [regenPending, setRegenPending] = useState(false);
   const [swapPending, setSwapPending] = useState(false);
@@ -385,15 +390,11 @@ export function NodeFloatingToolbar() {
     }
     const zIndex = Math.max(0, ...nodes.map((n) => n.zIndex ?? 0)) + 1;
     addNode(
-      createCanvasNode(
-        'media_panel',
-        panelPosition,
-        {
-          size: { width: box.width, height: MEDIA_PANEL_EXPANDED_HEIGHT },
-          zIndex,
-          data: { targetNodeId: node.id, collapsed: false },
-        },
-      ),
+      createCanvasNode('media_panel', panelPosition, {
+        size: { width: box.width, height: MEDIA_PANEL_EXPANDED_HEIGHT },
+        zIndex,
+        data: { targetNodeId: node.id, collapsed: false },
+      }),
       { select: true },
     );
   };
@@ -401,6 +402,41 @@ export function NodeFloatingToolbar() {
   const onToggleCandidates = () => {
     if (!mediaData) return;
     updateNodeData(node.id, { candidatesCollapsed: !mediaData.candidatesCollapsed });
+  };
+
+  /** 删除当前节点；画板下方仍有重叠画板时选中下一层，避免视觉上误以为删除失败。 */
+  const onDeleteNode = () => {
+    const now = Date.now();
+    if (now - deleteHandledAtRef.current < 500) return;
+    deleteHandledAtRef.current = now;
+
+    const selectedBox = nodeBox(node);
+    const overlappingFrames =
+      node.data.type === 'frame'
+        ? nodes
+            .filter((candidate) => {
+              if (candidate.id === node.id || candidate.data.type !== 'frame') return false;
+              const candidateBox = nodeBox(candidate);
+              return (
+                selectedBox.x < candidateBox.x + candidateBox.width &&
+                selectedBox.x + selectedBox.width > candidateBox.x &&
+                selectedBox.y < candidateBox.y + candidateBox.height &&
+                selectedBox.y + selectedBox.height > candidateBox.y
+              );
+            })
+            .sort((a, b) => (b.zIndex ?? 0) - (a.zIndex ?? 0))
+        : [];
+
+    removeNodes([node.id]);
+    if (node.data.type !== 'frame') return;
+
+    const nextFrame = overlappingFrames[0];
+    if (nextFrame) {
+      setSelection([nextFrame.id]);
+      toast.info(`已删除当前画板；下方还有 ${overlappingFrames.length} 个重叠画板`);
+    } else {
+      toast.success('画板已删除');
+    }
   };
 
   // 添加描述：在图片上方落一个文字便签，自动连一条「描述」边并进入编辑
@@ -449,8 +485,17 @@ export function NodeFloatingToolbar() {
   };
 
   return (
-    <NodeToolbar nodeId={node.id} isVisible position={Position.Top} offset={12}>
-      <div className="glass flex items-center gap-0.5 rounded-xl p-1">
+    <NodeToolbar
+      nodeId={node.id}
+      isVisible
+      position={Position.Top}
+      offset={12}
+      style={{ zIndex: FLOATING_TOOLBAR_Z_INDEX }}
+    >
+      <div
+        className="nodrag nopan glass pointer-events-auto flex items-center gap-0.5 rounded-xl p-1"
+        onPointerDown={(event) => event.stopPropagation()}
+      >
         {isMedia ? (
           <>
             {isCandidate ? (
@@ -597,8 +642,19 @@ export function NodeFloatingToolbar() {
             <IconButton
               size="sm"
               label={t('node.delete')}
-              className="hover:text-danger"
-              onClick={() => removeNodes([node.id])}
+              className="nodrag nopan hover:text-danger"
+              onPointerDown={(event) => {
+                // 在 React Flow 处理选中状态前完成删除，避免 pointerdown 后节点状态变化吞掉 click。
+                event.preventDefault();
+                event.stopPropagation();
+                onDeleteNode();
+              }}
+              onClick={(event) => {
+                // 非 PointerEvent 环境的兜底；正常浏览器会在 pointerdown 时完成删除。
+                event.preventDefault();
+                event.stopPropagation();
+                onDeleteNode();
+              }}
             >
               <Trash2 />
             </IconButton>

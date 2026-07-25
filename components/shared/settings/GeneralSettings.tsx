@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * 通用设置（头像 / 显示名称 / 界面语言）。
+ * 通用设置（头像 / 显示名称 / 界面语言 / 明暗主题）。
  *
  * 由 {@link SettingsDialog} 的「通用」标签承载。保存写回 `profiles`（display_name / avatar_url /
  * locale）并同步会话状态库；保存后不关闭弹层，便于继续切换其它标签。
@@ -10,8 +10,9 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { Loader2, Upload, X } from 'lucide-react';
-import { useSessionStore, type Locale } from '@/stores/session-store';
+import { Loader2, Monitor, Moon, Sun, Upload, X } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
+import { useSessionStore, type Locale, type ThemePreference } from '@/stores/session-store';
 import { getBrowserSupabase } from '@/lib/supabase/client';
 import { uploadAvatar } from '@/lib/storage/upload';
 import { AVATAR_PRESETS, avatarPresetUrl } from '@/lib/avatars';
@@ -27,6 +28,17 @@ const LOCALE_OPTIONS: ReadonlyArray<{ value: Locale; label: string }> = [
   { value: 'en', label: 'English' },
 ];
 
+/** 主题偏好及其图标。 */
+const THEME_OPTIONS: ReadonlyArray<{
+  value: ThemePreference;
+  labelKey: string;
+  icon: LucideIcon;
+}> = [
+  { value: 'system', labelKey: 'theme.system', icon: Monitor },
+  { value: 'light', labelKey: 'theme.light', icon: Sun },
+  { value: 'dark', labelKey: 'theme.dark', icon: Moon },
+];
+
 /** 头像大小上限（5MB，与 `avatars` 桶的 file_size_limit 一致）。 */
 const AVATAR_MAX_BYTES = 5 * 1024 * 1024;
 
@@ -40,6 +52,8 @@ export function GeneralSettings() {
   const setProfile = useSessionStore((s) => s.setProfile);
   const locale = useSessionStore((s) => s.locale);
   const setLocale = useSessionStore((s) => s.setLocale);
+  const theme = useSessionStore((s) => s.theme);
+  const setTheme = useSessionStore((s) => s.setTheme);
 
   const [name, setName] = useState(profile?.display_name ?? '');
   const [avatarUrl, setAvatarUrl] = useState<string | null>(profile?.avatar_url ?? null);
@@ -196,6 +210,34 @@ export function GeneralSettings() {
               {option.label}
             </button>
           ))}
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-1.5">
+        <span className="text-sm text-muted-foreground">{t('settings.theme')}</span>
+        <div className="grid grid-cols-3 gap-2">
+          {THEME_OPTIONS.map((option) => {
+            const ThemeIcon = option.icon;
+            const selected = theme === option.value;
+            return (
+              <button
+                key={option.value}
+                type="button"
+                aria-pressed={selected}
+                onClick={() => setTheme(option.value)}
+                className={cn(
+                  'inline-flex h-10 items-center justify-center gap-2 rounded-xl border text-sm transition-colors',
+                  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                  selected
+                    ? 'border-accent bg-accent-muted text-accent'
+                    : 'border-border hover:bg-muted',
+                )}
+              >
+                <ThemeIcon className="size-4" aria-hidden />
+                {t(option.labelKey)}
+              </button>
+            );
+          })}
         </div>
       </div>
 

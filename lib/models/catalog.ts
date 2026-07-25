@@ -2,8 +2,8 @@
  * 模型目录读取与映射。
  *
  * 模型选择条与对话面板的模型 / Agent 切换共用同一套模型目录（第 01 篇、第 04 篇）。
- * 此处把 `model_catalog` 行映射为前端消费的 {@link ModelCatalogEntry}，并提供 Agent
- * 模式的静态清单。
+ * 此处把 `model_catalog` 行映射为前端消费的 {@link ModelCatalogEntry}，并把可用模型严格
+ * 限定为当前用户已经配置且启用的提供商，避免展示无法调用的跨提供商模型。
  *
  * @module lib/models/catalog
  */
@@ -32,7 +32,10 @@ export function modelRowToEntry(row: ModelCatalogRow): ModelCatalogEntry {
 }
 
 /**
- * 拉取已上架的模型目录（按 sort_order 升序）。
+ * 拉取当前用户可用的模型目录（按 sort_order 升序）。
+ *
+ * 可用模型必须同时满足：模型已上架、所属提供商存在当前用户的凭据且该凭据已启用。
+ * 任一查询失败时采用失败关闭策略返回空数组，不向界面暴露未经凭据确认的模型。
  *
  * @param supabase - Supabase 客户端
  * @returns 模型条目数组
@@ -40,10 +43,20 @@ export function modelRowToEntry(row: ModelCatalogRow): ModelCatalogEntry {
 export async function fetchModelCatalog(
   supabase: TypedSupabaseClient,
 ): Promise<ModelCatalogEntry[]> {
+  const { data: credentials, error: credentialsError } = await supabase
+    .from('provider_credentials')
+    .select('provider')
+    .eq('enabled', true);
+  if (credentialsError || !credentials) return [];
+
+  const enabledProviders = [...new Set(credentials.map(({ provider }) => provider))];
+  if (enabledProviders.length === 0) return [];
+
   const { data, error } = await supabase
     .from('model_catalog')
     .select('*')
     .eq('is_active', true)
+    .in('provider', enabledProviders)
     .order('sort_order', { ascending: true });
   if (error || !data) return [];
   return data.map(modelRowToEntry);

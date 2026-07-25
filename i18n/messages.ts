@@ -37,6 +37,7 @@ const zhCN: MessageDictionary = {
   'settings.displayName': '显示名称',
   'settings.displayNamePlaceholder': '你的名字',
   'settings.language': '语言',
+  'settings.theme': '主题',
   'settings.saved': '设置已保存',
   'settings.avatar': '头像',
   'settings.avatarUpload': '上传头像',
@@ -49,9 +50,19 @@ const zhCN: MessageDictionary = {
   'settings.avatarSizeError': '图片过大，请控制在 5MB 以内',
   'settings.tabGeneral': '通用',
   'settings.tabProviders': '模型提供商',
-  'settings.tabModels': '模型',
 
-  'providers.intro': '配置你自己的模型提供商密钥（BYOK）。密钥加密存储、仅在服务端使用，不会回传浏览器。',
+  'theme.system': '跟随系统',
+  'theme.light': '亮色',
+  'theme.dark': '暗色',
+  'theme.switchToLight': '切换到亮色',
+  'theme.switchToDark': '切换到暗色',
+
+  'providers.heading': '选择模型提供商',
+  'providers.intro':
+    '选择提供商并配置 API Key。密钥加密存储、仅在服务端使用，不会回传浏览器。模型会在图片或视频节点中按类型自动筛选。',
+  'providers.back': '返回提供商列表',
+  'providers.credential': '提供商凭据',
+  'providers.configured': '已配置',
   'providers.notConfigured': '未配置',
   'providers.enabled': '已启用',
   'providers.disabled': '已停用',
@@ -60,8 +71,8 @@ const zhCN: MessageDictionary = {
   'providers.keyHintConfigured': '留空表示不更改，仅更新端点 / 启停',
   'providers.keyPlaceholder': 'sk-...',
   'providers.keyPlaceholderConfigured': '已配置（留空不更改）',
-  'providers.baseUrl': '自定义端点（可选）',
-  'providers.baseUrlHint': '兼容代理 / 自建网关；留空使用官方默认端点',
+  'providers.baseUrl': 'API 端点',
+  'providers.baseUrlHint': '已自动填入官方地址；仅使用兼容代理或自建网关时需要修改',
   'providers.baseUrlPlaceholder': 'https://api.example.com/v1',
   'providers.test': '测试连接',
   'providers.testOk': '连接成功',
@@ -69,7 +80,14 @@ const zhCN: MessageDictionary = {
   'providers.saved': '凭证已保存',
   'providers.saveFailed': '保存失败',
   'providers.deleted': '凭证已删除',
+  'providers.deleteConfirm': '删除这个提供商的凭据？删除后使用该提供商的节点将无法继续生成。',
   'providers.keyRequired': '请先填写 API Key',
+  'providers.volcengineDescription': '豆包、Seedream 与 Seedance 模型服务',
+  'providers.siliconflowDescription': '开源图片与视频模型服务',
+  'providers.openaiDescription': 'OpenAI 图片与多模态模型服务',
+  'providers.googleDescription': 'Gemini 与 Imagen 模型服务',
+  'providers.falDescription': '快速部署的生成式媒体模型服务',
+  'providers.replicateDescription': '托管的开源生成模型服务',
 
   'models.intro': '内置模型只读；可新增绑定到已配置提供商的自有模型，并启停 / 编辑 / 删除。',
   'models.add': '新增模型',
@@ -118,6 +136,11 @@ const zhCN: MessageDictionary = {
   'home.loadMore': '加载更多',
   'home.deleteProjectConfirm': '确定删除该项目？删除后可在保留期内恢复。',
   'home.projectDeleted': '项目已删除',
+  'home.selectModel': '选择模型',
+  'home.noAvailableModels': '请先在设置中配置并启用模型提供商',
+
+  'modality.image': '图像',
+  'modality.video': '视频',
 
   'scene.design': 'Design',
   'scene.branding': 'Branding',
@@ -132,6 +155,7 @@ const zhCN: MessageDictionary = {
   'design.collapsePanel': '收起面板',
   'design.expandPanel': '展开面板',
   'design.renameProject': '重命名项目',
+  'design.backHome': '返回首页',
 
   'tool.select': '选择 / 移动',
   'tool.pan': '抓手 / 定位',
@@ -226,6 +250,7 @@ const en: MessageDictionary = {
   'settings.displayName': 'Display name',
   'settings.displayNamePlaceholder': 'Your name',
   'settings.language': 'Language',
+  'settings.theme': 'Theme',
   'settings.saved': 'Settings saved',
   'settings.avatar': 'Avatar',
   'settings.avatarUpload': 'Upload',
@@ -238,10 +263,19 @@ const en: MessageDictionary = {
   'settings.avatarSizeError': 'Image too large, keep it under 5MB',
   'settings.tabGeneral': 'General',
   'settings.tabProviders': 'Providers',
-  'settings.tabModels': 'Models',
 
+  'theme.system': 'System',
+  'theme.light': 'Light',
+  'theme.dark': 'Dark',
+  'theme.switchToLight': 'Switch to light',
+  'theme.switchToDark': 'Switch to dark',
+
+  'providers.heading': 'Choose a model provider',
   'providers.intro':
-    'Configure your own provider API keys (BYOK). Keys are encrypted and used only on the server — never sent back to the browser.',
+    'Choose a provider and configure its API key. Keys are encrypted and used only on the server. Image and video nodes automatically filter models by type.',
+  'providers.back': 'Back to providers',
+  'providers.credential': 'Provider credential',
+  'providers.configured': 'Configured',
   'providers.notConfigured': 'Not configured',
   'providers.enabled': 'Enabled',
   'providers.disabled': 'Disabled',
@@ -250,8 +284,9 @@ const en: MessageDictionary = {
   'providers.keyHintConfigured': 'Leave blank to keep the key; only update endpoint / on-off',
   'providers.keyPlaceholder': 'sk-...',
   'providers.keyPlaceholderConfigured': 'Configured (leave blank to keep)',
-  'providers.baseUrl': 'Custom endpoint (optional)',
-  'providers.baseUrlHint': 'Compatible proxy / self-hosted gateway; blank uses the official default',
+  'providers.baseUrl': 'API endpoint',
+  'providers.baseUrlHint':
+    'The official endpoint is filled automatically; edit only when using a compatible proxy or self-hosted gateway',
   'providers.baseUrlPlaceholder': 'https://api.example.com/v1',
   'providers.test': 'Test connection',
   'providers.testOk': 'Connected',
@@ -259,7 +294,15 @@ const en: MessageDictionary = {
   'providers.saved': 'Credential saved',
   'providers.saveFailed': 'Save failed',
   'providers.deleted': 'Credential deleted',
+  'providers.deleteConfirm':
+    'Delete this provider credential? Nodes using this provider will no longer be able to generate.',
   'providers.keyRequired': 'Please enter an API key first',
+  'providers.volcengineDescription': 'Doubao, Seedream, and Seedance model services',
+  'providers.siliconflowDescription': 'Open-source image and video model services',
+  'providers.openaiDescription': 'OpenAI image and multimodal model services',
+  'providers.googleDescription': 'Gemini and Imagen model services',
+  'providers.falDescription': 'Fast generative media model deployments',
+  'providers.replicateDescription': 'Hosted open-source generative models',
 
   'models.intro':
     'Built-in models are read-only. Add your own models bound to a configured provider, and toggle / edit / delete them.',
@@ -310,6 +353,11 @@ const en: MessageDictionary = {
   'home.deleteProjectConfirm':
     'Delete this project? You can restore it during the retention window.',
   'home.projectDeleted': 'Project deleted',
+  'home.selectModel': 'Select model',
+  'home.noAvailableModels': 'Configure and enable a model provider in Settings first',
+
+  'modality.image': 'Image',
+  'modality.video': 'Video',
 
   'scene.design': 'Design',
   'scene.branding': 'Branding',
@@ -324,6 +372,7 @@ const en: MessageDictionary = {
   'design.collapsePanel': 'Collapse panel',
   'design.expandPanel': 'Expand panel',
   'design.renameProject': 'Rename project',
+  'design.backHome': 'Back to home',
 
   'tool.select': 'Select / Move',
   'tool.pan': 'Hand / Pan',
@@ -359,8 +408,10 @@ const en: MessageDictionary = {
   'node.regenStarted': 'Generating a similar variation from your selection',
   'node.regenPosterStarted': 'Re-composing the whole poster (new background + new text)',
   'node.regenNoAsset': 'This node has no media to reference yet',
-  'node.regenNoRefModel': 'Current model has no image-to-image (activate a model that supports reference images)',
-  'node.regenNoVideoModel': 'No active video model (activate an image-to-video model and configure its key)',
+  'node.regenNoRefModel':
+    'Current model has no image-to-image (activate a model that supports reference images)',
+  'node.regenNoVideoModel':
+    'No active video model (activate an image-to-video model and configure its key)',
   'node.regenFailed': 'Failed to submit regeneration',
 
   'chat.newConversation': 'New conversation',

@@ -10,6 +10,7 @@ import type { ReactNode } from 'react';
 import type { ProfileRow } from '@/types';
 import { createServerSupabase } from '@/lib/supabase/server';
 import { Providers } from '@/components/providers';
+import { THEME_INIT_SCRIPT } from '@/lib/theme';
 import './globals.css';
 
 /**
@@ -57,6 +58,9 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
 
   return (
     <html lang={profile?.locale === 'en' ? 'en' : 'zh-CN'} suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
+      </head>
       <body className={`${inter.variable} font-sans`}>
         <Providers initialProfile={profile}>{children}</Providers>
       </body>

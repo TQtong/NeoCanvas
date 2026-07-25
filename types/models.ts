@@ -24,6 +24,8 @@ export interface ModelCapabilities {
   supportsNegativePrompt: boolean;
   /** 是否支持参考图（图生图 / 风格参考 / 编辑）。 */
   supportsReferenceImages: boolean;
+  /** 是否必须提供参考图（图片编辑 / 图生视频等不能纯文本生成的模型）。 */
+  requiresReferenceImages?: boolean;
   /** 是否支持图生视频（首帧 / 参考图驱动）。 */
   supportsImageToVideo: boolean;
   /** 是否支持随机种子。 */

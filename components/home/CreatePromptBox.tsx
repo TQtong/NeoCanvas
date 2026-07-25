@@ -5,23 +5,24 @@
  *
  * 玻璃质感的大圆角卡片：顶部为多行自适应文本域，左下为附件按钮（本地暂存 File[] 仅展示
  * 计数），右下为模态占位（Cuboid）与发送按钮（ArrowUp）。卡片正下方挂载
- * {@link ModelSceneSelector} 供切换模型与场景。整体为一个提交到服务端动作
- * `createProjectAction` 的表单，用隐藏 input 携带 prompt / modelKey / scene。
+ * {@link ModelSelector} 供切换生成模态与具体模型。整体为一个提交到服务端动作
+ * `createProjectAction` 的表单，用隐藏 input 携带 prompt / modelKey。
  *
  * @module components/home/CreatePromptBox
  */
 
-import { useCallback, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ArrowUp, Cuboid, Loader2, Paperclip } from 'lucide-react';
 import { createProjectAction } from '@/app/actions';
-import type { MessageAttachment, ModelCatalogEntry, Scene } from '@/types';
+import type { MessageAttachment, ModelCatalogEntry } from '@/types';
 import { getBrowserSupabase } from '@/lib/supabase/client';
 import { uploadAsset } from '@/lib/storage/upload';
 import { IconButton } from '@/components/ui/icon-button';
 import { Tooltip } from '@/components/ui/tooltip';
 import { useTranslation } from '@/i18n';
 import { cn } from '@/lib/utils/cn';
-import { ModelSceneSelector } from './ModelSceneSelector';
+import { useModelCatalog } from '@/lib/hooks/use-model-catalog';
+import { ModelSelector } from './ModelSelector';
 
 /** {@link CreatePromptBox} 属性。 */
 export interface CreatePromptBoxProps {
@@ -38,6 +39,28 @@ const TEXTAREA_MAX_HEIGHT = 200;
 const FALLBACK_MODEL_KEY = 'siliconflow-kolors';
 
 /**
+ * 从已加载目录解析首页初始模型，避免默认键下架后提交一个目录中不存在的模型。
+ *
+ * @param models - 当前可用模型目录
+ * @param defaultModelKey - 用户或服务端给出的默认键
+ * @returns 可用模型键；目录为空时返回空字符串
+ */
+function resolveInitialModelKey(
+  models: ModelCatalogEntry[],
+  defaultModelKey?: string | null,
+): string {
+  if (defaultModelKey && models.some((model) => model.key === defaultModelKey)) {
+    return defaultModelKey;
+  }
+  return (
+    models.find((model) => model.key === FALLBACK_MODEL_KEY)?.key ??
+    models.find((model) => model.modality === 'image')?.key ??
+    models[0]?.key ??
+    ''
+  );
+}
+
+/**
  * 创作输入框组件。
  *
  * @param props - 见 {@link CreatePromptBoxProps}
@@ -45,11 +68,13 @@ const FALLBACK_MODEL_KEY = 'siliconflow-kolors';
  */
 export function CreatePromptBox({ models, defaultModelKey }: CreatePromptBoxProps) {
   const { t } = useTranslation();
+  const availableModels = useModelCatalog(models);
 
-  // 本地草稿、所选模型与场景
+  // 本地草稿与所选模型；模型模态直接决定新会话的生成类型
   const [prompt, setPrompt] = useState('');
-  const [modelKey, setModelKey] = useState<string>(defaultModelKey || FALLBACK_MODEL_KEY);
-  const [scene, setScene] = useState<Scene | null>(null);
+  const [modelKey, setModelKey] = useState<string>(() =>
+    resolveInitialModelKey(models, defaultModelKey),
+  );
   // 每次挂载生成一个稳定的请求标识：连点 / 失败重试复用同一值以避免重复建项目
   const [requestId] = useState(() =>
     typeof crypto !== 'undefined' && 'randomUUID' in crypto
@@ -64,6 +89,13 @@ export function CreatePromptBox({ models, defaultModelKey }: CreatePromptBoxProp
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // 凭据启停或删除会改变可用目录；当前模型失效时立即切换到仍可用的首选模型。
+  useEffect(() => {
+    if (!availableModels.some((model) => model.key === modelKey)) {
+      setModelKey(resolveInitialModelKey(availableModels, defaultModelKey));
+    }
+  }, [availableModels, defaultModelKey, modelKey]);
 
   // 文本域随内容自适应高度（在最大高度内增长，超出则内部滚动）
   useLayoutEffect(() => {
@@ -82,7 +114,7 @@ export function CreatePromptBox({ models, defaultModelKey }: CreatePromptBoxProp
   }, []);
 
   const trimmed = prompt.trim();
-  const canSubmit = trimmed.length > 0;
+  const canSubmit = trimmed.length > 0 && availableModels.some((model) => model.key === modelKey);
 
   /**
    * 提交创作：先把本地附件上传到 uploads 桶、登记资产，再把资产引用随
@@ -95,7 +127,7 @@ export function CreatePromptBox({ models, defaultModelKey }: CreatePromptBoxProp
     setSubmitting(true);
     setError(null);
 
-    // 复用隐藏字段（prompt / modelKey / scene / clientRequestId）
+    // 复用隐藏字段（prompt / modelKey / clientRequestId）
     const formData = new FormData(event.currentTarget);
 
     if (attachments.length > 0) {
@@ -135,10 +167,9 @@ export function CreatePromptBox({ models, defaultModelKey }: CreatePromptBoxProp
       onSubmit={onSubmit}
       className="glass mx-auto flex w-full max-w-3xl flex-col gap-4 rounded-3xl p-3 shadow-float"
     >
-      {/* 隐藏字段：把本地草稿、所选模型与场景随表单提交到服务端动作 */}
+      {/* 隐藏字段：把本地草稿与所选模型随表单提交到服务端动作 */}
       <input type="hidden" name="prompt" value={prompt} />
       <input type="hidden" name="modelKey" value={modelKey} />
-      <input type="hidden" name="scene" value={scene ?? ''} />
       <input type="hidden" name="clientRequestId" value={requestId} />
 
       <div className="rounded-2xl bg-card/60 p-2">
@@ -201,7 +232,7 @@ export function CreatePromptBox({ models, defaultModelKey }: CreatePromptBoxProp
                 'inline-flex size-9 items-center justify-center rounded-full transition-colors duration-150',
                 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                 canSubmit && !submitting
-                  ? 'bg-accent text-accent-foreground hover:bg-accent/90 shadow-soft'
+                  ? 'bg-accent text-accent-foreground shadow-soft hover:bg-accent/90'
                   : 'cursor-not-allowed bg-muted text-muted-foreground',
               )}
             >
@@ -215,14 +246,8 @@ export function CreatePromptBox({ models, defaultModelKey }: CreatePromptBoxProp
         </div>
       </div>
 
-      {/* 模型 / 场景选择条 */}
-      <ModelSceneSelector
-        models={models}
-        modelKey={modelKey}
-        scene={scene}
-        onModelChange={setModelKey}
-        onSceneChange={setScene}
-      />
+      {/* 生成模态与具体模型选择条 */}
+      <ModelSelector models={availableModels} modelKey={modelKey} onModelChange={setModelKey} />
 
       {error ? <p className="px-2 text-center text-sm text-danger">{error}</p> : null}
     </form>

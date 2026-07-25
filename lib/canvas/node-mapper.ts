@@ -96,7 +96,8 @@ export function rowToNode(row: CanvasNodeRow): CanvasFlowNode {
     data,
     width,
     height,
-    zIndex: row.z_index,
+    // React Flow 的 pane 位于 z=0；负层级节点虽然可见，但节点工具栏会落到 pane 后方而无法点击。
+    zIndex: Math.max(0, row.z_index),
     style: { width, height },
   };
 
@@ -158,7 +159,7 @@ export function nodeToColumns(node: CanvasFlowNode): CanvasNodeUpdate {
     width,
     height,
     rotation: node.data.rotation ?? 0,
-    z_index: node.zIndex ?? 0,
+    z_index: Math.max(0, node.zIndex ?? 0),
     parent_id: node.parentId ?? null,
     data: nodeDataToColumn(node.data),
     asset_id: assetId,
@@ -189,7 +190,7 @@ export function nodeToInsert(
     width: columns.width ?? null,
     height: columns.height ?? null,
     rotation: node.data.rotation ?? 0,
-    z_index: node.zIndex ?? 0,
+    z_index: columns.z_index ?? 0,
     parent_id: node.parentId ?? null,
     data: columns.data ?? {},
     asset_id: columns.asset_id ?? null,

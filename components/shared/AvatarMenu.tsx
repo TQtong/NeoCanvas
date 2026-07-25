@@ -11,7 +11,7 @@
  */
 
 import { useCallback, useState } from 'react';
-import { Check, LogOut, Settings } from 'lucide-react';
+import { Check, LogOut, Moon, Settings, Sun } from 'lucide-react';
 import { useSessionStore, type Locale } from '@/stores/session-store';
 import { useTranslation } from '@/i18n';
 import { getBrowserSupabase } from '@/lib/supabase/client';
@@ -42,6 +42,8 @@ export function AvatarMenu() {
   const profile = useSessionStore((s) => s.profile);
   const locale = useSessionStore((s) => s.locale);
   const setLocale = useSessionStore((s) => s.setLocale);
+  const resolvedTheme = useSessionStore((s) => s.resolvedTheme);
+  const setTheme = useSessionStore((s) => s.setTheme);
   const { t } = useTranslation();
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -68,63 +70,68 @@ export function AvatarMenu() {
 
   return (
     <>
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <button
-          type="button"
-          aria-label={displayName}
-          className={cn(
-            'inline-flex size-9 shrink-0 items-center justify-center overflow-hidden rounded-full',
-            'border border-border bg-accent-muted text-sm font-semibold text-accent',
-            'transition-shadow duration-150 hover:shadow-soft',
-            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
-          )}
-        >
-          {/* 统一头像渲染：预设卡通 / 上传图 / 默认卡通(按 user id) / 首字母兜底 */}
-          <Avatar
-            url={profile?.avatar_url ?? null}
-            name={profile?.display_name}
-            seed={profile?.id ?? null}
-          />
-        </button>
-      </DropdownMenuTrigger>
-
-      <DropdownMenuContent align="end" className="min-w-[12rem]">
-        {/* 顶部展示当前用户名，作为菜单上下文 */}
-        <DropdownMenuLabel className="truncate text-sm font-medium text-foreground">
-          {displayName}
-        </DropdownMenuLabel>
-
-        <DropdownMenuSeparator />
-
-        <DropdownMenuItem onSelect={() => setSettingsOpen(true)}>
-          <Settings />
-          {t('common.settings')}
-        </DropdownMenuItem>
-
-        <DropdownMenuSeparator />
-
-        {LOCALE_OPTIONS.map((option) => (
-          <DropdownMenuItem
-            key={option.value}
-            // 防止 Radix 在选中后关闭菜单前的默认行为之外，仍需阻止冒泡触发以外的副作用
-            onSelect={() => handleSetLocale(option.value)}
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            aria-label={displayName}
+            className={cn(
+              'inline-flex size-9 shrink-0 items-center justify-center overflow-hidden rounded-full',
+              'border border-border bg-accent-muted text-sm font-semibold text-accent',
+              'transition-shadow duration-150 hover:shadow-soft',
+              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+            )}
           >
-            <Check className={cn('opacity-0', option.value === locale && 'opacity-100')} />
-            {option.label}
+            {/* 统一头像渲染：预设卡通 / 上传图 / 默认卡通(按 user id) / 首字母兜底 */}
+            <Avatar
+              url={profile?.avatar_url ?? null}
+              name={profile?.display_name}
+              seed={profile?.id ?? null}
+            />
+          </button>
+        </DropdownMenuTrigger>
+
+        <DropdownMenuContent align="end" className="min-w-[12rem]">
+          {/* 顶部展示当前用户名，作为菜单上下文 */}
+          <DropdownMenuLabel className="truncate text-sm font-medium text-foreground">
+            {displayName}
+          </DropdownMenuLabel>
+
+          <DropdownMenuSeparator />
+
+          <DropdownMenuItem onSelect={() => setSettingsOpen(true)}>
+            <Settings />
+            {t('common.settings')}
           </DropdownMenuItem>
-        ))}
 
-        <DropdownMenuSeparator />
+          <DropdownMenuItem onSelect={() => setTheme(resolvedTheme === 'dark' ? 'light' : 'dark')}>
+            {resolvedTheme === 'dark' ? <Sun /> : <Moon />}
+            {resolvedTheme === 'dark' ? t('theme.switchToLight') : t('theme.switchToDark')}
+          </DropdownMenuItem>
 
-        <DropdownMenuItem destructive onSelect={() => void handleLogout()}>
-          <LogOut />
-          {t('common.logout')}
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
+          <DropdownMenuSeparator />
 
-    <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+          {LOCALE_OPTIONS.map((option) => (
+            <DropdownMenuItem
+              key={option.value}
+              // 防止 Radix 在选中后关闭菜单前的默认行为之外，仍需阻止冒泡触发以外的副作用
+              onSelect={() => handleSetLocale(option.value)}
+            >
+              <Check className={cn('opacity-0', option.value === locale && 'opacity-100')} />
+              {option.label}
+            </DropdownMenuItem>
+          ))}
+
+          <DropdownMenuSeparator />
+
+          <DropdownMenuItem destructive onSelect={() => void handleLogout()}>
+            <LogOut />
+            {t('common.logout')}
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+
+      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
     </>
   );
 }

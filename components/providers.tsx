@@ -12,6 +12,7 @@
 import { useEffect, useRef, type ReactNode } from 'react';
 import type { ProfileRow } from '@/types';
 import { useSessionStore } from '@/stores/session-store';
+import { readStoredThemePreference } from '@/lib/theme';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Toaster } from '@/components/ui/toast';
 
@@ -28,6 +29,8 @@ export interface ProvidersProps {
  */
 export function Providers({ initialProfile, children }: ProvidersProps) {
   const setProfile = useSessionStore((s) => s.setProfile);
+  const setTheme = useSessionStore((s) => s.setTheme);
+  const syncSystemTheme = useSessionStore((s) => s.syncSystemTheme);
   const hydrated = useRef(false);
 
   // 首次以服务端档案初始化会话库（仅一次，避免覆盖客户端后续变更）
@@ -40,6 +43,15 @@ export function Providers({ initialProfile, children }: ProvidersProps) {
   useEffect(() => {
     setProfile(initialProfile);
   }, [initialProfile, setProfile]);
+
+  // 恢复本机主题偏好，并在“跟随系统”时响应操作系统明暗变化。
+  useEffect(() => {
+    setTheme(readStoredThemePreference());
+    const media = window.matchMedia('(prefers-color-scheme: dark)');
+    const onSystemThemeChange = (): void => syncSystemTheme();
+    media.addEventListener('change', onSystemThemeChange);
+    return () => media.removeEventListener('change', onSystemThemeChange);
+  }, [setTheme, syncSystemTheme]);
 
   return (
     <TooltipProvider delayDuration={200}>

@@ -3,10 +3,9 @@
 /**
  * 设置对话框（第 04 篇第八节：头像菜单设置入口）。
  *
- * 以标签页组织三类设置：
+ * 以标签页组织两类设置：
  *   · 通用 —— 头像 / 显示名称 / 界面语言（{@link GeneralSettings}）；
- *   · 模型提供商 —— BYOK 凭证配置（{@link ProviderSettings}）；
- *   · 模型 —— 自有模型管理（{@link ModelSettings}）。
+ *   · 模型提供商 —— 按提供商进入的 BYOK 凭证配置（{@link ProviderSettings}）。
  *
  * @module components/shared/SettingsDialog
  */
@@ -17,7 +16,6 @@ import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils/cn';
 import { GeneralSettings } from './settings/GeneralSettings';
 import { ProviderSettings } from './settings/ProviderSettings';
-import { ModelSettings } from './settings/ModelSettings';
 
 /** {@link SettingsDialog} 属性。 */
 export interface SettingsDialogProps {
@@ -28,7 +26,7 @@ export interface SettingsDialogProps {
 }
 
 /** 设置标签。 */
-type SettingsTab = 'general' | 'providers' | 'models';
+type SettingsTab = 'general' | 'providers';
 
 /**
  * 设置对话框组件。
@@ -40,12 +38,11 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
   const tabs: ReadonlyArray<{ id: SettingsTab; label: string }> = [
     { id: 'general', label: t('settings.tabGeneral') },
     { id: 'providers', label: t('settings.tabProviders') },
-    { id: 'models', label: t('settings.tabModels') },
   ];
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="w-[min(94vw,46rem)]">
+      <DialogContent className="w-[min(94vw,54rem)]">
         <DialogTitle className="text-lg font-semibold">{t('settings.title')}</DialogTitle>
 
         <div className="mt-4 flex gap-1 border-b border-border">
@@ -69,7 +66,6 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
         <div className="mt-5 max-h-[68vh] overflow-y-auto pr-1">
           {tab === 'general' ? <GeneralSettings /> : null}
           {tab === 'providers' ? <ProviderSettings /> : null}
-          {tab === 'models' ? <ModelSettings /> : null}
         </div>
       </DialogContent>
     </Dialog>

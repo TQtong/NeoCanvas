@@ -16,15 +16,11 @@ import type {
   CreateProjectRequest,
   CreateProjectResponse,
   MessageAttachment,
-  Scene,
 } from '@/types';
 import { createServerSupabase } from '@/lib/supabase/server';
 
 /** 默认模型键（与 model_catalog 默认选中一致）。 */
 const DEFAULT_MODEL_KEY = 'siliconflow-kolors';
-
-/** 合法场景集合，用于校验表单输入。 */
-const VALID_SCENES: ReadonlySet<string> = new Set(['design', 'branding', 'ecommerce', 'video']);
 
 /** 调用 create-project 并返回新项目标识。 */
 async function invokeCreateProject(payload: CreateProjectRequest): Promise<string> {
@@ -50,15 +46,13 @@ async function invokeCreateProject(payload: CreateProjectRequest): Promise<strin
 }
 
 /**
- * 主页「发起创作」：依表单的想法 / 模型 / 场景创建项目并进入设计页（进入即生成）。
+ * 主页「发起创作」：依表单的想法与模型创建项目并进入设计页（进入即生成）。
  *
- * @param formData - 含 prompt / modelKey / scene 字段的表单数据
+ * @param formData - 含 prompt / modelKey 字段的表单数据
  */
 export async function createProjectAction(formData: FormData): Promise<void> {
   const prompt = (formData.get('prompt') as string | null)?.trim() ?? '';
   const modelKey = (formData.get('modelKey') as string | null) || DEFAULT_MODEL_KEY;
-  const sceneRaw = (formData.get('scene') as string | null) ?? '';
-  const scene = VALID_SCENES.has(sceneRaw) ? (sceneRaw as Scene) : null;
   const clientRequestId = (formData.get('clientRequestId') as string | null) || undefined;
 
   // 客户端已把附件上传为资产并序列化其引用随表单提交
@@ -81,7 +75,7 @@ export async function createProjectAction(formData: FormData): Promise<void> {
   const projectId = await invokeCreateProject({
     prompt,
     modelKey,
-    scene,
+    scene: null,
     generateOnCreate: true,
     clientRequestId,
     attachments,

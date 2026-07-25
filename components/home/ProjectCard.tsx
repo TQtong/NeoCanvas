@@ -22,12 +22,7 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu';
-import {
-  Dialog,
-  DialogContent,
-  DialogTitle,
-  DialogDescription,
-} from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { IconButton } from '@/components/ui/icon-button';
 import { formatUpdatedDate } from '@/lib/utils/format';
@@ -41,6 +36,22 @@ export interface ProjectCardProps {
   onRename: (id: string, title: string) => void;
   /** 删除回调（确认后调用）。 */
   onDelete: (id: string) => void;
+}
+
+/**
+ * 判断项目缩略图是否指向视频对象。
+ *
+ * 签名 URL 会追加查询参数，因此只读取 URL pathname，避免把过期时间等参数误判为文件扩展名。
+ *
+ * @param url - 缩略图访问地址
+ * @returns 是否应使用 video 元素渲染
+ */
+function isVideoThumbnail(url: string): boolean {
+  try {
+    return /\.(?:mp4|webm|mov|m4v)$/i.test(new URL(url, 'https://neocanvas.local').pathname);
+  } catch {
+    return /\.(?:mp4|webm|mov|m4v)(?:[?#]|$)/i.test(url);
+  }
 }
 
 /**
@@ -87,9 +98,20 @@ export function ProjectCard({ project, onRename, onDelete }: ProjectCardProps) {
           href={`/p/${project.id}`}
           className="block overflow-hidden rounded-2xl border border-border bg-card shadow-soft transition-shadow duration-150 hover:shadow-float focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
-          {/* 上半：缩略图（有签名 URL 则展示图片，否则占位底色） */}
+          {/* 上半：缩略图（图片用 img，视频资产用静音循环 video） */}
           <div className="aspect-video w-full overflow-hidden bg-muted">
-            {project.thumbnailUrl ? (
+            {project.thumbnailUrl && isVideoThumbnail(project.thumbnailUrl) ? (
+              <video
+                src={project.thumbnailUrl}
+                aria-label={displayTitle}
+                className="size-full object-cover transition-transform duration-200 group-hover:scale-[1.02]"
+                muted
+                autoPlay
+                loop
+                playsInline
+                preload="metadata"
+              />
+            ) : project.thumbnailUrl ? (
               // eslint-disable-next-line @next/next/no-img-element -- 缩略图为运行时签名 URL，跳过 next/image 优化
               <img
                 src={project.thumbnailUrl}

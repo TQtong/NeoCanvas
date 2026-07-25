@@ -71,8 +71,14 @@ export function useCanvasPersistence(
           }
         } catch (err) {
           // 清除本批节点 / 边的在途标记，使后续真正的远端变更不被回声抑制误挡
-          store.getState().markPersistFailed(upserts.map((node) => node.id));
-          store.getState().markEdgesPersistFailed(edgeUpserts.map((edge) => edge.id));
+          store.getState().markPersistFailed(
+            upserts.map((node) => node.id),
+            deletes,
+          );
+          store.getState().markEdgesPersistFailed(
+            edgeUpserts.map((edge) => edge.id),
+            edgeDeletes,
+          );
           // eslint-disable-next-line no-console
           console.error('画布持久化失败', err);
           onError?.(err instanceof Error ? err.message : '画布保存失败');

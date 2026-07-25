@@ -90,9 +90,7 @@ function isMediaPanelTarget(node: CanvasFlowNode | undefined): boolean {
 function effectiveNodeDeleteIds(nodes: CanvasFlowNode[], ids: Iterable<string>): Set<string> {
   const requested = new Set(ids);
   const byId = new Map(nodes.map((node) => [node.id, node]));
-  const targetIds = new Set(
-    Array.from(requested).filter((id) => isMediaPanelTarget(byId.get(id))),
-  );
+  const targetIds = new Set(Array.from(requested).filter((id) => isMediaPanelTarget(byId.get(id))));
   const effective = new Set<string>();
 
   for (const id of requested) {
@@ -301,12 +299,15 @@ export interface CanvasState {
   restoreGraph: (nodes: CanvasFlowNode[], edges: CanvasFlowEdge[]) => void;
   /** 标记某节点已持久化（记录服务端版本并清除在途标记，用于回声抑制）。 */
   markNodePersisted: (id: string, updatedAt: string) => void;
-  /** 标记一批节点持久化失败：清除在途标记，使后续真正的远端变更可正常套用。 */
-  markPersistFailed: (ids: string[]) => void;
+  /**
+   * 标记一批节点持久化失败：清除在途标记，并保留待删除集合，供下一次防抖自动重试。
+   * 删除失败时节点已从本地画布移除，不能依赖重新标脏来触发重试。
+   */
+  markPersistFailed: (ids: string[], deletedIds?: string[]) => void;
   /** 标记一批边已持久化（清除在途标记，用于边回声抑制）。 */
   markEdgesPersisted: (ids: string[]) => void;
-  /** 标记一批边持久化失败：清除在途标记，使后续真正的远端变更可正常套用。 */
-  markEdgesPersistFailed: (ids: string[]) => void;
+  /** 标记一批边持久化失败：清除在途标记，并保留待删除边供下一次自动重试。 */
+  markEdgesPersistFailed: (ids: string[], deletedIds?: string[]) => void;
   /** 取出并清空脏集快照，供持久化控制器写回。 */
   flushDirty: () => DirtyFlush;
   /** 取出并清空视口脏标记。 */
@@ -316,17 +317,38 @@ export interface CanvasState {
 /** 默认背景：点状网格。 */
 const DEFAULT_BACKGROUND: CanvasBackgroundSettings = { variant: 'dots', gap: 24 };
 
-/** 取节点集合中的最大 / 最小 z_index。 */
-function zRange(nodes: CanvasFlowNode[]): { min: number; max: number } {
-  if (nodes.length === 0) return { min: 0, max: 0 };
-  let min = Infinity;
-  let max = -Infinity;
-  for (const n of nodes) {
-    const z = n.zIndex ?? 0;
-    if (z < min) min = z;
-    if (z > max) max = z;
-  }
-  return { min, max };
+/**
+ * 把指定节点组稳定移动到最前或最后，并把全部层级压缩为从 0 开始的连续整数。
+ * React Flow 的交互 pane 位于 z=0，节点层级不得为负数。
+ */
+function placeNodesAtLayerBoundary(
+  nodes: CanvasFlowNode[],
+  ids: Iterable<string>,
+  placement: 'front' | 'back',
+): { nodes: CanvasFlowNode[]; changedIds: string[] } {
+  const idSet = new Set(ids);
+  const ordered = nodes
+    .map((node, index) => ({ node, index }))
+    .sort((a, b) => (a.node.zIndex ?? 0) - (b.node.zIndex ?? 0) || a.index - b.index)
+    .map(({ node }) => node);
+  const moving = ordered.filter((node) => idSet.has(node.id));
+  if (moving.length === 0) return { nodes, changedIds: [] };
+  const stationary = ordered.filter((node) => !idSet.has(node.id));
+  const nextOrder = placement === 'back' ? [...moving, ...stationary] : [...stationary, ...moving];
+  const zById = new Map(nextOrder.map((node, index) => [node.id, index]));
+  const changedIds: string[] = [];
+  const nextNodes = nodes.map((node) => {
+    const zIndex = zById.get(node.id) ?? 0;
+    if ((node.zIndex ?? 0) === zIndex) return node;
+    changedIds.push(node.id);
+    return { ...node, zIndex };
+  });
+  return { nodes: nextNodes, changedIds };
+}
+
+/** 取当前非负最大层级，供新增或粘贴节点置顶。 */
+function maxLayerZIndex(nodes: CanvasFlowNode[]): number {
+  return nodes.reduce((max, node) => Math.max(max, node.zIndex ?? 0), 0);
 }
 
 /** 比较两个 ISO 时间，a 是否不旧于 b。 */
@@ -427,6 +449,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     const versions: Record<string, string> = {};
     for (const row of nodeRows) versions[row.id] = row.updated_at;
     const nodes = nodeRows.map(rowToNode).sort((a, b) => (a.zIndex ?? 0) - (b.zIndex ?? 0));
+    const normalizedZIndexIds = new Set(
+      nodeRows.filter((row) => row.z_index < 0).map((row) => row.id),
+    );
     set({
       projectId,
       nodes,
@@ -436,7 +461,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       editingNodeId: null,
       guides: [],
       marquee: null,
-      _dirtyNodeIds: new Set(),
+      // 历史版本允许“置于底层”写入负 z_index；加载后立即归一化并经持久化控制器修正数据库。
+      _dirtyNodeIds: normalizedZIndexIds,
       _deletedNodeIds: new Set(),
       _dirtyEdgeIds: new Set(),
       _deletedEdgeIds: new Set(),
@@ -539,7 +565,12 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     const select = options?.select ?? true;
     const persist = options?.persist !== false;
     set((state) => {
-      const nodes = [...state.nodes, ...newNodes];
+      const selectedIds = select ? new Set(newNodes.map((node) => node.id)) : null;
+      const nodes = [...state.nodes, ...newNodes].map((node) => {
+        if (!selectedIds) return node;
+        const selected = selectedIds.has(node.id);
+        return node.selected === selected ? node : { ...node, selected };
+      });
       const base = {
         nodes,
         selectedNodeIds: select ? newNodes.map((n) => n.id) : state.selectedNodeIds,
@@ -674,21 +705,54 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     });
   },
 
-  setSelection: (ids) => set({ selectedNodeIds: ids }),
+  setSelection: (ids) =>
+    set((state) => {
+      const existingIds = new Set(state.nodes.map((node) => node.id));
+      const selectedNodeIds = Array.from(new Set(ids)).filter((id) => existingIds.has(id));
+      const selectedIds = new Set(selectedNodeIds);
+      return {
+        selectedNodeIds,
+        nodes: state.nodes.map((node) => {
+          const selected = selectedIds.has(node.id);
+          return node.selected === selected ? node : { ...node, selected };
+        }),
+      };
+    }),
   addToSelection: (id) =>
-    set((state) => ({
-      selectedNodeIds: state.selectedNodeIds.includes(id)
-        ? state.selectedNodeIds
-        : [...state.selectedNodeIds, id],
-    })),
+    set((state) => {
+      if (!state.nodes.some((node) => node.id === id) || state.selectedNodeIds.includes(id)) {
+        return state;
+      }
+      return {
+        selectedNodeIds: [...state.selectedNodeIds, id],
+        nodes: state.nodes.map((node) =>
+          node.id === id && !node.selected ? { ...node, selected: true } : node,
+        ),
+      };
+    }),
   toggleSelection: (id) =>
+    set((state) => {
+      if (!state.nodes.some((node) => node.id === id)) return state;
+      const selected = !state.selectedNodeIds.includes(id);
+      return {
+        selectedNodeIds: selected
+          ? [...state.selectedNodeIds, id]
+          : state.selectedNodeIds.filter((selectedId) => selectedId !== id),
+        nodes: state.nodes.map((node) =>
+          node.id === id && node.selected !== selected ? { ...node, selected } : node,
+        ),
+      };
+    }),
+  clearSelection: () =>
     set((state) => ({
-      selectedNodeIds: state.selectedNodeIds.includes(id)
-        ? state.selectedNodeIds.filter((sid) => sid !== id)
-        : [...state.selectedNodeIds, id],
+      selectedNodeIds: [],
+      nodes: state.nodes.map((node) => (node.selected ? { ...node, selected: false } : node)),
     })),
-  clearSelection: () => set({ selectedNodeIds: [] }),
-  selectAll: () => set((state) => ({ selectedNodeIds: state.nodes.map((n) => n.id) })),
+  selectAll: () =>
+    set((state) => ({
+      selectedNodeIds: state.nodes.map((node) => node.id),
+      nodes: state.nodes.map((node) => (node.selected ? node : { ...node, selected: true })),
+    })),
 
   setTool: (tool) =>
     set({ activeTool: tool, editingNodeId: tool === 'text' ? get().editingNodeId : null }),
@@ -712,37 +776,21 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   setContinuousCreate: (value) => set({ continuousCreate: value }),
 
   bringToFront: (ids) => {
-    const { max } = zRange(get().nodes);
-    const idSet = new Set(ids);
-    const dirty = new Set(get()._dirtyNodeIds);
-    let next = max + 1;
-    set((state) => ({
-      nodes: state.nodes.map((n) => {
-        if (idSet.has(n.id)) {
-          dirty.add(n.id);
-          return { ...n, zIndex: next++ };
-        }
-        return n;
-      }),
-      _dirtyNodeIds: dirty,
-    }));
+    set((state) => {
+      const result = placeNodesAtLayerBoundary(state.nodes, ids, 'front');
+      const dirty = new Set(state._dirtyNodeIds);
+      for (const id of result.changedIds) dirty.add(id);
+      return { nodes: result.nodes, _dirtyNodeIds: dirty };
+    });
   },
 
   sendToBack: (ids) => {
-    const { min } = zRange(get().nodes);
-    const idSet = new Set(ids);
-    const dirty = new Set(get()._dirtyNodeIds);
-    let next = min - ids.length;
-    set((state) => ({
-      nodes: state.nodes.map((n) => {
-        if (idSet.has(n.id)) {
-          dirty.add(n.id);
-          return { ...n, zIndex: next++ };
-        }
-        return n;
-      }),
-      _dirtyNodeIds: dirty,
-    }));
+    set((state) => {
+      const result = placeNodesAtLayerBoundary(state.nodes, ids, 'back');
+      const dirty = new Set(state._dirtyNodeIds);
+      for (const id of result.changedIds) dirty.add(id);
+      return { nodes: result.nodes, _dirtyNodeIds: dirty };
+    });
   },
 
   moveForward: (ids) => {
@@ -767,7 +815,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       nodes: state.nodes.map((n) => {
         if (idSet.has(n.id)) {
           dirty.add(n.id);
-          return { ...n, zIndex: (n.zIndex ?? 0) - 1 };
+          return { ...n, zIndex: Math.max(0, (n.zIndex ?? 0) - 1) };
         }
         return n;
       }),
@@ -779,7 +827,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     const dirty = new Set(get()._dirtyNodeIds);
     dirty.add(id);
     set((state) => ({
-      nodes: state.nodes.map((n) => (n.id === id ? { ...n, zIndex: targetZIndex } : n)),
+      nodes: state.nodes.map((n) =>
+        n.id === id ? { ...n, zIndex: Math.max(0, targetZIndex) } : n,
+      ),
       _dirtyNodeIds: dirty,
     }));
   },
@@ -789,7 +839,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     const zById = new Map<string, number>();
     const total = orderedIdsTopFirst.length;
     orderedIdsTopFirst.forEach((id, i) => {
-      zById.set(id, total - i); // 顶层 z 最大
+      zById.set(id, total - i - 1); // 顶层 z 最大，底层固定为 0
       dirty.add(id);
     });
     set((state) => ({
@@ -811,7 +861,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   paste: () => {
     const { clipboard } = get();
     if (clipboard.length === 0) return;
-    const { max } = zRange(get().nodes);
+    const max = maxLayerZIndex(get().nodes);
     const pasted: CanvasFlowNode[] = clipboard.map((n, index) => ({
       ...n,
       id: uuid(),
@@ -1141,11 +1191,13 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     });
   },
 
-  markPersistFailed: (ids) => {
+  markPersistFailed: (ids, deletedIds = []) => {
     set((state) => {
       const pending = new Set(state._pendingNodeIds);
       for (const id of ids) pending.delete(id);
-      return { _pendingNodeIds: pending };
+      const deleted = new Set(state._deletedNodeIds);
+      for (const id of deletedIds) deleted.add(id);
+      return { _pendingNodeIds: pending, _deletedNodeIds: deleted };
     });
   },
 
@@ -1157,11 +1209,13 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     });
   },
 
-  markEdgesPersistFailed: (ids) => {
+  markEdgesPersistFailed: (ids, deletedIds = []) => {
     set((state) => {
       const pending = new Set(state._pendingEdgeIds);
       for (const id of ids) pending.delete(id);
-      return { _pendingEdgeIds: pending };
+      const deleted = new Set(state._deletedEdgeIds);
+      for (const id of deletedIds) deleted.add(id);
+      return { _pendingEdgeIds: pending, _deletedEdgeIds: deleted };
     });
   },
 

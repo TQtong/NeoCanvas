@@ -23,6 +23,26 @@ import { EDGE_FUNCTIONS } from '@/types';
 import { getBrowserSupabase } from '@/lib/supabase/client';
 import { invokeEdge } from '@/lib/edge/client';
 
+/** 凭据发生变化时通知已挂载的节点面板重新读取，避免各 Hook 副本使用旧快照。 */
+export const PROVIDER_CREDENTIALS_CHANGED_EVENT = 'neocanvas:provider-credentials-changed';
+
+/** 凭据变更事件携带的脱敏状态，供已打开的节点即时更新。 */
+interface ProviderCredentialsChangedDetail {
+  credential?: ProviderCredential;
+  deletedId?: string;
+}
+
+/** 广播提供商凭据变化（仅浏览器端执行）。 */
+function notifyProviderCredentialsChanged(detail: ProviderCredentialsChangedDetail): void {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(
+      new CustomEvent<ProviderCredentialsChangedDetail>(PROVIDER_CREDENTIALS_CHANGED_EVENT, {
+        detail,
+      }),
+    );
+  }
+}
+
 /** 行 → 前端脱敏视图。 */
 function rowToCredential(row: ProviderCredentialRow): ProviderCredential {
   return {
@@ -83,16 +103,36 @@ export function useProviderCredentials(): UseProviderCredentials {
 
   const refresh = useCallback(async () => {
     setLoading(true);
-    const { data } = await getBrowserSupabase()
+    const { data, error } = await getBrowserSupabase()
       .from('provider_credentials')
       .select('*')
       .order('provider', { ascending: true });
-    setCredentials((data ?? []).map(rowToCredential));
+    // 查询异常时保留当前快照，避免一次短暂的网络/RLS 错误把节点筛选清空。
+    if (!error) setCredentials((data ?? []).map(rowToCredential));
     setLoading(false);
   }, []);
 
   useEffect(() => {
     void refresh();
+  }, [refresh]);
+
+  // 设置页与画布节点各自使用本 Hook；监听全局事件使配置保存后已打开的节点即时更新。
+  useEffect(() => {
+    const onChanged = (event: Event): void => {
+      const detail = (event as CustomEvent<ProviderCredentialsChangedDetail>).detail;
+      const credential = detail?.credential;
+      if (credential) {
+        setCredentials((current) => {
+          const next = current.filter((item) => item.provider !== credential.provider);
+          return [...next, credential].sort((a, b) => a.provider.localeCompare(b.provider));
+        });
+      } else if (detail?.deletedId) {
+        setCredentials((current) => current.filter((item) => item.id !== detail.deletedId));
+      }
+      void refresh();
+    };
+    window.addEventListener(PROVIDER_CREDENTIALS_CHANGED_EVENT, onChanged);
+    return () => window.removeEventListener(PROVIDER_CREDENTIALS_CHANGED_EVENT, onChanged);
   }, [refresh]);
 
   const saveCredential = useCallback(
@@ -103,6 +143,7 @@ export function useProviderCredentials(): UseProviderCredentials {
       );
       await refresh();
       if (res.action !== 'save') throw new Error('保存返回异常');
+      notifyProviderCredentialsChanged({ credential: res.credential });
       return res.credential;
     },
     [refresh],
@@ -116,6 +157,7 @@ export function useProviderCredentials(): UseProviderCredentials {
       );
       await refresh();
       if (res.action !== 'toggle') throw new Error('启停返回异常');
+      notifyProviderCredentialsChanged({ credential: res.credential });
       return res.credential;
     },
     [refresh],
@@ -128,6 +170,7 @@ export function useProviderCredentials(): UseProviderCredentials {
         { action: 'delete', id },
       );
       await refresh();
+      notifyProviderCredentialsChanged({ deletedId: id });
     },
     [refresh],
   );

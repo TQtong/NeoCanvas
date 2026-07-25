@@ -30,6 +30,7 @@ import type {
   MediaPanelNodeData,
   MessageRow,
   ModelCatalogEntry,
+  Provider,
   ReferenceMaterial,
   VideoNodeData,
   VideoGenerationParams,
@@ -41,6 +42,8 @@ import { composeReferenceImageEditPrompt } from '@/lib/generation/reference-prom
 import { getBrowserSupabase } from '@/lib/supabase/client';
 import { useGeneration, buildPlaceholderNode } from '@/lib/hooks/use-generation';
 import { useModelCatalog } from '@/lib/hooks/use-model-catalog';
+import { useProviderCredentials } from '@/lib/hooks/use-provider-credentials';
+import { PROVIDER_DEFINITIONS } from '@/lib/models/providers';
 import { useCanvasStore } from '@/stores/canvas-store';
 import { idempotencyKey, uuid } from '@/lib/utils/id';
 import { cn } from '@/lib/utils/cn';
@@ -60,6 +63,7 @@ const IMAGE_SIZE_PRESETS: Array<{ value: ImageSizePreset; label: string; base?: 
 const MEDIA_PANEL_FALLBACK_WIDTH = 360;
 const MEDIA_PANEL_COLLAPSED_HEIGHT = 56;
 const MEDIA_PANEL_EXPANDED_HEIGHT = 560;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function dimensionsFromPreset(
   preset: ImageSizePreset | undefined,
@@ -78,6 +82,13 @@ function dimensionsFromPreset(
 
 function isMediaNode(node: CanvasFlowNode | undefined): node is MediaCanvasFlowNode {
   return node?.data.type === 'image' || node?.data.type === 'video';
+}
+
+/** 取得可用于图片编辑 / 图生视频的图片资产，避免把视频文件误传成首帧。 */
+function generationReferenceAssetId(target: MediaCanvasFlowNode | null): string | null {
+  if (!target) return null;
+  const candidate = target.data.type === 'image' ? target.data.assetId : target.data.posterAssetId;
+  return candidate && UUID_PATTERN.test(candidate) ? candidate : null;
 }
 
 function settingsFor(target: MediaCanvasFlowNode): MediaGenerationSettings {
@@ -104,25 +115,62 @@ function settingsFor(target: MediaCanvasFlowNode): MediaGenerationSettings {
   };
 }
 
-function pickModel(
+function eligibleModels(
   targetType: 'image' | 'video',
+  models: ModelCatalogEntry[],
+  enabledProviders: ReadonlySet<Provider>,
+): ModelCatalogEntry[] {
+  return models.filter(
+    (model) =>
+      model.modality === targetType && model.isActive && enabledProviders.has(model.provider),
+  );
+}
+
+/** 保留节点已选模型；不再可用时回退到当前节点的首个合格模型。 */
+function pickModel(
   settings: MediaGenerationSettings,
   models: ModelCatalogEntry[],
-  hasReference: boolean,
 ): ModelCatalogEntry | null {
-  const eligible = models.filter((m) => {
-    if (m.modality !== targetType || !m.isActive) return false;
-    if (!hasReference) return true;
-    return targetType === 'image'
-      ? m.capabilities.supportsReferenceImages
-      : m.capabilities.supportsImageToVideo;
-  });
-  return eligible.find((m) => m.key === settings.modelKey) ?? eligible[0] ?? null;
+  return models.find((m) => m.key === settings.modelKey) ?? models[0] ?? null;
 }
 
 function clampCount(value: number, model: ModelCatalogEntry | null): number {
   const max = Math.max(1, model?.capabilities.maxOutputs ?? 1);
   return Math.min(max, Math.max(1, Math.floor(value || 1)));
+}
+
+/** 按当前模型能力解析实际提交的比例，避免下拉显示回退值但请求仍携带旧值。 */
+function effectiveAspectRatioFor(
+  requested: AspectRatio | undefined,
+  model: ModelCatalogEntry | null,
+): AspectRatio | undefined {
+  const supported = model?.capabilities.aspectRatios ?? [];
+  if (requested && supported.includes(requested)) return requested;
+  const preferred = model?.defaultParams.aspectRatio;
+  if (preferred && supported.includes(preferred)) return preferred;
+  return supported[0] ?? requested;
+}
+
+/** 按当前视频模型能力解析实际分辨率。 */
+function effectiveVideoResolutionFor(
+  requested: string | undefined,
+  model: ModelCatalogEntry | null,
+): string {
+  const supported = model?.capabilities.videoResolutions ?? [];
+  if (requested && supported.includes(requested)) return requested;
+  const preferred = model?.defaultParams.resolution;
+  if (preferred && supported.includes(preferred)) return preferred;
+  return supported[0] ?? requested ?? preferred ?? '720p';
+}
+
+/** 按当前视频模型声明的时长范围夹取实际秒数。 */
+function effectiveVideoDurationFor(
+  requested: number | undefined,
+  model: ModelCatalogEntry | null,
+): number {
+  const value = requested ?? model?.defaultParams.durationSec ?? 5;
+  const range = model?.capabilities.videoDurationRange;
+  return range ? Math.min(range.max, Math.max(range.min, value)) : value;
 }
 
 function MessageRowView({ message }: { message: MessageRow }) {
@@ -146,6 +194,7 @@ function MediaPanelNodeComponent({ id, data, selected }: NodeProps<CanvasFlowNod
   const toast = useToast();
   const { submit } = useGeneration();
   const models = useModelCatalog();
+  const providerCredentials = useProviderCredentials();
 
   const projectId = useCanvasStore((s) => s.projectId);
   const nodes = useCanvasStore((s) => s.nodes);
@@ -160,6 +209,7 @@ function MediaPanelNodeComponent({ id, data, selected }: NodeProps<CanvasFlowNod
   const mediaTarget = isMediaNode(target) ? target : null;
   const targetId = mediaTarget?.id ?? null;
   const targetType = mediaTarget?.data.type ?? null;
+  const referenceAssetId = generationReferenceAssetId(mediaTarget);
 
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [messages, setMessages] = useState<MessageRow[]>([]);
@@ -170,10 +220,46 @@ function MediaPanelNodeComponent({ id, data, selected }: NodeProps<CanvasFlowNod
   const settings: MediaGenerationSettings = mediaTarget
     ? settingsFor(mediaTarget)
     : { modelKey: null, count: 1 };
-  const model = mediaTarget
-    ? pickModel(mediaTarget.data.type, settings, models, Boolean(mediaTarget.data.assetId))
-    : null;
+  const enabledProviders = useMemo(
+    () =>
+      new Set(
+        providerCredentials.credentials
+          .filter((credential) => credential.enabled)
+          .map((credential) => credential.provider),
+      ),
+    [providerCredentials.credentials],
+  );
+  const modelOptions = useMemo(
+    () => (mediaTarget ? eligibleModels(mediaTarget.data.type, models, enabledProviders) : []),
+    [enabledProviders, mediaTarget, models],
+  );
+  const selectableModels = useMemo(
+    () =>
+      modelOptions.filter(
+        (option) => !option.capabilities.requiresReferenceImages || Boolean(referenceAssetId),
+      ),
+    [modelOptions, referenceAssetId],
+  );
+  const model = pickModel(settings, selectableModels);
   const effectiveCount = clampCount(settings.count, model);
+  const effectiveAspectRatio = effectiveAspectRatioFor(settings.aspectRatio, model);
+  const effectiveVideoResolution = effectiveVideoResolutionFor(settings.resolution, model);
+  const effectiveVideoDuration = effectiveVideoDurationFor(settings.durationSec, model);
+  const modelGroups = useMemo(
+    () =>
+      PROVIDER_DEFINITIONS.map((definition) => ({
+        definition,
+        models: modelOptions.filter((option) => option.provider === definition.id),
+      })).filter((group) => group.models.length > 0),
+    [modelOptions],
+  );
+  const aspectRatioOptions = model?.capabilities.aspectRatios.length
+    ? model.capabilities.aspectRatios
+    : ASPECT_RATIOS;
+  const qualityOptions = IMAGE_QUALITIES.filter((quality) =>
+    model?.capabilities.qualities.includes(quality),
+  );
+  const videoResolutionOptions = model?.capabilities.videoResolutions ?? [];
 
   const setPanelCollapsed = useCallback(
     (collapsed: boolean) => {
@@ -308,6 +394,92 @@ function MediaPanelNodeComponent({ id, data, selected }: NodeProps<CanvasFlowNod
     });
   };
 
+  /** 切换模型，并把节点参数校正到新模型声明的能力范围内。 */
+  const selectModel = (modelKey: string) => {
+    const next = modelOptions.find((option) => option.key === modelKey);
+    if (!next) return;
+    const nextRatios = next.capabilities.aspectRatios;
+    const defaultRatio = next.defaultParams.aspectRatio;
+    const aspectRatio = nextRatios.includes(settings.aspectRatio as AspectRatio)
+      ? settings.aspectRatio
+      : defaultRatio && nextRatios.includes(defaultRatio)
+        ? defaultRatio
+        : nextRatios[0];
+
+    if (mediaTarget?.data.type === 'video') {
+      const resolutions = next.capabilities.videoResolutions ?? [];
+      const resolution = resolutions.includes(settings.resolution ?? '')
+        ? settings.resolution
+        : (next.defaultParams.resolution ?? resolutions[0]);
+      const range = next.capabilities.videoDurationRange;
+      const duration = settings.durationSec ?? next.defaultParams.durationSec ?? range?.min ?? 5;
+      updateSettings({
+        modelKey,
+        count: clampCount(settings.count, next),
+        aspectRatio,
+        resolution,
+        durationSec: range ? Math.min(range.max, Math.max(range.min, duration)) : duration,
+        fps: next.defaultParams.fps ?? settings.fps,
+      });
+      return;
+    }
+
+    const qualities = next.capabilities.qualities;
+    const quality =
+      settings.quality && qualities.includes(settings.quality)
+        ? settings.quality
+        : next.defaultParams.quality && qualities.includes(next.defaultParams.quality)
+          ? next.defaultParams.quality
+          : undefined;
+    updateSettings({
+      modelKey,
+      count: clampCount(settings.count, next),
+      aspectRatio,
+      quality,
+    });
+  };
+
+  // 旧节点可能保存着上一个模型的 1080p / 长时长参数；模型目录加载后立即校正并持久化。
+  useEffect(() => {
+    if (mediaTarget?.data.type !== 'video' || !model) return;
+    const fps = settings.fps ?? model.defaultParams.fps ?? 24;
+    if (
+      settings.modelKey === model.key &&
+      settings.count === effectiveCount &&
+      settings.aspectRatio === effectiveAspectRatio &&
+      settings.resolution === effectiveVideoResolution &&
+      settings.durationSec === effectiveVideoDuration &&
+      settings.fps === fps
+    ) {
+      return;
+    }
+    updateNodeData(mediaTarget.id, {
+      generationSettings: {
+        ...mediaTarget.data.generationSettings,
+        modelKey: model.key,
+        count: effectiveCount,
+        aspectRatio: effectiveAspectRatio,
+        resolution: effectiveVideoResolution,
+        durationSec: effectiveVideoDuration,
+        fps,
+      },
+    });
+  }, [
+    effectiveAspectRatio,
+    effectiveCount,
+    effectiveVideoDuration,
+    effectiveVideoResolution,
+    mediaTarget,
+    model,
+    settings.aspectRatio,
+    settings.count,
+    settings.durationSec,
+    settings.fps,
+    settings.modelKey,
+    settings.resolution,
+    updateNodeData,
+  ]);
+
   const updateDescription = (value: string) => {
     if (!mediaTarget) return;
     updateNodeData(mediaTarget.id, { mediaDescription: value });
@@ -340,18 +512,22 @@ function MediaPanelNodeComponent({ id, data, selected }: NodeProps<CanvasFlowNod
   ) => {
     if (!projectId || !mediaTarget || !model) return;
     const targetType = mediaTarget.data.type;
-    const assetId = mediaTarget.data.assetId;
     const isPrimaryResult = resultMode === 'new_primary';
-    const references: ReferenceMaterial[] = assetId
-      ? [
-          {
-            origin: 'node',
-            nodeId: mediaTarget.id,
-            assetId,
-            role: targetType === 'video' ? 'first_frame' : 'content',
-          },
-        ]
-      : [];
+    const acceptsTargetReference =
+      targetType === 'image'
+        ? model.capabilities.supportsReferenceImages
+        : model.capabilities.supportsImageToVideo;
+    const references: ReferenceMaterial[] =
+      referenceAssetId && acceptsTargetReference
+        ? [
+            {
+              origin: 'node',
+              nodeId: mediaTarget.id,
+              assetId: referenceAssetId,
+              role: targetType === 'video' ? 'first_frame' : 'content',
+            },
+          ]
+        : [];
     const placement = isPrimaryResult
       ? { ...nodeBox(mediaTarget), parentId: mediaTarget.parentId ?? null }
       : candidatePlacementForTarget(mediaTarget, index);
@@ -389,13 +565,13 @@ function MediaPanelNodeComponent({ id, data, selected }: NodeProps<CanvasFlowNod
             ? { width: settings.width, height: settings.height }
             : dimensionsFromPreset(
                 (settings.sizePreset ?? '1k') as ImageSizePreset,
-                settings.aspectRatio as AspectRatio | undefined,
+                effectiveAspectRatio,
               );
         const params: ImageGenerationParams = {
           modality: 'image',
           references,
           count,
-          aspectRatio: settings.aspectRatio,
+          aspectRatio: effectiveAspectRatio,
           width: presetDimensions.width,
           height: presetDimensions.height,
           sizePreset: settings.sizePreset ?? '1k',
@@ -419,9 +595,9 @@ function MediaPanelNodeComponent({ id, data, selected }: NodeProps<CanvasFlowNod
         const params: VideoGenerationParams = {
           modality: 'video',
           references,
-          durationSec: settings.durationSec ?? 5,
-          resolution: settings.resolution ?? '720p',
-          aspectRatio: settings.aspectRatio,
+          durationSec: effectiveVideoDuration,
+          resolution: effectiveVideoResolution,
+          aspectRatio: effectiveAspectRatio,
           fps: settings.fps ?? 24,
           motionStrength: settings.motionStrength,
         };
@@ -459,7 +635,8 @@ function MediaPanelNodeComponent({ id, data, selected }: NodeProps<CanvasFlowNod
     setSending(true);
     const messageId = uuid();
     const targetHasAsset = Boolean(mediaTarget.data.assetId);
-    const content = flowText || (targetHasAsset ? '按当前媒体描述生成候选' : '按当前媒体描述生成目标');
+    const content =
+      flowText || (targetHasAsset ? '按当前媒体描述生成候选' : '按当前媒体描述生成目标');
     try {
       const supabase = getBrowserSupabase();
       const { data: inserted, error } = await supabase
@@ -526,18 +703,15 @@ function MediaPanelNodeComponent({ id, data, selected }: NodeProps<CanvasFlowNod
           );
         }
       }
-      toast.success(targetHasAsset ? `已提交 ${effectiveCount} 个候选` : '已提交生成，首个结果会填充目标节点');
+      toast.success(
+        targetHasAsset ? `已提交 ${effectiveCount} 个候选` : '已提交生成，首个结果会填充目标节点',
+      );
     } catch (err) {
       toast.error(err instanceof Error ? err.message : '生成提交失败');
     } finally {
       setSending(false);
     }
   };
-
-  const modelOptions = useMemo(
-    () => models.filter((m) => mediaTarget && m.modality === mediaTarget.data.type && m.isActive),
-    [mediaTarget, models],
-  );
 
   if (!mediaTarget) {
     const isGeneratingTarget = target?.data.type === 'generation_placeholder';
@@ -616,15 +790,39 @@ function MediaPanelNodeComponent({ id, data, selected }: NodeProps<CanvasFlowNod
               模型
               <select
                 value={model?.key ?? ''}
-                onChange={(e) => updateSettings({ modelKey: e.target.value })}
+                onChange={(e) => selectModel(e.target.value)}
+                disabled={providerCredentials.loading || modelOptions.length === 0}
                 className="h-8 rounded-lg border border-border bg-background px-2 text-xs text-foreground outline-none"
               >
-                {modelOptions.map((m) => (
-                  <option key={m.key} value={m.key}>
-                    {m.displayName} / {m.provider}
+                {modelOptions.length === 0 ? (
+                  <option value="">
+                    {providerCredentials.loading
+                      ? '正在加载可用模型…'
+                      : `没有可用的${mediaTarget.data.type === 'image' ? '图片' : '视频'}模型`}
                   </option>
+                ) : null}
+                {modelGroups.map((group) => (
+                  <optgroup key={group.definition.id} label={group.definition.name}>
+                    {group.models.map((option) => (
+                      <option
+                        key={option.key}
+                        value={option.key}
+                        disabled={option.capabilities.requiresReferenceImages && !referenceAssetId}
+                      >
+                        {option.displayName}
+                        {option.capabilities.requiresReferenceImages && !referenceAssetId
+                          ? '（需要输入素材）'
+                          : ''}
+                      </option>
+                    ))}
+                  </optgroup>
                 ))}
               </select>
+              {!providerCredentials.loading && modelOptions.length === 0 ? (
+                <span className="text-[11px] leading-relaxed text-danger">
+                  请先在设置中配置并启用包含该类型模型的提供商
+                </span>
+              ) : null}
             </label>
             <label className="flex flex-col gap-1 text-xs text-muted-foreground">
               数量
@@ -640,7 +838,7 @@ function MediaPanelNodeComponent({ id, data, selected }: NodeProps<CanvasFlowNod
             <label className="flex flex-col gap-1 text-xs text-muted-foreground">
               比例
               <select
-                value={settings.aspectRatio ?? ''}
+                value={effectiveAspectRatio ?? ''}
                 onChange={(e) =>
                   mediaTarget.data.type === 'image'
                     ? updateImageAspectRatio(e.target.value as AspectRatio)
@@ -648,7 +846,7 @@ function MediaPanelNodeComponent({ id, data, selected }: NodeProps<CanvasFlowNod
                 }
                 className="h-8 rounded-lg border border-border bg-background px-2 text-xs text-foreground outline-none"
               >
-                {ASPECT_RATIOS.map((r) => (
+                {aspectRatioOptions.map((r) => (
                   <option key={r} value={r}>
                     {r}
                   </option>
@@ -715,7 +913,7 @@ function MediaPanelNodeComponent({ id, data, selected }: NodeProps<CanvasFlowNod
                     className="h-8 rounded-lg border border-border bg-background px-2 text-xs text-foreground outline-none"
                   >
                     <option value="">默认</option>
-                    {IMAGE_QUALITIES.map((q) => (
+                    {qualityOptions.map((q) => (
                       <option key={q} value={q}>
                         {q}
                       </option>
@@ -729,19 +927,32 @@ function MediaPanelNodeComponent({ id, data, selected }: NodeProps<CanvasFlowNod
                   时长
                   <input
                     type="number"
-                    min={1}
-                    value={settings.durationSec ?? 5}
+                    min={model?.capabilities.videoDurationRange?.min ?? 1}
+                    max={model?.capabilities.videoDurationRange?.max}
+                    value={effectiveVideoDuration}
                     onChange={(e) => updateSettings({ durationSec: Number(e.target.value) || 5 })}
                     className="h-8 rounded-lg border border-border bg-background px-2 text-xs text-foreground outline-none"
                   />
                 </label>
                 <label className="flex flex-col gap-1 text-xs text-muted-foreground">
                   分辨率
-                  <input
-                    value={settings.resolution ?? '720p'}
+                  <select
+                    value={effectiveVideoResolution}
                     onChange={(e) => updateSettings({ resolution: e.target.value })}
                     className="h-8 rounded-lg border border-border bg-background px-2 text-xs text-foreground outline-none"
-                  />
+                  >
+                    {videoResolutionOptions.length > 0 ? (
+                      videoResolutionOptions.map((resolution) => (
+                        <option key={resolution} value={resolution}>
+                          {resolution}
+                        </option>
+                      ))
+                    ) : (
+                      <option value={settings.resolution ?? '720p'}>
+                        {settings.resolution ?? '720p'}
+                      </option>
+                    )}
+                  </select>
                 </label>
               </>
             )}
