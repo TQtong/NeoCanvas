@@ -7,7 +7,7 @@
  * @module functions/_shared/adapters/registry
  */
 
-import { type Provider } from '../types.ts';
+import { type BuiltInProvider } from '../types.ts';
 import { ApiException } from '../response.ts';
 import { type ModelAdapter } from './base.ts';
 import { openaiAdapter } from './openai.ts';
@@ -16,15 +16,19 @@ import { volcengineAdapter } from './volcengine.ts';
 import { falAdapter } from './fal.ts';
 import { replicateAdapter } from './replicate.ts';
 import { siliconflowAdapter } from './siliconflow.ts';
+import { minimaxAdapter } from './minimax.ts';
+import { jimengAdapter } from './jimeng.ts';
 
 /** 提供商 → 适配器。 */
-const REGISTRY: Record<Provider, ModelAdapter> = {
+const REGISTRY: Record<BuiltInProvider, ModelAdapter> = {
   openai: openaiAdapter,
   google: googleAdapter,
   volcengine: volcengineAdapter,
   fal: falAdapter,
   replicate: replicateAdapter,
   siliconflow: siliconflowAdapter,
+  minimax: minimaxAdapter,
+  jimeng: jimengAdapter,
 };
 
 /**
@@ -34,7 +38,7 @@ const REGISTRY: Record<Provider, ModelAdapter> = {
  * @returns 对应适配器
  * @throws {ApiException} 未知提供商（model_unavailable）
  */
-export function getAdapter(provider: Provider): ModelAdapter {
+export function getAdapter(provider: BuiltInProvider): ModelAdapter {
   const adapter = REGISTRY[provider];
   if (!adapter) {
     throw new ApiException('model_unavailable', `未知提供商：${provider}`);

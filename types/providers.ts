@@ -8,7 +8,7 @@
  * @module types/providers
  */
 
-import type { Provider } from './enums';
+import type { BuiltInProvider, Provider } from './enums';
 
 /**
  * 前端消费的提供商凭证视图（脱敏）。由 `provider_credentials` 行映射，**不含明文 Key**。
@@ -18,8 +18,12 @@ export interface ProviderCredential {
   id: string;
   /** 提供商。 */
   provider: Provider;
+  /** 实际调用的协议适配器。内置提供商与 provider 相同，自定义提供商由用户选择。 */
+  adapter: BuiltInProvider;
   /** 可选展示标签。 */
   label: string | null;
+  /** 提供商官网，仅用于设置页展示与跳转。 */
+  websiteUrl: string | null;
   /** 可选自定义端点（OpenAI 兼容代理 / 自建网关）。 */
   baseUrl: string | null;
   /** Key 末 4 位，用于「••••abcd」展示。 */
@@ -40,7 +44,9 @@ export type ProviderCredentialRow = {
   id: string;
   user_id: string;
   provider: Provider;
+  adapter: BuiltInProvider;
   label: string | null;
+  website_url: string | null;
   base_url: string | null;
   key_last4: string;
   key_secret_id: string;
@@ -61,14 +67,25 @@ export type ProviderCredentialsRequest =
   | {
       action: 'save';
       provider: Provider;
+      adapter?: BuiltInProvider;
       apiKey?: string;
+      /** 需要双密钥认证的提供商（当前为即梦）的 Secret Access Key。 */
+      apiSecret?: string;
       baseUrl?: string | null;
       label?: string | null;
+      websiteUrl?: string | null;
       enabled?: boolean;
     }
   | { action: 'toggle'; provider: Provider; enabled: boolean }
   | { action: 'delete'; id: string }
-  | { action: 'test'; provider: Provider; apiKey?: string; baseUrl?: string | null };
+  | {
+      action: 'test';
+      provider: Provider;
+      adapter?: BuiltInProvider;
+      apiKey?: string;
+      apiSecret?: string;
+      baseUrl?: string | null;
+    };
 
 /** 连通性测试结果。 */
 export interface ProviderTestResult {

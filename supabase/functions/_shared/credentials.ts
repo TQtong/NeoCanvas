@@ -14,18 +14,19 @@
  * @module functions/_shared/credentials
  */
 
-import { type Provider, type ProviderTestResult } from './types.ts';
+import { type BuiltInProvider, type Provider, type ProviderTestResult } from './types.ts';
 import { type SupabaseClient } from './supabase.ts';
 import { ApiException } from './response.ts';
 
 /** 各 provider 的环境变量回退名（无用户凭证时取）。与 docs/SETUP.md 一致。 */
-export const PROVIDER_ENV: Record<Provider, { key: string; baseUrl?: string }> = {
+export const PROVIDER_ENV: Partial<Record<BuiltInProvider, { key: string; baseUrl?: string }>> = {
   openai: { key: 'OPENAI_API_KEY' },
   google: { key: 'GOOGLE_API_KEY' },
   volcengine: { key: 'ARK_API_KEY' },
   fal: { key: 'FAL_API_KEY' },
   replicate: { key: 'REPLICATE_API_TOKEN' },
   siliconflow: { key: 'SILICONFLOW_API_KEY', baseUrl: 'SILICONFLOW_BASE_URL' },
+  minimax: { key: 'MINIMAX_API_KEY' },
 };
 
 /** 解析结果：明文 Key 与可选自定义端点。 */
@@ -34,11 +35,62 @@ export interface ResolvedCredential {
   baseUrl?: string;
 }
 
+/** 查询到的协议适配器，用于把自定义供应商实例路由到实际实现。 */
+export async function resolveProviderAdapter(
+  admin: SupabaseClient,
+  provider: Provider,
+  projectId: string,
+): Promise<BuiltInProvider> {
+  if (!provider.startsWith('custom:')) return provider as BuiltInProvider;
+  const { data: project } = await admin
+    .from('projects')
+    .select('owner_id')
+    .eq('id', projectId)
+    .maybeSingle();
+  const ownerId = project?.owner_id as string | undefined;
+  if (ownerId) {
+    const { data } = await admin
+      .from('provider_credentials')
+      .select('adapter, enabled')
+      .eq('user_id', ownerId)
+      .eq('provider', provider)
+      .maybeSingle();
+    if (data?.enabled && data.adapter) return data.adapter as BuiltInProvider;
+  }
+  throw new ApiException('model_unavailable', `${provider} 未找到可用的协议适配器`);
+}
+
 /** `get_provider_api_key` RPC 行形状。 */
 interface ProviderKeyRow {
   api_key: string | null;
   base_url: string | null;
   enabled: boolean;
+}
+
+/** 生成阶段再次校验凭证端点，防止历史脏数据绕过写入校验形成 SSRF。 */
+function safeBaseUrl(value: string | null): string | undefined {
+  if (!value) return undefined;
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new ApiException('invalid_params', '供应商 API 端点不是有效 URL');
+  }
+  const host = url.hostname.toLowerCase();
+  const forbidden =
+    host === 'localhost' ||
+    host.endsWith('.local') ||
+    host === '0.0.0.0' ||
+    host === '127.0.0.1' ||
+    host === '169.254.169.254' ||
+    host === '::1' ||
+    /^10\./.test(host) ||
+    /^192\.168\./.test(host) ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(host);
+  if (url.protocol !== 'https:' || url.username || url.password || forbidden) {
+    throw new ApiException('invalid_params', '供应商 API 端点必须是公网 HTTPS 地址');
+  }
+  return url.toString().replace(/\/$/, '');
 }
 
 /**
@@ -71,15 +123,21 @@ export async function resolveProviderCredential(
     });
     const row = (Array.isArray(data) ? data[0] : data) as ProviderKeyRow | null | undefined;
     if (!error && row && row.enabled && row.api_key) {
-      return { apiKey: row.api_key, baseUrl: row.base_url ?? undefined };
+      return { apiKey: row.api_key, baseUrl: safeBaseUrl(row.base_url) };
     }
   }
 
   // 3) 环境变量回退
-  const env = PROVIDER_ENV[provider];
+  const env = PROVIDER_ENV[provider as BuiltInProvider];
+  if (!env) {
+    throw new ApiException(
+      'model_unavailable',
+      `${provider} 未配置密钥：请在「设置 → 模型提供商」中配置并启用该供应商`,
+    );
+  }
   const apiKey = Deno.env.get(env.key);
   if (apiKey) {
-    const baseUrl = env.baseUrl ? Deno.env.get(env.baseUrl) ?? undefined : undefined;
+    const baseUrl = env.baseUrl ? (Deno.env.get(env.baseUrl) ?? undefined) : undefined;
     return { apiKey, baseUrl };
   }
 
@@ -100,18 +158,35 @@ export async function resolveProviderCredential(
  * @param baseUrl - 可选自定义端点
  */
 export async function testProviderKey(
-  provider: Provider,
+  provider: BuiltInProvider,
   apiKey: string,
   baseUrl?: string,
 ): Promise<ProviderTestResult> {
   try {
-    const probe = await buildProbe(provider, apiKey, baseUrl);
+    if (provider === 'jimeng') {
+      const credential = JSON.parse(apiKey) as {
+        accessKeyId?: string;
+        secretAccessKey?: string;
+      };
+      if (!credential.accessKeyId?.trim() || !credential.secretAccessKey?.trim()) {
+        return { ok: false, message: 'Access Key ID 或 Secret Access Key 为空' };
+      }
+      const endpoint = new URL(baseUrl ?? 'https://visual.volcengineapi.com');
+      if (endpoint.protocol !== 'https:') {
+        return { ok: false, message: '即梦 API 端点必须使用 HTTPS' };
+      }
+      return { ok: true, message: 'AK/SK 格式有效，实际签名将在生成任务时验证' };
+    }
+    const probe = buildProbe(provider, apiKey, baseUrl);
     const response = await fetch(probe.url, { method: probe.method, headers: probe.headers });
     if (response.status === 401 || response.status === 403) {
       return { ok: false, status: response.status, message: '密钥被拒绝（鉴权失败）' };
     }
     if (response.ok) {
       return { ok: true, status: response.status };
+    }
+    if (response.status >= 400 && response.status < 500) {
+      return { ok: true, status: response.status, message: '端点可达，鉴权未被明确拒绝' };
     }
     // 非鉴权类错误：端点可达但参数 / 资源问题，视为「Key 形态可用、未通过完整探活」
     const text = await response.text();
@@ -123,7 +198,7 @@ export async function testProviderKey(
 
 /** 各 provider 的探活请求构造（取最轻量、只读的鉴权端点）。 */
 function buildProbe(
-  provider: Provider,
+  provider: BuiltInProvider,
   apiKey: string,
   baseUrl?: string,
 ): { url: string; method: 'GET'; headers: Record<string, string> } {
@@ -166,5 +241,13 @@ function buildProbe(
         method: 'GET',
         headers: { Authorization: `Key ${apiKey}` },
       };
+    case 'minimax':
+      return {
+        url: `${trim(baseUrl ?? 'https://api.minimaxi.com/v1')}/image_generation`,
+        method: 'GET',
+        headers: { Authorization: `Bearer ${apiKey}` },
+      };
+    case 'jimeng':
+      throw new Error('即梦使用专用 AK/SK 格式校验');
   }
 }

@@ -15,20 +15,29 @@
  */
 
 import {
+  type BuiltInProvider,
   type ProviderCredential,
   type ProviderCredentialsRequest,
   type ProviderCredentialsResponse,
 } from '../_shared/types.ts';
-import { ApiException, exceptionToResponse, fail, handleCorsPreflight, ok } from '../_shared/response.ts';
+import {
+  ApiException,
+  exceptionToResponse,
+  fail,
+  handleCorsPreflight,
+  ok,
+} from '../_shared/response.ts';
 import { createAdminClient, requireUser, type SupabaseClient } from '../_shared/supabase.ts';
-import { PROVIDER_ENV, testProviderKey } from '../_shared/credentials.ts';
+import { testProviderKey } from '../_shared/credentials.ts';
 
 /** provider_credentials 行 → 前端脱敏视图。 */
 function rowToCredential(row: Record<string, unknown>): ProviderCredential {
   return {
     id: row.id as string,
     provider: row.provider as ProviderCredential['provider'],
+    adapter: row.adapter as ProviderCredential['adapter'],
     label: (row.label as string | null) ?? null,
+    websiteUrl: (row.website_url as string | null) ?? null,
     baseUrl: (row.base_url as string | null) ?? null,
     keyLast4: row.key_last4 as string,
     enabled: row.enabled as boolean,
@@ -37,10 +46,55 @@ function rowToCredential(row: Record<string, unknown>): ProviderCredential {
   };
 }
 
-/** 校验 provider 取值合法（与 PROVIDERS 一致）。 */
+const BUILT_IN_PROVIDER_SET = new Set<BuiltInProvider>([
+  'openai',
+  'google',
+  'volcengine',
+  'jimeng',
+  'minimax',
+  'fal',
+  'replicate',
+  'siliconflow',
+]);
+
+/** 校验内置或自定义 provider 实例标识。 */
 function assertProvider(provider: string): void {
-  if (!(provider in PROVIDER_ENV)) {
+  if (
+    !BUILT_IN_PROVIDER_SET.has(provider as BuiltInProvider) &&
+    !/^custom:[a-z0-9][a-z0-9-]{2,47}$/.test(provider)
+  ) {
     throw new ApiException('invalid_params', `未知提供商：${provider}`);
+  }
+}
+
+function assertAdapter(adapter: string | undefined): asserts adapter is BuiltInProvider {
+  if (!adapter || !BUILT_IN_PROVIDER_SET.has(adapter as BuiltInProvider)) {
+    throw new ApiException('invalid_params', `未知协议适配器：${adapter ?? ''}`);
+  }
+}
+
+/** 拒绝会让 Edge Function 访问本机、私网或元数据服务的自定义端点。 */
+function assertSafeBaseUrl(value: string | null | undefined): void {
+  if (!value) return;
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new ApiException('invalid_params', 'API 端点不是有效 URL');
+  }
+  const host = url.hostname.toLowerCase();
+  const forbidden =
+    host === 'localhost' ||
+    host.endsWith('.local') ||
+    host === '0.0.0.0' ||
+    host === '127.0.0.1' ||
+    host === '169.254.169.254' ||
+    host === '::1' ||
+    /^10\./.test(host) ||
+    /^192\.168\./.test(host) ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(host);
+  if (url.protocol !== 'https:' || url.username || url.password || forbidden) {
+    throw new ApiException('invalid_params', 'API 端点必须是无账号信息的公网 HTTPS 地址');
   }
 }
 
@@ -79,11 +133,28 @@ Deno.serve(async (request) => {
     switch (body.action) {
       case 'save': {
         assertProvider(body.provider);
+        const adapter = body.adapter ?? (body.provider as BuiltInProvider);
+        assertAdapter(adapter);
+        assertSafeBaseUrl(body.baseUrl);
+        if (body.provider.startsWith('custom:') && !body.label?.trim()) {
+          throw new ApiException('invalid_params', '自定义供应商必须填写名称');
+        }
         const { data, error } = await admin.rpc('upsert_provider_credential', {
           p_user_id: userId,
           p_provider: body.provider,
+          p_adapter: adapter,
+          p_label: body.label ?? null,
+          p_website_url: body.websiteUrl ?? null,
           p_base_url: body.baseUrl ?? null,
-          p_api_key: body.apiKey ?? null,
+          p_api_key:
+            adapter === 'jimeng'
+              ? body.apiKey || body.apiSecret
+                ? JSON.stringify({
+                    accessKeyId: body.apiKey ?? '',
+                    secretAccessKey: body.apiSecret ?? '',
+                  })
+                : null
+              : (body.apiKey ?? null),
           p_enabled: body.enabled ?? true,
         });
         if (error) {
@@ -125,6 +196,9 @@ Deno.serve(async (request) => {
 
       case 'test': {
         assertProvider(body.provider);
+        const adapter = body.adapter ?? (body.provider as BuiltInProvider);
+        assertAdapter(adapter);
+        assertSafeBaseUrl(body.baseUrl);
         let apiKey = body.apiKey;
         let baseUrl = body.baseUrl ?? undefined;
         // 未传 Key：用已存的 Key 测试（仅在边缘内解密，不外泄）
@@ -141,7 +215,12 @@ Deno.serve(async (request) => {
             result: { ok: false, message: '未提供密钥' },
           });
         }
-        const result = await testProviderKey(body.provider, apiKey, baseUrl);
+        assertSafeBaseUrl(baseUrl);
+        const probeKey =
+          adapter === 'jimeng' && body.apiKey
+            ? JSON.stringify({ accessKeyId: body.apiKey, secretAccessKey: body.apiSecret ?? '' })
+            : apiKey;
+        const result = await testProviderKey(adapter, probeKey, baseUrl);
         return ok<ProviderCredentialsResponse>({ action: 'test', result });
       }
 

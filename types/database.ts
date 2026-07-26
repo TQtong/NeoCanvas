@@ -11,6 +11,7 @@
 import type {
   AssetKind,
   AssetSource,
+  BuiltInProvider,
   GenerationStatus,
   MessageRole,
   Modality,
@@ -289,6 +290,7 @@ export interface Database {
         Insert: Partial<Omit<ProviderCredentialRow, 'id' | 'created_at' | 'updated_at'>> & {
           user_id: string;
           provider: Provider;
+          adapter: BuiltInProvider;
           key_last4: string;
           key_secret_id: string;
         };

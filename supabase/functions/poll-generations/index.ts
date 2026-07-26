@@ -11,6 +11,7 @@ import { type GenerationRow, type ModelCatalogRow } from '../_shared/types.ts';
 import { exceptionToResponse, ok } from '../_shared/response.ts';
 import { createAdminClient, type SupabaseClient } from '../_shared/supabase.ts';
 import { getAdapter } from '../_shared/adapters/registry.ts';
+import { resolveProviderAdapter } from '../_shared/credentials.ts';
 import { buildModelContext, landResult, markFailed } from '../_shared/pipeline.ts';
 
 /** 单次轮询的最大任务数。 */
@@ -27,7 +28,9 @@ async function advance(admin: SupabaseClient, generation: GenerationRow): Promis
     .single();
   const modelRow = model as ModelCatalogRow;
 
-  const adapter = getAdapter(generation.provider);
+  const adapter = getAdapter(
+    await resolveProviderAdapter(admin, generation.provider, generation.project_id),
+  );
   const ctx = await buildModelContext(
     admin,
     {

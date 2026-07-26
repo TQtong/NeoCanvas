@@ -43,7 +43,7 @@ import { getBrowserSupabase } from '@/lib/supabase/client';
 import { useGeneration, buildPlaceholderNode } from '@/lib/hooks/use-generation';
 import { useModelCatalog } from '@/lib/hooks/use-model-catalog';
 import { useProviderCredentials } from '@/lib/hooks/use-provider-credentials';
-import { PROVIDER_DEFINITIONS } from '@/lib/models/providers';
+import { customProviderDefinition, PROVIDER_DEFINITIONS } from '@/lib/models/providers';
 import { useCanvasStore } from '@/stores/canvas-store';
 import { idempotencyKey, uuid } from '@/lib/utils/id';
 import { cn } from '@/lib/utils/cn';
@@ -245,14 +245,20 @@ function MediaPanelNodeComponent({ id, data, selected }: NodeProps<CanvasFlowNod
   const effectiveAspectRatio = effectiveAspectRatioFor(settings.aspectRatio, model);
   const effectiveVideoResolution = effectiveVideoResolutionFor(settings.resolution, model);
   const effectiveVideoDuration = effectiveVideoDurationFor(settings.durationSec, model);
-  const modelGroups = useMemo(
-    () =>
-      PROVIDER_DEFINITIONS.map((definition) => ({
+  const modelGroups = useMemo(() => {
+    const definitions = [
+      ...PROVIDER_DEFINITIONS,
+      ...providerCredentials.credentials
+        .filter((credential) => credential.provider.startsWith('custom:'))
+        .map(customProviderDefinition),
+    ];
+    return definitions
+      .map((definition) => ({
         definition,
         models: modelOptions.filter((option) => option.provider === definition.id),
-      })).filter((group) => group.models.length > 0),
-    [modelOptions],
-  );
+      }))
+      .filter((group) => group.models.length > 0);
+  }, [modelOptions, providerCredentials.credentials]);
   const aspectRatioOptions = model?.capabilities.aspectRatios.length
     ? model.capabilities.aspectRatios
     : ASPECT_RATIOS;

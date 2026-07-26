@@ -45,6 +45,13 @@ export interface ManagedModelInput {
 /** 自有模型默认排序：排在内置模型（5..40）之后。 */
 const USER_MODEL_SORT = 1000;
 
+/** 自有模型变更后通知已打开的节点选择器刷新目录。 */
+export const MODEL_CATALOG_CHANGED_EVENT = 'neocanvas:model-catalog-changed';
+
+function notifyModelCatalogChanged(): void {
+  if (typeof window !== 'undefined') window.dispatchEvent(new Event(MODEL_CATALOG_CHANGED_EVENT));
+}
+
 /** useManagedModels 返回值。 */
 export interface UseManagedModels {
   /** 可见模型（内置 + 自有）。 */
@@ -102,6 +109,7 @@ export function useManagedModels(): UseManagedModels {
         });
       if (error) throw new Error(error.message);
       await refresh();
+      notifyModelCatalogChanged();
     },
     [refresh],
   );
@@ -121,6 +129,7 @@ export function useManagedModels(): UseManagedModels {
         .eq('key', key);
       if (error) throw new Error(error.message);
       await refresh();
+      notifyModelCatalogChanged();
     },
     [refresh],
   );
@@ -130,6 +139,7 @@ export function useManagedModels(): UseManagedModels {
       const { error } = await getBrowserSupabase().from('model_catalog').delete().eq('key', key);
       if (error) throw new Error(error.message);
       await refresh();
+      notifyModelCatalogChanged();
     },
     [refresh],
   );
@@ -142,6 +152,7 @@ export function useManagedModels(): UseManagedModels {
         .eq('key', key);
       if (error) throw new Error(error.message);
       await refresh();
+      notifyModelCatalogChanged();
     },
     [refresh],
   );

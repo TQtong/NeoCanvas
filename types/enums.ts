@@ -79,8 +79,38 @@ export type NodeType = (typeof NODE_TYPES)[number];
 /**
  * 模型提供商标识。用于适配器路由与 `model_catalog.provider`。
  */
-export const PROVIDERS = ['openai', 'google', 'volcengine', 'fal', 'replicate', 'siliconflow'] as const;
-export type Provider = (typeof PROVIDERS)[number];
+export const BUILT_IN_PROVIDERS = [
+  'openai',
+  'google',
+  'volcengine',
+  'jimeng',
+  'minimax',
+  'fal',
+  'replicate',
+  'siliconflow',
+] as const;
+
+/** 服务端已经实现原生协议适配器的内置提供商。 */
+export type BuiltInProvider = (typeof BUILT_IN_PROVIDERS)[number];
+
+/** 用户创建的兼容供应商使用独立、稳定的路由标识。 */
+export type CustomProvider = `custom:${string}`;
+
+/**
+ * 模型提供商实例标识。
+ *
+ * 内置提供商直接使用固定字面量；自定义提供商使用 `custom:*`，其实际请求协议由凭证的
+ * `adapter` 字段决定，因此同一用户可以同时配置多个兼容供应商。
+ */
+export type Provider = BuiltInProvider | CustomProvider;
+
+/** 兼容旧调用方的内置提供商清单别名。 */
+export const PROVIDERS = BUILT_IN_PROVIDERS;
+
+/** 判断提供商实例是否为用户自定义。 */
+export function isCustomProvider(provider: Provider | string): provider is CustomProvider {
+  return provider.startsWith('custom:');
+}
 
 /**
  * 创作场景。对应主页选择条与 `projects.initial_scene`。
@@ -101,7 +131,14 @@ export type AgentMode = (typeof AGENT_MODES)[number];
 /**
  * 形状种类。承载于 shape 节点的 `data.shape`。
  */
-export const SHAPE_KINDS = ['rectangle', 'ellipse', 'triangle', 'diamond', 'line', 'arrow'] as const;
+export const SHAPE_KINDS = [
+  'rectangle',
+  'ellipse',
+  'triangle',
+  'diamond',
+  'line',
+  'arrow',
+] as const;
 export type ShapeKind = (typeof SHAPE_KINDS)[number];
 
 /**

@@ -12,6 +12,7 @@ import { type GenerationRow, type ModelCatalogRow } from '../_shared/types.ts';
 import { exceptionToResponse, ok } from '../_shared/response.ts';
 import { createAdminClient, type SupabaseClient } from '../_shared/supabase.ts';
 import { getAdapter } from '../_shared/adapters/registry.ts';
+import { resolveProviderAdapter } from '../_shared/credentials.ts';
 import { buildModelContext, landResult, markFailed } from '../_shared/pipeline.ts';
 
 /** 单次消费的最大任务数。 */
@@ -49,7 +50,10 @@ async function processJob(
   // 仅 pending 可被消费置 running（状态机幂等）
   if (generation.status !== 'pending') return;
 
-  await admin.from('generations').update({ status: 'running', progress: 10 }).eq('id', generationId);
+  await admin
+    .from('generations')
+    .update({ status: 'running', progress: 10 })
+    .eq('id', generationId);
 
   try {
     const { data: model } = await admin
@@ -59,7 +63,9 @@ async function processJob(
       .single();
     const modelRow = model as ModelCatalogRow;
 
-    const adapter = getAdapter(generation.provider);
+    const adapter = getAdapter(
+      await resolveProviderAdapter(admin, generation.provider, generation.project_id),
+    );
     const ctx = await buildModelContext(
       admin,
       {
@@ -102,12 +108,18 @@ async function processJob(
         .eq('id', generationId);
     }
   } catch (error) {
-    const code = error instanceof Error && 'code' in error ? (error as { code: string }).code : 'internal_error';
+    const code =
+      error instanceof Error && 'code' in error
+        ? (error as { code: string }).code
+        : 'internal_error';
     const message = error instanceof Error ? error.message : '执行失败';
     if (TRANSIENT_CODES.has(code) && readCount <= MAX_RETRIES) {
       // 瞬时错误：回退为 pending，并对该消息设置指数退避的可见性超时后留待重试
       await admin.from('generations').update({ status: 'pending' }).eq('id', generationId);
-      await admin.rpc('set_generation_job_vt', { p_msg_id: msgId, p_vt: backoffSeconds(readCount) });
+      await admin.rpc('set_generation_job_vt', {
+        p_msg_id: msgId,
+        p_vt: backoffSeconds(readCount),
+      });
       throw error; // 不删除消息，留待退避后重试
     }
     await markFailed(admin, { ...generation, status: 'running' }, message);
@@ -118,7 +130,11 @@ Deno.serve(async () => {
   try {
     const admin = createAdminClient();
     const { data: jobs } = await admin.rpc('read_generation_jobs', { p_qty: BATCH, p_vt: 90 });
-    const rows = (jobs ?? []) as Array<{ msg_id: number; read_ct: number; message: { generationId: string } }>;
+    const rows = (jobs ?? []) as Array<{
+      msg_id: number;
+      read_ct: number;
+      message: { generationId: string };
+    }>;
 
     let processed = 0;
     for (const job of rows) {

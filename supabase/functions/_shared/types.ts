@@ -26,7 +26,16 @@ export type NodeType =
   | 'generation_placeholder'
   | 'media_panel'
   | 'frame';
-export type Provider = 'openai' | 'google' | 'volcengine' | 'fal' | 'replicate' | 'siliconflow';
+export type BuiltInProvider =
+  | 'openai'
+  | 'google'
+  | 'volcengine'
+  | 'jimeng'
+  | 'minimax'
+  | 'fal'
+  | 'replicate'
+  | 'siliconflow';
+export type Provider = BuiltInProvider | `custom:${string}`;
 export type Scene = 'design' | 'branding' | 'ecommerce' | 'video';
 export type AgentMode = 'generate' | 'orchestrate' | 'scene';
 
@@ -330,7 +339,9 @@ export interface ModelCatalogRow {
 export interface ProviderCredential {
   id: string;
   provider: Provider;
+  adapter: BuiltInProvider;
   label: string | null;
+  websiteUrl: string | null;
   baseUrl: string | null;
   keyLast4: string;
   enabled: boolean;
@@ -350,14 +361,24 @@ export type ProviderCredentialsRequest =
   | {
       action: 'save';
       provider: Provider;
+      adapter?: BuiltInProvider;
       apiKey?: string;
+      apiSecret?: string;
       baseUrl?: string | null;
       label?: string | null;
+      websiteUrl?: string | null;
       enabled?: boolean;
     }
   | { action: 'toggle'; provider: Provider; enabled: boolean }
   | { action: 'delete'; id: string }
-  | { action: 'test'; provider: Provider; apiKey?: string; baseUrl?: string | null };
+  | {
+      action: 'test';
+      provider: Provider;
+      adapter?: BuiltInProvider;
+      apiKey?: string;
+      apiSecret?: string;
+      baseUrl?: string | null;
+    };
 
 /** provider-credentials 响应（随 action 不同）。 */
 export type ProviderCredentialsResponse =

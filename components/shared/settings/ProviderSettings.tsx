@@ -1,15 +1,15 @@
 'use client';
 
 /**
- * 模型提供商凭证设置（BYOK）。
+ * 模型供应商凭证设置（BYOK）。
  *
- * 首层只呈现提供商目录与配置状态；用户点击后进入单个提供商详情填写密钥和可选端点。
- * 明文 Key 经 `provider-credentials` 边缘函数写入 Vault，永不回流浏览器。
+ * 内置供应商拥有固定协议与官方端点；用户还可创建多个自定义供应商实例，并为其选择已支持
+ * 的兼容协议。明文密钥只经 `provider-credentials` Edge Function 写入 Vault。
  *
  * @module components/shared/settings/ProviderSettings
  */
 
-import { useEffect, useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   ArrowLeft,
   Check,
@@ -17,12 +17,20 @@ import {
   ChevronRight,
   KeyRound,
   Loader2,
+  Plus,
   Trash2,
   X,
 } from 'lucide-react';
-import type { Provider, ProviderCredential } from '@/types';
+import type { BuiltInProvider, Provider, ProviderCredential } from '@/types';
+import { BUILT_IN_PROVIDERS, isCustomProvider } from '@/types';
 import { useTranslation } from '@/i18n';
-import { PROVIDER_DEFINITIONS, type ProviderDefinition } from '@/lib/models/providers';
+import {
+  customProviderDefinition,
+  PROVIDER_DEFINITION_BY_ID,
+  PROVIDER_DEFINITIONS,
+  providerDefinition,
+  type ProviderDefinition,
+} from '@/lib/models/providers';
 import { cn } from '@/lib/utils/cn';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/toast';
@@ -30,26 +38,50 @@ import {
   useProviderCredentials,
   type UseProviderCredentials,
 } from '@/lib/hooks/use-provider-credentials';
+import { ModelSettings } from './ModelSettings';
 import { Field, Switch, TextInput } from './controls';
 
-/** 模型提供商设置面板。 */
+const CUSTOM_DRAFT_ID = 'custom:draft' as Provider;
+
+/** 按名称生成数据库允许的自定义供应商实例标识。 */
+function createCustomProviderId(name: string): Provider {
+  const slug = name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 28);
+  const stem = slug.length >= 3 ? slug : 'provider';
+  return `custom:${stem}-${crypto.randomUUID().slice(0, 8)}`;
+}
+
+/** 模型供应商设置面板。 */
 export function ProviderSettings() {
   const { t } = useTranslation();
   const api = useProviderCredentials();
   const [selectedProvider, setSelectedProvider] = useState<Provider | null>(null);
-  const byProvider = new Map(
-    api.credentials.map((credential) => [credential.provider, credential]),
+  const byProvider = useMemo(
+    () => new Map(api.credentials.map((credential) => [credential.provider, credential])),
+    [api.credentials],
+  );
+  const customCredentials = api.credentials.filter((credential) =>
+    isCustomProvider(credential.provider),
   );
 
   if (selectedProvider) {
-    const definition = PROVIDER_DEFINITIONS.find((item) => item.id === selectedProvider);
-    if (definition) {
+    const creatingCustom = selectedProvider === CUSTOM_DRAFT_ID;
+    const definition = creatingCustom
+      ? undefined
+      : providerDefinition(selectedProvider, api.credentials);
+    if (creatingCustom || definition) {
       return (
         <ProviderDetail
           key={selectedProvider}
           definition={definition}
-          credential={byProvider.get(selectedProvider)}
+          credential={creatingCustom ? undefined : byProvider.get(selectedProvider)}
           api={api}
+          creatingCustom={creatingCustom}
+          onSaved={(credential) => setSelectedProvider(credential.provider)}
           onBack={() => setSelectedProvider(null)}
         />
       );
@@ -69,42 +101,83 @@ export function ProviderSettings() {
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-          {PROVIDER_DEFINITIONS.map((definition) => {
-            const credential = byProvider.get(definition.id);
+          {PROVIDER_DEFINITIONS.map((definition) => (
+            <ProviderCard
+              key={definition.id}
+              definition={definition}
+              credential={byProvider.get(definition.id)}
+              onClick={() => setSelectedProvider(definition.id)}
+            />
+          ))}
+          {customCredentials.map((credential) => {
+            const definition = customProviderDefinition(credential);
             return (
-              <button
-                key={definition.id}
-                type="button"
-                onClick={() => setSelectedProvider(definition.id)}
-                className="group flex min-h-20 items-center gap-3 rounded-lg border border-border bg-card p-3 text-left transition-colors hover:border-accent/50 hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              >
-                <ProviderMark definition={definition} />
-                <span className="min-w-0 flex-1">
-                  <span className="flex items-center gap-2">
-                    <span className="truncate text-sm font-medium">{definition.name}</span>
-                    {credential?.enabled ? (
-                      <CheckCircle2 className="size-3.5 shrink-0 text-success" />
-                    ) : null}
-                  </span>
-                  <span className="mt-1 line-clamp-1 block text-xs text-muted-foreground">
-                    {credential
-                      ? credential.enabled
-                        ? `${t('providers.configured')} · ••••${credential.keyLast4}`
-                        : t('providers.disabled')
-                      : t(definition.descriptionKey)}
-                  </span>
-                </span>
-                <ChevronRight className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-foreground" />
-              </button>
+              <ProviderCard
+                key={credential.id}
+                definition={definition}
+                credential={credential}
+                onClick={() => setSelectedProvider(credential.provider)}
+              />
             );
           })}
+          <button
+            type="button"
+            onClick={() => setSelectedProvider(CUSTOM_DRAFT_ID)}
+            className="group flex min-h-20 items-center gap-3 rounded-lg border border-dashed border-border bg-card p-3 text-left transition-colors hover:border-accent/60 hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground group-hover:text-accent">
+              <Plus className="size-5" />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-sm font-medium">{t('providers.addCustom')}</span>
+              <span className="mt-1 line-clamp-1 block text-xs text-muted-foreground">
+                {t('providers.addCustomHint')}
+              </span>
+            </span>
+            <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
+          </button>
         </div>
       )}
     </div>
   );
 }
 
-/** 提供商品牌标记。 */
+function ProviderCard({
+  definition,
+  credential,
+  onClick,
+}: {
+  definition: ProviderDefinition;
+  credential?: ProviderCredential;
+  onClick: () => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="group flex min-h-20 items-center gap-3 rounded-lg border border-border bg-card p-3 text-left transition-colors hover:border-accent/50 hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      <ProviderMark definition={definition} />
+      <span className="min-w-0 flex-1">
+        <span className="flex items-center gap-2">
+          <span className="truncate text-sm font-medium">{definition.name}</span>
+          {credential?.enabled ? <CheckCircle2 className="size-3.5 text-success" /> : null}
+        </span>
+        <span className="mt-1 line-clamp-1 block text-xs text-muted-foreground">
+          {credential
+            ? credential.enabled
+              ? `${t('providers.configured')} · ••••${credential.keyLast4}`
+              : t('providers.disabled')
+            : t(definition.descriptionKey)}
+        </span>
+      </span>
+      <ChevronRight className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-foreground" />
+    </button>
+  );
+}
+
+/** 供应商品牌标记。 */
 function ProviderMark({ definition }: { definition: ProviderDefinition }) {
   return (
     <span
@@ -119,49 +192,107 @@ function ProviderMark({ definition }: { definition: ProviderDefinition }) {
   );
 }
 
-/** 单个提供商的凭据详情。 */
+/** 单个内置、自定义供应商的凭证详情。 */
 function ProviderDetail({
   definition,
   credential,
   api,
+  creatingCustom,
+  onSaved,
   onBack,
 }: {
-  definition: ProviderDefinition;
-  credential: ProviderCredential | undefined;
+  definition?: ProviderDefinition;
+  credential?: ProviderCredential;
   api: UseProviderCredentials;
+  creatingCustom: boolean;
+  onSaved: (credential: ProviderCredential) => void;
   onBack: () => void;
 }) {
   const { t } = useTranslation();
   const { success, error: toastError } = useToast();
+  const initialAdapter = credential?.adapter ?? definition?.adapter ?? 'openai';
+  const [name, setName] = useState(credential?.label ?? definition?.name ?? '');
+  const [websiteUrl, setWebsiteUrl] = useState(
+    credential?.websiteUrl ?? definition?.websiteUrl ?? '',
+  );
+  const [adapter, setAdapter] = useState<BuiltInProvider>(initialAdapter);
   const [apiKey, setApiKey] = useState('');
-  const [baseUrl, setBaseUrl] = useState(credential?.baseUrl ?? definition.officialBaseUrl);
+  const [apiSecret, setApiSecret] = useState('');
+  const [baseUrl, setBaseUrl] = useState(
+    credential?.baseUrl ??
+      definition?.officialBaseUrl ??
+      PROVIDER_DEFINITION_BY_ID.openai.officialBaseUrl,
+  );
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testOk, setTestOk] = useState<boolean | null>(null);
   const [testMsg, setTestMsg] = useState<string | null>(null);
   const configured = Boolean(credential);
+  const isCustom = creatingCustom || Boolean(definition?.isCustom);
+  const authMode = adapter === 'jimeng' ? 'access-key-pair' : 'api-key';
+  const shownDefinition: ProviderDefinition = definition ?? {
+    id: CUSTOM_DRAFT_ID,
+    adapter,
+    name: name || t('providers.customName'),
+    mark: name.slice(0, 1).toUpperCase() || '+',
+    markClassName: 'bg-muted text-foreground',
+    descriptionKey: 'providers.customDescription',
+    apiKeyPlaceholder: 'sk-...',
+    officialBaseUrl: baseUrl,
+    websiteUrl,
+    authMode,
+    isCustom: true,
+  };
 
-  useEffect(() => {
-    setBaseUrl(credential?.baseUrl ?? definition.officialBaseUrl);
-  }, [credential?.baseUrl, definition.officialBaseUrl]);
-
-  /** 保存新凭据或更新当前提供商配置。 */
-  const onSave = async () => {
+  const validate = (): boolean => {
+    if (isCustom && !name.trim()) {
+      toastError(t('providers.nameRequired'));
+      return false;
+    }
+    if (!baseUrl.trim()) {
+      toastError(t('providers.baseUrlRequired'));
+      return false;
+    }
     if (!configured && !apiKey.trim()) {
       toastError(t('providers.keyRequired'));
-      return;
+      return false;
     }
+    if (!configured && authMode === 'access-key-pair' && !apiSecret.trim()) {
+      toastError(t('providers.secretRequired'));
+      return false;
+    }
+    if (
+      configured &&
+      authMode === 'access-key-pair' &&
+      Boolean(apiKey.trim()) !== Boolean(apiSecret.trim())
+    ) {
+      toastError(t('providers.keyPairRequired'));
+      return false;
+    }
+    return true;
+  };
+
+  const onSave = async () => {
+    if (!validate()) return;
     setSaving(true);
     try {
-      await api.saveCredential({
-        provider: definition.id,
+      const saved = await api.saveCredential({
+        provider:
+          credential?.provider ??
+          (creatingCustom ? createCustomProviderId(name) : shownDefinition.id),
+        adapter,
         apiKey: apiKey.trim() || undefined,
-        baseUrl: baseUrl.trim() || definition.officialBaseUrl,
+        apiSecret: apiSecret.trim() || undefined,
+        baseUrl: baseUrl.trim(),
+        label: isCustom ? name.trim() : null,
+        websiteUrl: isCustom ? websiteUrl.trim() || null : shownDefinition.websiteUrl,
       });
       setApiKey('');
+      setApiSecret('');
       setTestOk(null);
       setTestMsg(null);
       success(t('providers.saved'));
+      onSaved(saved);
     } catch (err) {
       toastError(err instanceof Error ? err.message : t('providers.saveFailed'));
     } finally {
@@ -169,19 +300,21 @@ function ProviderDetail({
     }
   };
 
-  /** 测试输入中的凭据；Key 留空时由边缘函数使用已存密钥。 */
   const onTest = async () => {
+    if (!validate()) return;
     setTesting(true);
     setTestOk(null);
     setTestMsg(null);
     try {
       const result = await api.testCredential({
-        provider: definition.id,
+        provider: credential?.provider ?? (creatingCustom ? CUSTOM_DRAFT_ID : shownDefinition.id),
+        adapter,
         apiKey: apiKey.trim() || undefined,
-        baseUrl: baseUrl.trim() || definition.officialBaseUrl,
+        apiSecret: apiSecret.trim() || undefined,
+        baseUrl: baseUrl.trim(),
       });
       setTestOk(result.ok);
-      setTestMsg(result.ok ? t('providers.testOk') : (result.message ?? t('providers.testFailed')));
+      setTestMsg(result.message ?? (result.ok ? t('providers.testOk') : t('providers.testFailed')));
     } catch (err) {
       setTestOk(false);
       setTestMsg(err instanceof Error ? err.message : t('providers.testFailed'));
@@ -190,26 +323,31 @@ function ProviderDetail({
     }
   };
 
-  /** 启用或停用当前凭据。 */
   const onToggle = async (next: boolean) => {
+    if (!credential) return;
     try {
-      await api.toggleCredential(definition.id, next);
+      await api.toggleCredential(credential.provider, next);
     } catch (err) {
       toastError(err instanceof Error ? err.message : t('providers.saveFailed'));
     }
   };
 
-  /** 删除当前凭据及其 Vault 密钥。 */
   const onDelete = async () => {
     if (!credential || !window.confirm(t('providers.deleteConfirm'))) return;
     try {
       await api.deleteCredential(credential.id);
-      setApiKey('');
-      setBaseUrl(definition.officialBaseUrl);
       success(t('providers.deleted'));
+      onBack();
     } catch (err) {
       toastError(err instanceof Error ? err.message : t('providers.saveFailed'));
     }
+  };
+
+  const onAdapterChange = (next: BuiltInProvider) => {
+    setAdapter(next);
+    setApiKey('');
+    setApiSecret('');
+    setBaseUrl(PROVIDER_DEFINITION_BY_ID[next].officialBaseUrl);
   };
 
   return (
@@ -223,10 +361,14 @@ function ProviderDetail({
         >
           <ArrowLeft className="size-4" />
         </button>
-        <ProviderMark definition={definition} />
+        <ProviderMark definition={shownDefinition} />
         <div className="min-w-0 flex-1">
-          <h3 className="truncate text-base font-semibold">{definition.name}</h3>
-          <p className="mt-0.5 text-xs text-muted-foreground">{t(definition.descriptionKey)}</p>
+          <h3 className="truncate text-base font-semibold">
+            {creatingCustom ? t('providers.addCustom') : shownDefinition.name}
+          </h3>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            {t(shownDefinition.descriptionKey)}
+          </p>
         </div>
         {credential ? (
           <div className="flex items-center gap-2">
@@ -244,20 +386,48 @@ function ProviderDetail({
             <KeyRound className="size-4 text-muted-foreground" />
             <span className="text-sm font-medium">{t('providers.credential')}</span>
           </div>
-          {credential ? (
-            <span className="rounded-md bg-muted px-2 py-1 text-xs text-muted-foreground">
-              ••••{credential.keyLast4}
-            </span>
-          ) : (
-            <span className="rounded-md bg-muted px-2 py-1 text-xs text-muted-foreground">
-              {t('providers.notConfigured')}
-            </span>
-          )}
+          <span className="rounded-md bg-muted px-2 py-1 text-xs text-muted-foreground">
+            {credential ? `••••${credential.keyLast4}` : t('providers.notConfigured')}
+          </span>
         </div>
 
         <div className="flex flex-col gap-4">
+          {isCustom ? (
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <Field label={t('providers.customName')}>
+                <TextInput
+                  value={name}
+                  onChange={(event) => setName(event.target.value)}
+                  placeholder="MiniMax 企业网关"
+                />
+              </Field>
+              <Field label={t('providers.websiteUrl')}>
+                <TextInput
+                  type="url"
+                  value={websiteUrl}
+                  onChange={(event) => setWebsiteUrl(event.target.value)}
+                  placeholder="https://example.com"
+                />
+              </Field>
+              <Field label={t('providers.adapter')} hint={t('providers.adapterHint')}>
+                <select
+                  value={adapter}
+                  disabled={configured}
+                  onChange={(event) => onAdapterChange(event.target.value as BuiltInProvider)}
+                  className="h-10 w-full rounded-xl border border-border bg-background px-3 text-sm outline-none transition-colors focus:border-accent focus:ring-2 focus:ring-ring disabled:opacity-60"
+                >
+                  {BUILT_IN_PROVIDERS.map((item) => (
+                    <option key={item} value={item}>
+                      {PROVIDER_DEFINITION_BY_ID[item].name}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            </div>
+          ) : null}
+
           <Field
-            label={t('providers.apiKey')}
+            label={authMode === 'access-key-pair' ? 'Access Key ID' : t('providers.apiKey')}
             hint={configured ? t('providers.keyHintConfigured') : t('providers.keyHintNew')}
           >
             <TextInput
@@ -266,16 +436,31 @@ function ProviderDetail({
               value={apiKey}
               onChange={(event) => setApiKey(event.target.value)}
               placeholder={
-                configured ? t('providers.keyPlaceholderConfigured') : definition.apiKeyPlaceholder
+                configured
+                  ? t('providers.keyPlaceholderConfigured')
+                  : shownDefinition.apiKeyPlaceholder
               }
             />
           </Field>
+          {authMode === 'access-key-pair' ? (
+            <Field label="Secret Access Key" hint={t('providers.secretHint')}>
+              <TextInput
+                type="password"
+                autoComplete="off"
+                value={apiSecret}
+                onChange={(event) => setApiSecret(event.target.value)}
+                placeholder={
+                  configured ? t('providers.keyPlaceholderConfigured') : '输入 Secret Access Key'
+                }
+              />
+            </Field>
+          ) : null}
           <Field label={t('providers.baseUrl')} hint={t('providers.baseUrlHint')}>
             <TextInput
               type="url"
               value={baseUrl}
               onChange={(event) => setBaseUrl(event.target.value)}
-              placeholder={definition.officialBaseUrl}
+              placeholder={shownDefinition.officialBaseUrl}
             />
           </Field>
 
@@ -312,6 +497,14 @@ function ProviderDetail({
           ) : null}
         </div>
       </div>
+
+      {credential && isCustom ? (
+        <div className="rounded-lg border border-border p-4 sm:p-5">
+          <h4 className="mb-1 text-sm font-semibold">{t('providers.customModels')}</h4>
+          <p className="mb-4 text-xs text-muted-foreground">{t('providers.customModelsHint')}</p>
+          <ModelSettings providerFilter={credential.provider} providerLabel={name} />
+        </div>
+      ) : null}
     </div>
   );
 }

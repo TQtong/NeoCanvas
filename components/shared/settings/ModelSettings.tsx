@@ -153,13 +153,25 @@ function toggleIn<T>(arr: T[], value: T): T[] {
 /**
  * 模型管理面板。
  */
-export function ModelSettings() {
+export interface ModelSettingsProps {
+  /** 限定只管理某个供应商的模型；用于自定义供应商详情。 */
+  providerFilter?: Provider;
+  /** 限定供应商的展示名。 */
+  providerLabel?: string;
+}
+
+export function ModelSettings({ providerFilter, providerLabel }: ModelSettingsProps = {}) {
   const { t } = useTranslation();
   const { success, error: toastError } = useToast();
   const models = useManagedModels();
   const providerApi = useProviderCredentials();
 
-  const configuredProviders = providerApi.credentials.map((c) => c.provider);
+  const configuredProviders = providerApi.credentials
+    .filter((credential) => !providerFilter || credential.provider === providerFilter)
+    .map((credential) => credential.provider);
+  const visibleModels = providerFilter
+    ? models.models.filter((model) => model.provider === providerFilter && model.userId != null)
+    : models.models;
   const [form, setForm] = useState<FormState | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -176,7 +188,12 @@ export function ModelSettings() {
 
   const onSubmit = async () => {
     if (!form) return;
-    if (!form.key.trim() || !form.displayName.trim() || !form.provider || !form.providerModel.trim()) {
+    if (
+      !form.key.trim() ||
+      !form.displayName.trim() ||
+      !form.provider ||
+      !form.providerModel.trim()
+    ) {
       toastError(t('models.fieldsRequired'));
       return;
     }
@@ -234,6 +251,7 @@ export function ModelSettings() {
           set={set}
           saving={saving}
           configuredProviders={configuredProviders}
+          providerLabel={providerLabel}
           onSubmit={() => void onSubmit()}
           onCancel={() => setForm(null)}
         />
@@ -245,7 +263,7 @@ export function ModelSettings() {
         </div>
       ) : (
         <div className="flex flex-col gap-2">
-          {models.models.map((m) => {
+          {visibleModels.map((m) => {
             const own = m.userId != null;
             return (
               <div
@@ -305,6 +323,7 @@ function ModelForm({
   set,
   saving,
   configuredProviders,
+  providerLabel,
   onSubmit,
   onCancel,
 }: {
@@ -312,6 +331,7 @@ function ModelForm({
   set: <K extends keyof FormState>(key: K, value: FormState[K]) => void;
   saving: boolean;
   configuredProviders: Provider[];
+  providerLabel?: string;
   onSubmit: () => void;
   onCancel: () => void;
 }) {
@@ -338,17 +358,21 @@ function ModelForm({
           />
         </Field>
         <Field label={t('models.provider')}>
-          <select
-            value={form.provider}
-            onChange={(e) => set('provider', e.target.value as Provider)}
-            className={inputClass}
-          >
-            {configuredProviders.map((p) => (
-              <option key={p} value={p}>
-                {p}
-              </option>
-            ))}
-          </select>
+          {configuredProviders.length === 1 ? (
+            <TextInput value={providerLabel ?? configuredProviders[0]} disabled />
+          ) : (
+            <select
+              value={form.provider}
+              onChange={(e) => set('provider', e.target.value as Provider)}
+              className={inputClass}
+            >
+              {configuredProviders.map((p) => (
+                <option key={p} value={p}>
+                  {p}
+                </option>
+              ))}
+            </select>
+          )}
         </Field>
         <Field label={t('models.modality')}>
           <select

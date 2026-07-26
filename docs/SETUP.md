@@ -167,7 +167,7 @@ npx supabase link --project-ref <project-ref>
 
 ## 四、应用数据库迁移与模型数据
 
-仓库当前包含 `supabase/migrations/` 下的 **20 个迁移**。它们会依次建立扩展、枚举、表、索引、
+仓库当前包含 `supabase/migrations/` 下的 **22 个迁移**。它们会依次建立扩展、枚举、表、索引、
 RLS、函数与触发器、三个 Storage 桶、Realtime 发布、`pgmq` 队列、`pg_cron` 任务、BYOK 和媒体工作流。
 
 先预览，再执行：
@@ -191,7 +191,7 @@ select id, bucket_id, name from storage.buckets order by id;
 select * from cron.job order by jobname;
 ```
 
-应至少看到迁移 `20260101000001` 至 `20260101000020`、模型目录、`avatars` / `uploads` /
+应至少看到迁移 `20260101000001` 至 `20260101000022`、模型目录、`avatars` / `uploads` /
 `generations` 三个桶，以及 NeoCanvas 的队列消费、轮询和清理定时任务。
 
 ## 五、配置数据库回调机密（Vault）
@@ -282,6 +282,7 @@ npx supabase secrets set ARK_API_KEY=<ark-key>
 npx supabase secrets set FAL_API_KEY=<fal-key>
 npx supabase secrets set REPLICATE_API_TOKEN=<replicate-token>
 npx supabase secrets set SILICONFLOW_API_KEY=<siliconflow-key>
+npx supabase secrets set MINIMAX_API_KEY=<minimax-key>
 ```
 
 使用 SiliconFlow 兼容代理时才设置 `SILICONFLOW_BASE_URL`。使用独立编排端点时设置：
@@ -305,8 +306,11 @@ npx supabase secrets list
 
 ### 7.3 BYOK 说明
 
-登录用户可以在「设置 → 模型提供商」配置自己的 API Key。明文经 `provider-credentials` 函数写入
-Vault，不会回流客户端。生成时的解析顺序是：
+登录用户可以在「设置 → 模型提供商」配置自己的凭证。即梦与 MiniMax 已作为内置供应商提供：
+即梦填写 Access Key ID + Secret Access Key，MiniMax 填写 API Key；两者的官方 API 端点均已预填，
+只有使用兼容代理时才需要修改。其他服务通过「添加自定义供应商」选择兼容协议、填写端点，并在
+供应商详情中维护该实例的图片或视频模型。明文经 `provider-credentials` 函数写入 Vault，不会回流
+客户端。生成时的解析顺序是：
 
 1. 用户启用的 BYOK 凭证。
 2. Edge Function 环境中的系统级提供商 key。

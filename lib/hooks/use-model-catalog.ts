@@ -11,6 +11,7 @@ import type { ModelCatalogEntry } from '@/types';
 import { getBrowserSupabase } from '@/lib/supabase/client';
 import { fetchModelCatalog } from '@/lib/models/catalog';
 import { PROVIDER_CREDENTIALS_CHANGED_EVENT } from '@/lib/hooks/use-provider-credentials';
+import { MODEL_CATALOG_CHANGED_EVENT } from '@/lib/hooks/use-managed-models';
 
 /**
  * 模型目录钩子。
@@ -37,9 +38,11 @@ export function useModelCatalog(initial: ModelCatalogEntry[] = []): ModelCatalog
     // 服务端没有可用模型时在客户端再确认一次，以覆盖登录态刚建立时的短暂空快照。
     if (initial.length === 0) void loadCatalog();
     window.addEventListener(PROVIDER_CREDENTIALS_CHANGED_EVENT, onProviderCredentialsChanged);
+    window.addEventListener(MODEL_CATALOG_CHANGED_EVENT, onProviderCredentialsChanged);
     return () => {
       active = false;
       window.removeEventListener(PROVIDER_CREDENTIALS_CHANGED_EVENT, onProviderCredentialsChanged);
+      window.removeEventListener(MODEL_CATALOG_CHANGED_EVENT, onProviderCredentialsChanged);
     };
   }, [initial.length]);
 

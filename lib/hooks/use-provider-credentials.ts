@@ -12,6 +12,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import type {
+  BuiltInProvider,
   Provider,
   ProviderCredential,
   ProviderCredentialRow,
@@ -48,7 +49,9 @@ function rowToCredential(row: ProviderCredentialRow): ProviderCredential {
   return {
     id: row.id,
     provider: row.provider,
+    adapter: row.adapter,
     label: row.label ?? null,
+    websiteUrl: row.website_url ?? null,
     baseUrl: row.base_url ?? null,
     keyLast4: row.key_last4,
     enabled: row.enabled,
@@ -60,17 +63,25 @@ function rowToCredential(row: ProviderCredentialRow): ProviderCredential {
 /** 保存凭证入参。 */
 export interface SaveCredentialInput {
   provider: Provider;
+  /** 实际请求协议；内置提供商与 provider 一致。 */
+  adapter?: BuiltInProvider;
   /** 明文 Key；留空表示沿用既有 Key（仅改 base_url / enabled）。 */
   apiKey?: string;
+  /** 双密钥提供商的 Secret Access Key。 */
+  apiSecret?: string;
   baseUrl?: string | null;
+  label?: string | null;
+  websiteUrl?: string | null;
   enabled?: boolean;
 }
 
 /** 连通性测试入参。 */
 export interface TestCredentialInput {
   provider: Provider;
+  adapter?: BuiltInProvider;
   /** 待测 Key；留空则测试已存 Key。 */
   apiKey?: string;
+  apiSecret?: string;
   baseUrl?: string | null;
 }
 
