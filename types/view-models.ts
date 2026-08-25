@@ -7,7 +7,15 @@
  * @module types/view-models
  */
 
-import type { AgentMode, AssetKind, AssetSource, GenerationStatus, MessageRole, Modality, Scene } from './enums';
+import type {
+  AgentMode,
+  AssetKind,
+  AssetSource,
+  GenerationStatus,
+  MessageRole,
+  Modality,
+  Scene,
+} from './enums';
 import type { MessageAttachment, MessageMention } from './messages';
 
 /**
@@ -54,6 +62,8 @@ export interface AssetView {
   url: string;
   /** 缩略图签名 URL（运行时注入）。 */
   thumbnailUrl: string | null;
+  /** 当前签名 URL 的到期时间（ISO），用于长会话提前续签。 */
+  expiresAt: string;
 }
 
 /**
@@ -100,6 +110,8 @@ export interface MessageView {
   attachments: MessageAttachment[];
   /** 创建时间（ISO）。 */
   createdAt: string;
+  /** 助手消息所回应的用户消息标识，用于恢复生成任务关联。 */
+  userMessageId?: string | null;
   /** 运行时：是否正在流式接收（助手消息）。 */
   streaming?: boolean;
   /** 运行时：本条消息触发的生成任务标识集合。 */

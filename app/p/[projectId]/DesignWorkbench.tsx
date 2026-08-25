@@ -9,11 +9,12 @@
  * @module app/p/[projectId]/DesignWorkbench
  */
 
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ReactFlowProvider, useReactFlow } from '@xyflow/react';
-import type { ModelCatalogEntry } from '@/types';
+import type { AgentMode, ConversationRow, ModelCatalogEntry } from '@/types';
 import type { ProjectBundle } from '@/lib/data/load-project';
 import { useCanvasStore } from '@/stores/canvas-store';
+import { useChatStore } from '@/stores/chat-store';
 import { useSessionStore } from '@/stores/session-store';
 import { getBrowserSupabase } from '@/lib/supabase/client';
 import { uploadAsset } from '@/lib/storage/upload';
@@ -33,8 +34,14 @@ import { CanvasCornerControls } from '@/components/canvas/CanvasCornerControls';
 import { useCanvasHistory } from '@/components/canvas/use-canvas-history';
 import { useCanvasShortcuts } from '@/components/canvas/use-canvas-shortcuts';
 import { TopBar } from '@/components/shared/TopBar';
+import { ChatPanel } from '@/components/chat/ChatPanel';
 import { useToast } from '@/components/ui/toast';
+import { Spinner } from '@/components/ui/spinner';
 import { useTranslation } from '@/i18n';
+import {
+  useWorkbenchModelSource,
+  WorkbenchModelProvider,
+} from '@/lib/hooks/use-workbench-model-source';
 
 /** 工作台属性。 */
 export interface DesignWorkbenchProps {
@@ -44,22 +51,93 @@ export interface DesignWorkbenchProps {
   models: ModelCatalogEntry[];
 }
 
+/** 跨 StrictMode effect 重建复用的空会话初始化请求，避免同项目重复插入。 */
+const conversationInitialization = new Map<string, Promise<ConversationRow>>();
+
+/** 保证项目至少有一条会话；先查询再创建，并以项目维度 single-flight。 */
+function ensureProjectConversation(projectId: string): Promise<ConversationRow> {
+  const existing = conversationInitialization.get(projectId);
+  if (existing) return existing;
+
+  const request = (async () => {
+    const supabase = getBrowserSupabase();
+    const { data: rows, error: queryError } = await supabase
+      .from('conversations')
+      .select('*')
+      .eq('project_id', projectId)
+      .order('updated_at', { ascending: false })
+      .limit(1);
+    if (queryError) throw queryError;
+    if (rows?.[0]) return rows[0];
+
+    const { data, error } = await supabase
+      .from('conversations')
+      .insert({ project_id: projectId })
+      .select('*')
+      .single();
+    if (error || !data) throw error ?? new Error('无法创建项目会话');
+    return data;
+  })().finally(() => {
+    conversationInitialization.delete(projectId);
+  });
+  conversationInitialization.set(projectId, request);
+  return request;
+}
+
+/** 按历史选择、项目默认与目录顺序解析工作台初始模型。 */
+function resolveInitialModelKey(bundle: ProjectBundle, models: ModelCatalogEntry[]): string | null {
+  const available = new Set(models.filter((model) => model.isActive).map((model) => model.key));
+  const historical = [...bundle.messages]
+    .reverse()
+    .find((message) => message.model_key && available.has(message.model_key))?.model_key;
+  if (historical) return historical;
+  if (bundle.project.default_model_key && available.has(bundle.project.default_model_key)) {
+    return bundle.project.default_model_key;
+  }
+  return models.find((model) => model.isActive)?.key ?? null;
+}
+
+/** 从最近消息恢复合法 Agent 模式。 */
+function resolveInitialAgentMode(bundle: ProjectBundle): AgentMode {
+  const mode = [...bundle.messages].reverse().find((message) => message.agent_mode)?.agent_mode;
+  return mode === 'generate' || mode === 'orchestrate' || mode === 'scene' ? mode : 'generate';
+}
+
 /** 工作台内层（已处于 ReactFlowProvider 内，可用 useReactFlow）。 */
-function WorkbenchInner({ bundle, models }: DesignWorkbenchProps) {
+function WorkbenchInner({ bundle }: DesignWorkbenchProps) {
   const reactFlow = useReactFlow();
   const toast = useToast();
   const { t } = useTranslation();
   const { generate: generateSequenceVideo } = useSequenceVideo();
   const fileRef = useRef<HTMLInputElement>(null);
   const pendingUploadPositionRef = useRef<FlowPoint | null>(null);
+  const [title, setTitle] = useState(bundle.project.title);
+  const [chatOpen, setChatOpen] = useState(true);
+  const { models } = useWorkbenchModelSource();
 
   const userId = useSessionStore((s) => s.profile?.id ?? bundle.project.owner_id);
-  const title = useCanvasStore((s) => s.projectId) ? bundle.project.title : bundle.project.title;
+  const conversationId = useChatStore((state) => state.conversationId);
+  const selectedModelKey = useChatStore((state) => state.selectedModelKey);
 
   // 持久化、实时、媒体解析
-  useCanvasPersistence(bundle.project.id, userId, (msg) => toast.error(msg));
-  useRealtimeProject(bundle.project.id);
+  const persistence = useCanvasPersistence(bundle.project.id, userId, (msg) => toast.error(msg));
+  const realtimeStatus = useRealtimeProject(bundle.project.id, conversationId);
   useCanvasMedia(bundle.project.id);
+  const syncState = useCanvasStore((state) => state.syncState);
+
+  useEffect(() => setTitle(bundle.project.title), [bundle.project.title]);
+
+  // 目录或凭据变更后校正已失效选择；无可用模型时明确置空并由输入区禁用提交。
+  useEffect(() => {
+    if (selectedModelKey && models.some((model) => model.key === selectedModelKey)) return;
+    useChatStore.getState().setModel(models[0]?.key ?? null);
+  }, [models, selectedModelKey]);
+
+  // 面板宽度过渡结束后通知 React Flow 重新测量容器；节点 flow 坐标与视口不发生改变。
+  useEffect(() => {
+    const timer = window.setTimeout(() => window.dispatchEvent(new Event('resize')), 220);
+    return () => window.clearTimeout(timer);
+  }, [chatOpen]);
 
   // 撤销 / 重做与快捷键
   const history = useCanvasHistory(bundle.project.id);
@@ -106,6 +184,7 @@ function WorkbenchInner({ bundle, models }: DesignWorkbenchProps) {
                   assetId: asset.id,
                   src: asset.url,
                   posterSrc: asset.thumbnailUrl,
+                  urlExpiresAt: asset.expiresAt,
                 }
               : {
                   assetId: asset.id,
@@ -113,6 +192,7 @@ function WorkbenchInner({ bundle, models }: DesignWorkbenchProps) {
                   thumbnailSrc: asset.thumbnailUrl,
                   naturalWidth: asset.width,
                   naturalHeight: asset.height,
+                  urlExpiresAt: asset.expiresAt,
                 },
         });
         const store = useCanvasStore.getState();
@@ -181,7 +261,8 @@ function WorkbenchInner({ bundle, models }: DesignWorkbenchProps) {
           generationSettings: {
             modelKey: match?.key ?? null,
             count: 1,
-            aspectRatio: match?.defaultParams.aspectRatio ?? (modality === 'video' ? '16:9' : '1:1'),
+            aspectRatio:
+              match?.defaultParams.aspectRatio ?? (modality === 'video' ? '16:9' : '1:1'),
             sizePreset:
               modality === 'image' && match?.defaultParams.width && match.defaultParams.height
                 ? 'custom'
@@ -192,7 +273,8 @@ function WorkbenchInner({ bundle, models }: DesignWorkbenchProps) {
             height: match?.defaultParams.height,
             quality: match?.defaultParams.quality,
             durationSec: match?.defaultParams.durationSec ?? (modality === 'video' ? 5 : undefined),
-            resolution: match?.defaultParams.resolution ?? (modality === 'video' ? '720p' : undefined),
+            resolution:
+              match?.defaultParams.resolution ?? (modality === 'video' ? '720p' : undefined),
             fps: match?.defaultParams.fps ?? (modality === 'video' ? 24 : undefined),
             motionStrength: match?.defaultParams.motionStrength,
           },
@@ -208,7 +290,16 @@ function WorkbenchInner({ bundle, models }: DesignWorkbenchProps) {
     <div className="relative flex h-screen w-full overflow-hidden bg-background">
       {/* 左侧画布区 */}
       <div className="relative flex-1">
-        <TopBar projectId={bundle.project.id} title={title} />
+        <TopBar
+          projectId={bundle.project.id}
+          title={title}
+          chatOpen={chatOpen}
+          realtimeStatus={realtimeStatus}
+          syncState={syncState}
+          onToggleChat={() => setChatOpen((open) => !open)}
+          onTitleChange={setTitle}
+          onRetrySync={persistence.retryPending}
+        />
         <div className="absolute inset-0 pt-14">
           <CanvasContainer
             initialViewport={bundle.project.viewport}
@@ -217,6 +308,15 @@ function WorkbenchInner({ bundle, models }: DesignWorkbenchProps) {
         </div>
         <CanvasBottomToolbar onUploadMedia={() => onUploadMedia()} onAiTool={onAiTool} />
         <CanvasCornerControls />
+        {!persistence.ready ? (
+          <div
+            className="absolute inset-x-0 bottom-0 top-14 z-30 flex items-center justify-center bg-background/35 backdrop-blur-[1px]"
+            role="status"
+            aria-label={t('common.loading')}
+          >
+            <Spinner label={t('common.loading')} />
+          </div>
+        ) : null}
         <input
           ref={fileRef}
           type="file"
@@ -229,6 +329,23 @@ function WorkbenchInner({ bundle, models }: DesignWorkbenchProps) {
           }}
         />
       </div>
+
+      <aside
+        id="project-chat-panel"
+        aria-hidden={!chatOpen}
+        inert={!chatOpen}
+        className={`h-full shrink-0 overflow-hidden bg-card transition-[width,border-color] duration-200 ease-out ${
+          chatOpen ? 'w-[380px] border-l border-border' : 'w-0 border-l border-transparent'
+        }`}
+      >
+        <div className="h-full w-[380px]">
+          <ChatPanel
+            projectId={bundle.project.id}
+            models={models}
+            onCollapse={() => setChatOpen(false)}
+          />
+        </div>
+      </aside>
     </div>
   );
 }
@@ -257,14 +374,40 @@ export function DesignWorkbench({ bundle, models }: DesignWorkbenchProps) {
       edgeRows: bundle.edges,
       viewport: bundle.project.viewport,
     });
+    useCanvasStore.getState().reconcileGenerationSnapshot(bundle.generations);
+    useChatStore.getState().hydrateProjectChat({
+      projectId: bundle.project.id,
+      conversations: bundle.conversations,
+      conversationId: bundle.conversation?.id ?? null,
+      messages: bundle.messages,
+      generations: bundle.generations,
+      selectedModelKey: resolveInitialModelKey(bundle, models),
+      agentMode: resolveInitialAgentMode(bundle),
+      hasMoreMessages: bundle.hasMoreMessages,
+    });
+
+    let cancelled = false;
+    if (!bundle.conversation) {
+      void ensureProjectConversation(bundle.project.id)
+        .then((conversation) => {
+          if (!cancelled) useChatStore.getState().startConversation(conversation);
+        })
+        .catch(() => {
+          // 对话面板保留空态；Realtime 与后续“新对话”操作仍可恢复，不制造虚假本地会话。
+        });
+    }
     return () => {
+      cancelled = true;
       useCanvasStore.getState().reset();
+      useChatStore.getState().reset();
     };
-  }, [bundle]);
+  }, [bundle, models]);
 
   return (
-    <ReactFlowProvider>
-      <WorkbenchInner bundle={bundle} models={models} />
-    </ReactFlowProvider>
+    <WorkbenchModelProvider initialModels={models}>
+      <ReactFlowProvider>
+        <WorkbenchInner bundle={bundle} models={models} />
+      </ReactFlowProvider>
+    </WorkbenchModelProvider>
   );
 }

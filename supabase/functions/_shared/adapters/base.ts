@@ -46,6 +46,11 @@ export interface ModelContext {
    * 环境变量。适配器只从此处取 Key / 端点，**不再各自读 `Deno.env`**（密钥解析单点化）。
    */
   credentials: { apiKey: string; baseUrl?: string };
+  /**
+   * 仅对声明支持回调的异步模型提供。适配器应把 url 与 secret 写入 Provider 的回调参数；
+   * secret 只存在于本次提交内存，数据库仅保存其 SHA-256。
+   */
+  webhookCallback?: { url: string; secret: string; expiresAt: string };
 }
 
 /** 模型适配器统一接口。 */

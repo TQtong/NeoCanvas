@@ -82,7 +82,9 @@ function candidateParentId(node: CanvasFlowNode): string | null {
     return node.data.candidateOf;
   }
   if (node.data.type === 'generation_placeholder') {
-    return node.data.resultMode === 'candidate_for_target' ? (node.data.targetNodeId ?? null) : null;
+    return node.data.resultMode === 'candidate_for_target'
+      ? (node.data.targetNodeId ?? null)
+      : null;
   }
   return null;
 }
@@ -152,9 +154,7 @@ export function CanvasContainer({ initialViewport, onUploadMediaAt }: CanvasCont
         const hidden =
           hiddenCandidateNodeIds.has(node.id) ||
           (node.data.type === 'media_panel' && hiddenCandidateNodeIds.has(node.data.targetNodeId));
-        return hidden
-          ? { ...node, hidden: true }
-          : node;
+        return hidden ? { ...node, hidden: true } : node;
       }),
     [hiddenCandidateNodeIds, nodes],
   );
@@ -203,8 +203,9 @@ export function CanvasContainer({ initialViewport, onUploadMediaAt }: CanvasCont
 
   // 拖动开始：若拖的是组内节点或媒体目标 / 媒体面板，记录起始位置以便联动
   const onNodeDragStart = useCallback((_event: MouseEvent | TouchEvent, node: CanvasFlowNode) => {
-    const hasMediaCompanion =
-      mediaPanelCompanionIds(useCanvasStore.getState().nodes, node).length > 0;
+    const store = useCanvasStore.getState();
+    store.beginHistoryTransaction('移动节点');
+    const hasMediaCompanion = mediaPanelCompanionIds(store.nodes, node).length > 0;
     groupDragRef.current =
       node.data.groupId || hasMediaCompanion ? { x: node.position.x, y: node.position.y } : null;
   }, []);
@@ -222,10 +223,15 @@ export function CanvasContainer({ initialViewport, onUploadMediaAt }: CanvasCont
           const draggedIds = new Set(draggedNodes.map((n) => n.id));
           const store = useCanvasStore.getState();
           const movedIds = new Set<string>();
+          const changes: Array<{
+            id: string;
+            patch: Partial<CanvasFlowNode>;
+          }> = [];
           for (const m of store.nodes) {
             if (m.id !== node.id && m.data.groupId === gid && !draggedIds.has(m.id)) {
-              store.updateNode(m.id, {
-                position: { x: m.position.x + dx, y: m.position.y + dy },
+              changes.push({
+                id: m.id,
+                patch: { position: { x: m.position.x + dx, y: m.position.y + dy } },
               });
               movedIds.add(m.id);
             }
@@ -233,10 +239,12 @@ export function CanvasContainer({ initialViewport, onUploadMediaAt }: CanvasCont
           for (const id of mediaPanelCompanionIds(store.nodes, node)) {
             const m = store.nodes.find((item) => item.id === id);
             if (!m || m.id === node.id || draggedIds.has(m.id) || movedIds.has(m.id)) continue;
-            store.updateNode(m.id, {
-              position: { x: m.position.x + dx, y: m.position.y + dy },
+            changes.push({
+              id: m.id,
+              patch: { position: { x: m.position.x + dx, y: m.position.y + dy } },
             });
           }
+          if (changes.length > 0) store.updateNodesBatch(changes);
           groupDragRef.current = { x: node.position.x, y: node.position.y };
         }
       } else if (last) {
@@ -245,13 +253,19 @@ export function CanvasContainer({ initialViewport, onUploadMediaAt }: CanvasCont
         if (dx !== 0 || dy !== 0) {
           const draggedIds = new Set(draggedNodes.map((n) => n.id));
           const store = useCanvasStore.getState();
+          const changes: Array<{
+            id: string;
+            patch: Partial<CanvasFlowNode>;
+          }> = [];
           for (const id of mediaPanelCompanionIds(store.nodes, node)) {
             const m = store.nodes.find((item) => item.id === id);
             if (!m || m.id === node.id || draggedIds.has(m.id)) continue;
-            store.updateNode(m.id, {
-              position: { x: m.position.x + dx, y: m.position.y + dy },
+            changes.push({
+              id: m.id,
+              patch: { position: { x: m.position.x + dx, y: m.position.y + dy } },
             });
           }
+          if (changes.length > 0) store.updateNodesBatch(changes);
           groupDragRef.current = { x: node.position.x, y: node.position.y };
         }
       }
@@ -284,16 +298,23 @@ export function CanvasContainer({ initialViewport, onUploadMediaAt }: CanvasCont
         updateNode(node.id, { position: { x: result.x, y: result.y } });
         if (dx !== 0 || dy !== 0) {
           const store = useCanvasStore.getState();
+          const changes: Array<{
+            id: string;
+            patch: Partial<CanvasFlowNode>;
+          }> = [];
           for (const id of mediaPanelCompanionIds(store.nodes, node)) {
             const m = store.nodes.find((item) => item.id === id);
             if (!m || m.id === node.id) continue;
-            store.updateNode(m.id, {
-              position: { x: m.position.x + dx, y: m.position.y + dy },
+            changes.push({
+              id: m.id,
+              patch: { position: { x: m.position.x + dx, y: m.position.y + dy } },
             });
           }
+          if (changes.length > 0) store.updateNodesBatch(changes);
         }
       }
       setGuides([]);
+      useCanvasStore.getState().endHistoryTransaction('移动节点');
     },
     [setGuides, updateNode],
   );

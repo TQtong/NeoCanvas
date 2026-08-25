@@ -16,7 +16,7 @@ import {
   type VideoGenerationParams,
 } from '../types.ts';
 import { ApiException } from '../response.ts';
-import { fetchReferenceBase64, resolveSize, type ModelAdapter, type ModelContext } from './base.ts';
+import { fetchReferenceBase64, type ModelAdapter, type ModelContext, resolveSize } from './base.ts';
 
 const DEFAULT_BASE = 'https://api.siliconflow.cn/v1';
 const DEFAULT_STEPS = 20;

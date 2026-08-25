@@ -11,5 +11,20 @@
     ],
     "no-console": ["warn", { "allow": ["warn", "error"] }]
   },
-  "ignorePatterns": ["supabase/functions/**", "node_modules/**", ".next/**"]
+  "ignorePatterns": [
+    "supabase/functions/**",
+    "next-env.d.ts",
+    "node_modules/**",
+    ".next/**",
+    "coverage/**",
+    "playwright-report/**",
+    "test-results/**"
+  ],
+  "overrides": [
+    {
+      "files": ["scripts/**/*.mjs"],
+      "env": { "node": true },
+      "parserOptions": { "sourceType": "module" }
+    }
+  ]
 }

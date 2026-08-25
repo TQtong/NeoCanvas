@@ -80,12 +80,7 @@ export function pointInBox(point: Point, box: Box): boolean {
  * 判断两框是否相交。
  */
 export function boxesIntersect(a: Box, b: Box): boolean {
-  return (
-    a.x < b.x + b.width &&
-    a.x + a.width > b.x &&
-    a.y < b.y + b.height &&
-    a.y + a.height > b.y
-  );
+  return a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
 }
 
 /**
@@ -93,10 +88,7 @@ export function boxesIntersect(a: Box, b: Box): boolean {
  */
 export function boxContains(a: Box, b: Box): boolean {
   return (
-    b.x >= a.x &&
-    b.y >= a.y &&
-    b.x + b.width <= a.x + a.width &&
-    b.y + b.height <= a.y + a.height
+    b.x >= a.x && b.y >= a.y && b.x + b.width <= a.x + a.width && b.y + b.height <= a.y + a.height
   );
 }
 

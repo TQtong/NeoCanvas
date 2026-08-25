@@ -5,7 +5,11 @@
  * @module lib/edge/errors
  */
 
-import { FunctionsFetchError, FunctionsHttpError, FunctionsRelayError } from '@supabase/supabase-js';
+import {
+  FunctionsFetchError,
+  FunctionsHttpError,
+  FunctionsRelayError,
+} from '@supabase/supabase-js';
 import type { ApiError, ApiResponse, ErrorCode } from '@/types';
 import { ERROR_CODES } from '@/types';
 
@@ -49,17 +53,15 @@ function codeFromHttpStatus(status?: number): ErrorCode {
 }
 
 /** 判断未知值是否像 Response，兼容 functions-js 的 error.context。 */
-function isResponseLike(
-  value: unknown,
-): value is {
+function isResponseLike(value: unknown): value is {
   status?: number;
   text: () => Promise<string>;
 } {
   return Boolean(
     value &&
-      typeof value === 'object' &&
-      'text' in value &&
-      typeof (value as { text?: unknown }).text === 'function',
+    typeof value === 'object' &&
+    'text' in value &&
+    typeof (value as { text?: unknown }).text === 'function',
   );
 }
 

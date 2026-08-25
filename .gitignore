@@ -9,6 +9,8 @@
 /out/
 /build
 /dist
+/test-results/
+/playwright-report/
 
 # 调试
 npm-debug.log*
@@ -44,3 +46,4 @@ supabase/.branches
 supabase/.temp
 supabase/.env
 supabase/functions/.env
+/supabase/functions/deno.lock

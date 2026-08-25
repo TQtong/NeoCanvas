@@ -16,7 +16,7 @@ import {
   type VideoGenerationParams,
 } from '../types.ts';
 import { ApiException } from '../response.ts';
-import { resolveSize, type ModelAdapter, type ModelContext } from './base.ts';
+import { type ModelAdapter, type ModelContext, resolveSize } from './base.ts';
 
 const ARK_BASE = 'https://ark.cn-beijing.volces.com/api/v3';
 
@@ -116,21 +116,21 @@ async function submitImage(
   const candidates = (json.data ?? []).map((item) =>
     item.b64_json
       ? {
-          kind: 'image' as const,
-          mimeType: 'image/png',
-          fetch: { type: 'base64' as const, data: item.b64_json },
-          width,
-          height,
-          isEphemeral: false,
-        }
+        kind: 'image' as const,
+        mimeType: 'image/png',
+        fetch: { type: 'base64' as const, data: item.b64_json },
+        width,
+        height,
+        isEphemeral: false,
+      }
       : {
-          kind: 'image' as const,
-          mimeType: 'image/png',
-          fetch: { type: 'url' as const, url: item.url ?? '' },
-          width,
-          height,
-          isEphemeral: true,
-        },
+        kind: 'image' as const,
+        mimeType: 'image/png',
+        fetch: { type: 'url' as const, url: item.url ?? '' },
+        width,
+        height,
+        isEphemeral: true,
+      }
   );
   if (candidates.length === 0) {
     throw new ApiException('provider_error', 'Ark 未返回图像');

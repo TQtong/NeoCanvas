@@ -11,10 +11,13 @@
  */
 
 import { Check, ChevronDown } from 'lucide-react';
+import type { ModelCatalogEntry } from '@/types';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { AGENT_MODE_ENTRIES } from '@/lib/models/catalog';
@@ -29,19 +32,20 @@ import { cn } from '@/lib/utils/cn';
  *
  * @returns Agent 模式下拉
  */
-export function AgentModeDropdown() {
+export function AgentModeDropdown({ models }: { models: ModelCatalogEntry[] }) {
   const { t } = useTranslation();
   // 订阅当前模式与切换动作
   const agentMode = useChatStore((s) => s.agentMode);
   const setAgentMode = useChatStore((s) => s.setAgentMode);
+  const selectedModelKey = useChatStore((s) => s.selectedModelKey);
+  const setModel = useChatStore((s) => s.setModel);
 
   // 当前模式对应的清单条目（用于触发器展示英文标签）；清单恒非空，未命中以 Generate 兜底
-  const current =
-    AGENT_MODE_ENTRIES.find((entry) => entry.mode === agentMode) ?? {
-      mode: 'generate' as const,
-      label: 'Generate',
-      description: 'agent.generate.desc',
-    };
+  const current = AGENT_MODE_ENTRIES.find((entry) => entry.mode === agentMode) ?? {
+    mode: 'generate' as const,
+    label: 'Generate',
+    description: 'agent.generate.desc',
+  };
 
   return (
     <DropdownMenu>
@@ -61,6 +65,25 @@ export function AgentModeDropdown() {
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" side="top" className="min-w-[15rem]">
+        <DropdownMenuLabel>{t('home.selectModel')}</DropdownMenuLabel>
+        {models.length > 0 ? (
+          models.map((model) => (
+            <DropdownMenuItem
+              key={model.key}
+              onClick={() => setModel(model.key)}
+              className="justify-between gap-3"
+            >
+              <span className="min-w-0 truncate">{model.displayName}</span>
+              {model.key === selectedModelKey ? (
+                <Check className="size-4 shrink-0 !text-accent" />
+              ) : null}
+            </DropdownMenuItem>
+          ))
+        ) : (
+          <DropdownMenuItem disabled>{t('home.noAvailableModels')}</DropdownMenuItem>
+        )}
+        <DropdownMenuSeparator />
+        <DropdownMenuLabel>{t('chat.agentMode')}</DropdownMenuLabel>
         {AGENT_MODE_ENTRIES.map((entry) => {
           const active = entry.mode === agentMode;
           return (
@@ -71,7 +94,10 @@ export function AgentModeDropdown() {
             >
               {/* 选中态打勾，未选中以零透明占位保持对齐；强调色经 !text-accent 压过菜单项的图标默认色 */}
               <Check
-                className={cn('mt-0.5 size-4 shrink-0', active ? 'opacity-100 !text-accent' : 'opacity-0')}
+                className={cn(
+                  'mt-0.5 size-4 shrink-0',
+                  active ? '!text-accent opacity-100' : 'opacity-0',
+                )}
               />
               <span className="flex min-w-0 flex-col">
                 {/* 模式标签保留英文原文 */}

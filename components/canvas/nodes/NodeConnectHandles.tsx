@@ -48,8 +48,7 @@ function handleClass(selected: boolean): string {
 }
 
 /** 自动候选关系边使用的隐藏桩，不参与用户手动连线。 */
-const candidateHandleClass =
-  '!pointer-events-none !size-1 !border-0 !bg-transparent !opacity-0';
+const candidateHandleClass = '!pointer-events-none !size-1 !border-0 !bg-transparent !opacity-0';
 
 /**
  * 序列入 / 出连接桩。

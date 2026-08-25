@@ -15,7 +15,7 @@ import {
   type UnifiedGenerationRequest,
 } from '../types.ts';
 import { ApiException } from '../response.ts';
-import { resolveSize, type ModelAdapter, type ModelContext } from './base.ts';
+import { type ModelAdapter, type ModelContext, resolveSize } from './base.ts';
 
 const QUEUE_BASE = 'https://queue.fal.run';
 
@@ -82,7 +82,12 @@ export const falAdapter: ModelAdapter = {
         return {
           status: 'succeeded',
           candidates: [
-            { kind: 'video', mimeType: 'video/mp4', fetch: { type: 'url', url: result.video.url }, isEphemeral: true },
+            {
+              kind: 'video',
+              mimeType: 'video/mp4',
+              fetch: { type: 'url', url: result.video.url },
+              isEphemeral: true,
+            },
           ],
         };
       }

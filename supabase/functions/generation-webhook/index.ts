@@ -11,66 +11,21 @@
  * @module functions/generation-webhook
  */
 
-import { type AssetCandidate, type GenerationRow, type ModelCatalogRow } from '../_shared/types.ts';
+import { type AssetCandidate, type GenerationRow, TERMINAL_STATUSES } from '../_shared/types.ts';
 import { exceptionToResponse, fail, handleCorsPreflight, ok } from '../_shared/response.ts';
 import { createAdminClient } from '../_shared/supabase.ts';
 import { landResult, markFailed, resolveProviderModel } from '../_shared/pipeline.ts';
-import { resolveProviderCredential } from '../_shared/credentials.ts';
+import { resolveProviderAdapter, resolveProviderCredential } from '../_shared/credentials.ts';
 import { getAdapter } from '../_shared/adapters/registry.ts';
 import { type ModelContext } from '../_shared/adapters/base.ts';
-
-/** 候选签名头（不同提供商命名各异，取并集）。 */
-const SIGNATURE_HEADERS = ['x-webhook-signature', 'x-signature', 'x-hub-signature-256'];
-
-/** 十六进制编码。 */
-function toHex(buffer: ArrayBuffer): string {
-  return Array.from(new Uint8Array(buffer))
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('');
-}
-
-/** 常数时间字符串比较（避免计时侧信道）。 */
-function timingSafeEqual(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let mismatch = 0;
-  for (let i = 0; i < a.length; i += 1) mismatch |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return mismatch === 0;
-}
-
-/**
- * 以 HMAC-SHA256(secret, rawBody) 校验回调签名（fail-closed）。
- *
- * 契约要求对回调做签名校验：未配置 GENERATION_WEBHOOK_SECRET 时无法验证，一律拒绝；
- * 缺少签名头或签名不匹配亦拒绝。容许签名头带 `sha256=` 前缀（十六进制小写）。
- */
-async function verifySignature(request: Request, rawBody: string): Promise<boolean> {
-  const secret = Deno.env.get('GENERATION_WEBHOOK_SECRET');
-  if (!secret) return false; // 未配置密钥即无法验证 → 拒绝
-
-  let provided: string | null = null;
-  for (const h of SIGNATURE_HEADERS) {
-    const v = request.headers.get(h);
-    if (v) {
-      provided = v;
-      break;
-    }
-  }
-  if (!provided) return false;
-  const sig = (provided.startsWith('sha256=') ? provided.slice(7) : provided).toLowerCase();
-
-  const key = await crypto.subtle.importKey(
-    'raw',
-    new TextEncoder().encode(secret),
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign'],
-  );
-  const mac = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(rawBody));
-  return timingSafeEqual(sig, toHex(mac));
-}
+import { requireAccessibleModel } from '../_shared/models.ts';
+import { verifyGenerationWebhookSignature, webhookEventKey } from '../_shared/webhook-auth.ts';
 
 /** 通用回调载荷（不同提供商字段名各异，此处取并集）。 */
 interface WebhookPayload {
+  provider?: string;
+  eventId?: string;
+  event_id?: string;
   externalJobId?: string;
   id?: string;
   status?: string;
@@ -90,13 +45,12 @@ async function pollViaAdapter(
   | null
 > {
   if (!generation.external_job_id) return null;
-  const { data: model } = await admin
-    .from('model_catalog')
-    .select('*')
-    .eq('key', generation.model_key)
-    .maybeSingle();
-  const modelRow = model as ModelCatalogRow | null;
-  if (!modelRow) return null;
+  const modelRow = await requireAccessibleModel(
+    admin,
+    generation.model_key,
+    generation.requester_id,
+    generation.modality,
+  );
   try {
     // 回调推进同样按任务归属用户解析凭证（用户凭证 → 环境变量回退）
     const credentials = await resolveProviderCredential(
@@ -113,7 +67,10 @@ async function pollViaAdapter(
       keyframes: [],
       credentials,
     };
-    const result = await getAdapter(generation.provider).poll(generation.external_job_id, ctx);
+    const adapter = getAdapter(
+      await resolveProviderAdapter(admin, generation.provider, generation.project_id),
+    );
+    const result = await adapter.poll(generation.external_job_id, ctx);
     if (result.status === 'succeeded') return { done: 'succeeded', candidates: result.candidates };
     if (result.status === 'failed') return { done: 'failed', error: result.error };
     return { done: 'running', progress: result.progress };
@@ -125,31 +82,57 @@ async function pollViaAdapter(
 Deno.serve(async (request) => {
   const preflight = handleCorsPreflight(request);
   if (preflight) return preflight;
+  if (request.method !== 'POST') return fail('invalid_params', '仅支持 POST');
 
+  let claimedEvent: { provider: string; eventKey: string } | null = null;
   try {
     const rawBody = await request.text();
-    if (!(await verifySignature(request, rawBody))) {
-      return fail('unauthorized', '回调签名校验失败');
-    }
     const payload = JSON.parse(rawBody) as WebhookPayload;
     const externalJobId = payload.externalJobId ?? payload.id;
-    if (!externalJobId) {
-      return fail('invalid_params', '回调缺少外部任务号');
+    if (!externalJobId || !payload.provider) {
+      return fail('invalid_params', '回调缺少 Provider 或外部任务号');
     }
 
     const admin = createAdminClient();
     const { data: gen } = await admin
       .from('generations')
       .select('*')
+      .eq('provider', payload.provider)
       .eq('external_job_id', externalJobId)
       .maybeSingle();
     if (!gen) {
-      return ok({ ignored: true, reason: '未找到对应任务' });
+      // 不向未验证调用方泄露外部任务号是否存在。
+      return fail('provider_signature_invalid', '回调签名或任务标识无效');
     }
     const generation = gen as GenerationRow;
 
+    const verification = await verifyGenerationWebhookSignature(request, rawBody, {
+      provider: generation.provider,
+      webhookSecretHash: generation.webhook_secret_hash,
+      webhookSecretExpiresAt: generation.webhook_secret_expires_at,
+    });
+    if (!verification.valid || !verification.timestamp) {
+      return fail('provider_signature_invalid', '回调签名无效、已过期或缺少时间戳');
+    }
+
+    const eventKey = await webhookEventKey(
+      verification.timestamp,
+      rawBody,
+      payload.eventId ?? payload.event_id,
+    );
+    const { error: eventError } = await admin.from('generation_webhook_events').insert({
+      generation_id: generation.id,
+      provider: generation.provider,
+      event_key: eventKey,
+    });
+    if (eventError?.code === '23505') {
+      return ok({ ignored: true, reason: '重复回调事件' });
+    }
+    if (eventError) throw eventError;
+    claimedEvent = { provider: generation.provider, eventKey };
+
     // 已终态忽略迟到回调（状态机幂等）
-    if (generation.status === 'succeeded' || generation.status === 'failed') {
+    if (TERMINAL_STATUSES.has(generation.status)) {
       return ok({ ignored: true, reason: '任务已终态' });
     }
 
@@ -173,7 +156,8 @@ Deno.serve(async (request) => {
       await admin
         .from('generations')
         .update({ progress: Math.max(generation.progress, viaAdapter.progress) })
-        .eq('id', generation.id);
+        .eq('id', generation.id)
+        .eq('status', 'running');
       return ok({ advanced: 'progress', via: 'adapter' });
     }
 
@@ -187,7 +171,8 @@ Deno.serve(async (request) => {
       await admin
         .from('generations')
         .update({ progress: Math.max(generation.progress, 70) })
-        .eq('id', generation.id);
+        .eq('id', generation.id)
+        .eq('status', 'running');
       return ok({ advanced: 'progress' });
     }
 
@@ -202,6 +187,15 @@ Deno.serve(async (request) => {
     await landResult(admin, generation, candidates);
     return ok({ advanced: 'succeeded' });
   } catch (error) {
+    // 处理失败时释放重放占位，允许 Provider 用同一事件安全重试；业务终态仍由行锁 RPC 去重。
+    if (claimedEvent) {
+      const admin = createAdminClient();
+      await admin
+        .from('generation_webhook_events')
+        .delete()
+        .eq('provider', claimedEvent.provider)
+        .eq('event_key', claimedEvent.eventKey);
+    }
     return exceptionToResponse(error);
   }
 });

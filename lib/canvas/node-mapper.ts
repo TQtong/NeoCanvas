@@ -45,6 +45,7 @@ const RUNTIME_FIELDS = new Set([
   'progress',
   'statusLabel',
   'errorMessage',
+  'urlExpiresAt',
 ]);
 
 /** data 中由独立列承载、不应写入 data JSONB 的桥接字段。 */

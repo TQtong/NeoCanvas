@@ -115,13 +115,12 @@ export function useGeneration(): UseGeneration {
 
       // 以原参数新建一条任务（不复用失败记录，保审计清晰）
       const newPlaceholderId = uuid();
-      const effectivePlacement: NodePlacement =
-        placement ?? {
-          x: 0,
-          y: 0,
-          width: 320,
-          height: 320,
-        };
+      const effectivePlacement: NodePlacement = placement ?? {
+        x: 0,
+        y: 0,
+        width: 320,
+        height: 320,
+      };
 
       // 即时落一个新占位
       if (row.modality === 'image' || row.modality === 'video') {

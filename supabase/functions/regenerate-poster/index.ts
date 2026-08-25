@@ -17,14 +17,19 @@
  */
 
 import {
-  type ModelCatalogRow,
   type ReferenceMaterial,
   type RegeneratePosterRequest,
   type RegeneratePosterResponse,
   type Scene,
   type UnifiedGenerationRequest,
 } from '../_shared/types.ts';
-import { ApiException, exceptionToResponse, fail, handleCorsPreflight, ok } from '../_shared/response.ts';
+import {
+  ApiException,
+  exceptionToResponse,
+  fail,
+  handleCorsPreflight,
+  ok,
+} from '../_shared/response.ts';
 import { assertProjectOwner, createAdminClient, requireUser } from '../_shared/supabase.ts';
 import { buildGenerationParams } from '../_shared/params.ts';
 import {
@@ -35,6 +40,7 @@ import {
   POSTER_WIDTH,
 } from '../_shared/poster.ts';
 import { createGeneration } from '../_shared/create-generation.ts';
+import { requireAccessibleModel } from '../_shared/models.ts';
 
 /** 画布节点行（本函数读取所需字段）。 */
 interface CanvasNodeRow {
@@ -90,18 +96,7 @@ Deno.serve(async (request) => {
     const textNodes = overlayNodes.filter((n) => n.type === 'text');
 
     // 2) 取模型（须为活跃图像模型）
-    const { data: model } = await admin
-      .from('model_catalog')
-      .select('*')
-      .eq('key', body.modelKey)
-      .maybeSingle();
-    const modelRow = model as ModelCatalogRow | null;
-    if (!modelRow || !modelRow.is_active) {
-      throw new ApiException('model_unavailable', '模型不可用或已下架');
-    }
-    if (modelRow.modality !== 'image') {
-      throw new ApiException('invalid_params', '海报背景需图像模型');
-    }
+    const modelRow = await requireAccessibleModel(admin, body.modelKey, userId, 'image');
 
     // 3) 主题：由现有文字（按层级升序，近似从底到顶）拼出，作为编排 LLM 的文案参考
     const brief = textNodes

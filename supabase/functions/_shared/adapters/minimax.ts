@@ -17,7 +17,7 @@ import {
   type VideoGenerationParams,
 } from '../types.ts';
 import { ApiException } from '../response.ts';
-import { resolveSize, type ModelAdapter, type ModelContext } from './base.ts';
+import { type ModelAdapter, type ModelContext, resolveSize } from './base.ts';
 
 const DEFAULT_BASE = 'https://api.minimaxi.com/v1';
 
@@ -158,8 +158,7 @@ async function submitVideo(
     resolution: params.resolution.toUpperCase(),
   };
 
-  const firstFrame =
-    ctx.keyframes[0] ??
+  const firstFrame = ctx.keyframes[0] ??
     ctx.references.find((reference) => reference.role === 'first_frame') ??
     ctx.references[0];
   const lastFrame = ctx.keyframes.length > 1 ? ctx.keyframes[ctx.keyframes.length - 1] : undefined;

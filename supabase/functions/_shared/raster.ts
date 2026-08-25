@@ -62,7 +62,11 @@ export async function pngToJpeg(png: Uint8Array, quality = 90): Promise<Uint8Arr
  * @param heightPt - 页面高（pt）
  * @returns PDF 字节
  */
-export async function pngToPdf(png: Uint8Array, widthPt: number, heightPt: number): Promise<Uint8Array> {
+export async function pngToPdf(
+  png: Uint8Array,
+  widthPt: number,
+  heightPt: number,
+): Promise<Uint8Array> {
   const pdf = await PDFDocument.create();
   const page = pdf.addPage([Math.max(1, widthPt), Math.max(1, heightPt)]);
   const image = await pdf.embedPng(png);

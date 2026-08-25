@@ -88,10 +88,11 @@ export function TransformableNode({
     (event: React.PointerEvent) => {
       event.stopPropagation();
       event.preventDefault();
-      rotatingRef.current = true;
 
       const internalNode = reactFlow.getInternalNode(id);
       if (!internalNode) return;
+      rotatingRef.current = true;
+      useCanvasStore.getState().beginHistoryTransaction('旋转节点');
 
       const onMove = (move: PointerEvent) => {
         if (!rotatingRef.current) return;
@@ -115,10 +116,13 @@ export function TransformableNode({
         rotatingRef.current = false;
         window.removeEventListener('pointermove', onMove);
         window.removeEventListener('pointerup', onUp);
+        window.removeEventListener('pointercancel', onUp);
+        useCanvasStore.getState().endHistoryTransaction('旋转节点');
       };
 
       window.addEventListener('pointermove', onMove);
       window.addEventListener('pointerup', onUp);
+      window.addEventListener('pointercancel', onUp);
     },
     [id, reactFlow, updateNodeData],
   );
@@ -131,6 +135,8 @@ export function TransformableNode({
           minWidth={minWidth}
           minHeight={minHeight}
           keepAspectRatio={effectiveKeepAspect}
+          onResizeStart={() => useCanvasStore.getState().beginHistoryTransaction('缩放节点')}
+          onResizeEnd={() => useCanvasStore.getState().endHistoryTransaction('缩放节点')}
           // 边线透明：选中边界由 .react-flow__node.selected 的光环表达，避免双重边框；
           // 角柄改小圆点，观感更干净
           lineClassName="!border-transparent"

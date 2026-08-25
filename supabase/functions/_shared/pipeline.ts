@@ -13,11 +13,13 @@ import {
   type AssetCandidate,
   type GenerationRow,
   type ImageGenerationParams,
+  type LandGenerationResult,
   type ModelCapabilities,
   type ModelCatalogRow,
   type ModelDefaultParams,
   type Provider,
   type ReferenceMaterial,
+  TERMINAL_STATUSES,
   type UnifiedGenerationRequest,
   type VideoGenerationParams,
 } from './types.ts';
@@ -33,11 +35,6 @@ const GENERATIONS_BUCKET = 'generations';
 
 /** 签名 URL 有效期（秒）：供适配器取参考图 / 产出审核。 */
 const REFERENCE_TTL = 3600;
-
-/** 媒体候选关系边类型与隐藏连接桩。 */
-const MEDIA_CANDIDATE_EDGE_TYPE = 'media_candidate';
-const MEDIA_CANDIDATE_HANDLE_OUT = 'media-candidate-out';
-const MEDIA_CANDIDATE_HANDLE_IN = 'media-candidate-in';
 
 /** MIME → 文件扩展名。 */
 function extFromMime(mime: string): string {
@@ -178,7 +175,7 @@ async function resolveMaterials(
  * @returns 已解析引用
  * @throws {ApiException} content_blocked 当参考图触发审核
  */
-export async function resolveReferences(
+export function resolveReferences(
   admin: SupabaseClient,
   request: UnifiedGenerationRequest,
 ): Promise<ResolvedReference[]> {
@@ -194,11 +191,11 @@ export async function resolveReferences(
  * @returns 有序的已解析关键帧引用
  * @throws {ApiException} content_blocked 当关键帧触发审核
  */
-export async function resolveKeyframes(
+export function resolveKeyframes(
   admin: SupabaseClient,
   request: UnifiedGenerationRequest,
 ): Promise<ResolvedReference[]> {
-  if (request.params.modality !== 'video') return [];
+  if (request.params.modality !== 'video') return Promise.resolve([]);
   return resolveMaterials(admin, request.params.keyframes ?? []);
 }
 
@@ -284,19 +281,102 @@ interface AssetMeta {
   sizeBytes: number;
 }
 
+/** 一次结果转存尝试的持久化上下文。 */
+interface OutputAttempt {
+  id: string;
+  prefix: string;
+  paths: string[];
+}
+
+/** 创建任务专属的 Storage 暂存尝试账本。 */
+async function beginOutputAttempt(
+  admin: SupabaseClient,
+  generation: GenerationRow,
+  ownerId: string,
+): Promise<OutputAttempt> {
+  const id = crypto.randomUUID();
+  const prefix = `staging/${ownerId}/${generation.id}/${id}/`;
+  const { error } = await admin.from('generation_output_attempts').insert({
+    id,
+    generation_id: generation.id,
+    owner_id: ownerId,
+    staging_prefix: prefix,
+    storage_bucket: GENERATIONS_BUCKET,
+    object_paths: [],
+    status: 'uploading',
+  });
+  if (error) {
+    throw new ApiException('internal_error', `创建产出暂存尝试失败：${error.message}`);
+  }
+  return { id, prefix, paths: [] };
+}
+
+/** 在写对象前持久记录目标路径，确保进程中断后补偿任务仍能精确清理。 */
+async function recordAttemptPaths(
+  admin: SupabaseClient,
+  attempt: OutputAttempt,
+  paths: string[],
+  status: 'uploading' | 'staged' = 'uploading',
+): Promise<void> {
+  for (const path of paths) {
+    if (!attempt.paths.includes(path)) attempt.paths.push(path);
+  }
+  const { error } = await admin
+    .from('generation_output_attempts')
+    .update({ object_paths: attempt.paths, status })
+    .eq('id', attempt.id);
+  if (error) {
+    throw new ApiException('internal_error', `记录产出暂存路径失败：${error.message}`);
+  }
+}
+
+/** 更新暂存尝试状态；状态账本失败不掩盖原始流水线错误。 */
+async function setAttemptStatus(
+  admin: SupabaseClient,
+  attempt: OutputAttempt,
+  status: 'staged' | 'discarded' | 'rpc_failed' | 'cleaned',
+  error?: string,
+): Promise<void> {
+  const { error: updateError } = await admin
+    .from('generation_output_attempts')
+    .update({ status, object_paths: attempt.paths, error: error ?? null })
+    .eq('id', attempt.id)
+    // RPC 可能已提交但响应在网络中丢失；绝不能把 committed 降回可清理状态。
+    .neq('status', 'committed');
+  if (updateError) {
+    console.error(`更新生成暂存尝试 ${attempt.id} 状态失败：${updateError.message}`);
+  }
+}
+
+/** 精确删除当前尝试记录的对象，不扫描任何正式业务前缀。 */
+async function cleanupAttemptObjects(
+  admin: SupabaseClient,
+  attempt: OutputAttempt,
+): Promise<void> {
+  if (attempt.paths.length > 0) {
+    const { error } = await admin.storage.from(GENERATIONS_BUCKET).remove(attempt.paths);
+    if (error) {
+      await setAttemptStatus(admin, attempt, 'discarded', error.message);
+      return;
+    }
+  }
+  await setAttemptStatus(admin, attempt, 'cleaned');
+}
+
 /** 把单个候选转存 Storage（含缩略图），返回资产元数据（尚未入库）。 */
 async function uploadAsset(
   admin: SupabaseClient,
   candidate: AssetCandidate,
-  generation: GenerationRow,
-  ownerId: string,
+  attempt: OutputAttempt,
 ): Promise<AssetMeta> {
   const assetId = crypto.randomUUID();
   const { bytes, contentType } = await fetchCandidate(candidate);
   // 实际 Content-Type 优先于候选自报 MIME（修正回调端硬编码 image/png 等）
   const mimeType = contentType ?? candidate.mimeType;
   const ext = extFromMime(mimeType);
-  const path = `${ownerId}/${generation.project_id}/${assetId}.${ext}`;
+  const path = `${attempt.prefix}${assetId}.${ext}`;
+
+  await recordAttemptPaths(admin, attempt, [path]);
 
   const { error: uploadError } = await admin.storage
     .from(GENERATIONS_BUCKET)
@@ -310,7 +390,8 @@ async function uploadAsset(
   if (candidate.kind === 'image') {
     const thumb = await makeImageThumbnail(bytes);
     if (thumb) {
-      const tPath = `${ownerId}/${generation.project_id}/${assetId}_thumb.png`;
+      const tPath = `${attempt.prefix}${assetId}_thumb.png`;
+      await recordAttemptPaths(admin, attempt, [tPath]);
       const { error: tErr } = await admin.storage
         .from(GENERATIONS_BUCKET)
         .upload(tPath, thumb.bytes, { contentType: THUMBNAIL_MIME, upsert: true });
@@ -381,22 +462,24 @@ function nodeData(meta: AssetMeta): Record<string, unknown> {
 
 /** 由生成任务参数回填媒体节点默认配置。 */
 function generationSettings(generation: GenerationRow): Record<string, unknown> {
-  const params = generation.params as Record<string, unknown>;
+  const params = generation.params as unknown as Record<string, unknown>;
   const out: Record<string, unknown> = {
     modelKey: generation.model_key,
     count: typeof params.count === 'number' ? params.count : 1,
   };
-  for (const key of [
-    'aspectRatio',
-    'width',
-    'height',
-    'sizePreset',
-    'quality',
-    'durationSec',
-    'resolution',
-    'fps',
-    'motionStrength',
-  ]) {
+  for (
+    const key of [
+      'aspectRatio',
+      'width',
+      'height',
+      'sizePreset',
+      'quality',
+      'durationSec',
+      'resolution',
+      'fps',
+      'motionStrength',
+    ]
+  ) {
     if (params[key] != null) out[key] = params[key];
   }
   return out;
@@ -450,8 +533,7 @@ function candidatePosition(
     CANDIDATE_HORIZONTAL_GAP_MIN,
     Math.round(size.width * CANDIDATE_HORIZONTAL_GAP_RATIO),
   );
-  const verticalStep =
-    size.height +
+  const verticalStep = size.height +
     MEDIA_PANEL_GAP +
     MEDIA_PANEL_COLLAPSED_HEIGHT +
     Math.max(CANDIDATE_BRANCH_GAP_MIN, Math.round(size.height * CANDIDATE_BRANCH_GAP_RATIO));
@@ -466,8 +548,7 @@ function candidatePosition(
     Math.round(size.width * CANDIDATE_COLUMN_GAP_RATIO),
   );
   return {
-    x:
-      targetPos.x +
+    x: targetPos.x +
       size.width +
       horizontalGap +
       column * (size.width + columnGap) +
@@ -491,101 +572,6 @@ function candidateBranchColumn(index: number): number {
   return Math.floor(safeIndex / CANDIDATE_SLOTS_PER_COLUMN);
 }
 
-/** 确保本次生成产生的候选节点都有专属候选关系边。 */
-async function ensureMediaCandidateEdges(
-  admin: SupabaseClient,
-  generation: GenerationRow,
-  targetNodeId: string | null,
-  ownerId: string,
-): Promise<void> {
-  if (!targetNodeId) return;
-  const { data: candidates, error: candidateError } = await admin
-    .from('canvas_nodes')
-    .select('id, position_x, position_y, width, height, z_index')
-    .eq('project_id', generation.project_id)
-    .eq('generation_id', generation.id)
-    .eq('data->>candidateOf', targetNodeId);
-  if (candidateError) {
-    throw new ApiException('internal_error', `读取候选节点失败：${candidateError.message}`);
-  }
-  const candidateRows = candidates ?? [];
-  const candidateIds = candidateRows.map((row) => row.id as string);
-  if (candidateIds.length === 0) return;
-
-  const { data: existing, error: edgeReadError } = await admin
-    .from('canvas_edges')
-    .select('target_node_id')
-    .eq('project_id', generation.project_id)
-    .eq('source_node_id', targetNodeId)
-    .eq('type', MEDIA_CANDIDATE_EDGE_TYPE)
-    .in('target_node_id', candidateIds);
-  if (edgeReadError) {
-    throw new ApiException('internal_error', `读取候选关系边失败：${edgeReadError.message}`);
-  }
-  const existingTargets = new Set((existing ?? []).map((row) => row.target_node_id as string));
-  const rows = candidateIds
-    .filter((id) => !existingTargets.has(id))
-    .map((id) => ({
-      project_id: generation.project_id,
-      source_node_id: targetNodeId,
-      target_node_id: id,
-      source_handle: MEDIA_CANDIDATE_HANDLE_OUT,
-      target_handle: MEDIA_CANDIDATE_HANDLE_IN,
-      type: MEDIA_CANDIDATE_EDGE_TYPE,
-      data: {
-        label: '候选',
-        generationId: generation.id,
-      },
-    }));
-  if (rows.length > 0) {
-    const { error: insertError } = await admin.from('canvas_edges').insert(rows);
-    if (insertError) {
-      throw new ApiException('internal_error', `创建候选关系边失败：${insertError.message}`);
-    }
-  }
-
-  const { data: existingPanels, error: panelReadError } = await admin
-    .from('canvas_nodes')
-    .select('data')
-    .eq('project_id', generation.project_id)
-    .eq('type', 'media_panel')
-    .in('data->>targetNodeId', candidateIds);
-  if (panelReadError) {
-    throw new ApiException('internal_error', `读取候选媒体对话失败：${panelReadError.message}`);
-  }
-  const panelTargetIds = new Set(
-    (existingPanels ?? [])
-      .map((row) => (row.data as Record<string, unknown> | null)?.targetNodeId)
-      .filter((value): value is string => typeof value === 'string'),
-  );
-  const panelRows = candidateRows
-    .filter((row) => !panelTargetIds.has(row.id as string))
-    .map((row) => {
-      const width = (row.width as number | null) ?? 320;
-      const height = (row.height as number | null) ?? 320;
-      return {
-        project_id: generation.project_id,
-        type: 'media_panel',
-        position_x: (row.position_x as number) ?? 0,
-        position_y: ((row.position_y as number) ?? 0) + height + MEDIA_PANEL_GAP,
-        width,
-        height: MEDIA_PANEL_COLLAPSED_HEIGHT,
-        rotation: 0,
-        z_index: ((row.z_index as number | null) ?? 0) + 1,
-        data: {
-          targetNodeId: row.id,
-          collapsed: true,
-        },
-        created_by: ownerId,
-      };
-    });
-  if (panelRows.length === 0) return;
-  const { error: panelInsertError } = await admin.from('canvas_nodes').insert(panelRows);
-  if (panelInsertError) {
-    throw new ApiException('internal_error', `创建候选媒体对话失败：${panelInsertError.message}`);
-  }
-}
-
 /**
  * 结果落库（完成阶段）。把成功的候选转存 + 缩略图、产出端审核、再经单一事务原子写库：
  * 资产入库、占位节点原地转真实节点、其余产出新建节点、任务置 succeeded。
@@ -601,7 +587,7 @@ export async function landResult(
   candidates: AssetCandidate[],
 ): Promise<void> {
   // 幂等：已终态忽略迟到事件
-  if (generation.status === 'succeeded' || generation.status === 'failed') return;
+  if (TERMINAL_STATUSES.has(generation.status)) return;
   if (candidates.length === 0) {
     await markFailed(admin, generation, '提供商未返回任何产出');
     return;
@@ -619,39 +605,52 @@ export async function landResult(
     return;
   }
 
-  // 1) 转存全部候选（含缩略图）
+  // 1) 每个 webhook / poll / queue 完成者使用独立暂存前缀，失败补偿互不影响。
+  const attempt = await beginOutputAttempt(admin, generation, ownerId);
   const uploaded: AssetMeta[] = [];
-  for (const candidate of candidates) {
-    uploaded.push(await uploadAsset(admin, candidate, generation, ownerId));
+  try {
+    for (const candidate of candidates) {
+      uploaded.push(await uploadAsset(admin, candidate, attempt));
+    }
+    await recordAttemptPaths(admin, attempt, [], 'staged');
+  } catch (error) {
+    await cleanupAttemptObjects(admin, attempt);
+    throw error;
   }
 
   // 2) 产出端审核（图像）：命中即丢弃该资产；视频交由提供商策略
   const imageMetas = uploaded.filter((m) => m.kind === 'image');
   let blockedReason: string | null = null;
   const survivors: AssetMeta[] = [];
-  if (imageMetas.length > 0) {
-    const signed = await Promise.all(
-      imageMetas.map((m) =>
-        admin.storage.from(GENERATIONS_BUCKET).createSignedUrl(m.storagePath, REFERENCE_TTL),
-      ),
-    );
-    for (let i = 0; i < imageMetas.length; i += 1) {
-      const url = signed[i].data?.signedUrl;
-      const reason = url ? await moderateOutputImages([url]) : null;
-      if (reason) {
-        blockedReason = reason;
-        await discardUploaded(admin, imageMetas[i]);
-      } else {
-        survivors.push(imageMetas[i]);
+  try {
+    if (imageMetas.length > 0) {
+      const signed = await Promise.all(
+        imageMetas.map((m) =>
+          admin.storage.from(GENERATIONS_BUCKET).createSignedUrl(m.storagePath, REFERENCE_TTL)
+        ),
+      );
+      for (let i = 0; i < imageMetas.length; i += 1) {
+        const url = signed[i].data?.signedUrl;
+        const reason = url ? await moderateOutputImages([url]) : null;
+        if (reason) {
+          blockedReason = reason;
+          await discardUploaded(admin, imageMetas[i]);
+        } else {
+          survivors.push(imageMetas[i]);
+        }
       }
     }
-  }
-  // 非图像产出（视频）直接保留
-  for (const m of uploaded) {
-    if (m.kind !== 'image') survivors.push(m);
+    // 非图像产出（视频）直接保留
+    for (const m of uploaded) {
+      if (m.kind !== 'image') survivors.push(m);
+    }
+  } catch (error) {
+    await cleanupAttemptObjects(admin, attempt);
+    throw error;
   }
 
   if (survivors.length === 0) {
+    await cleanupAttemptObjects(admin, attempt);
     await markFailed(
       admin,
       generation,
@@ -669,10 +668,9 @@ export async function landResult(
   let targetSize = placeholderSize;
   let targetMediaDescription = '';
   const resultMode = generation.result_mode ?? 'new_primary';
-  const targetNodeId =
-    resultMode === 'candidate_for_target'
-      ? generation.target_node_id
-      : generation.placeholder_node_id;
+  const targetNodeId = resultMode === 'candidate_for_target'
+    ? generation.target_node_id
+    : generation.placeholder_node_id;
   const hasPlaceholder = Boolean(generation.placeholder_node_id);
   if (hasPlaceholder) {
     const { data: placeholder } = await admin
@@ -735,27 +733,29 @@ export async function landResult(
   const extraStart = hasPlaceholder ? 1 : 0;
   const firstNode = hasPlaceholder
     ? {
-        type: survivors[0].kind,
-        assetId: survivors[0].id,
-        // 合并占位的 groupId（若有），使原地重生成结果不脱组
-        data: mediaNodeData(survivors[0], generation, {
-          role: resultMode === 'candidate_for_target' ? 'candidate' : 'primary',
-          candidateOf: resultMode === 'candidate_for_target' ? targetNodeId : null,
-          candidateIndex: resultMode === 'candidate_for_target' ? existingCandidateCount : null,
-          mediaDescription: targetMediaDescription,
-          groupId: placeholderGroupId,
-        }),
-      }
+      type: survivors[0].kind,
+      assetId: survivors[0].id,
+      // 合并占位的 groupId（若有），使原地重生成结果不脱组
+      data: mediaNodeData(survivors[0], generation, {
+        role: resultMode === 'candidate_for_target' ? 'candidate' : 'primary',
+        candidateOf: resultMode === 'candidate_for_target' ? targetNodeId : null,
+        candidateIndex: resultMode === 'candidate_for_target' ? existingCandidateCount : null,
+        mediaDescription: targetMediaDescription,
+        groupId: placeholderGroupId,
+      }),
+    }
     : null;
   const extraNodes = survivors.slice(extraStart).map((m, idx) => {
     const i = idx + (hasPlaceholder ? 1 : 0);
-    const candidateOf =
-      resultMode === 'candidate_for_target' ? targetNodeId : generation.placeholder_node_id;
+    const candidateOf = resultMode === 'candidate_for_target'
+      ? targetNodeId
+      : generation.placeholder_node_id;
     const candidateIdx = resultMode === 'candidate_for_target' ? existingCandidateCount + i : i - 1;
     const pos = candidateOf
       ? candidatePosition(targetPos, targetSize, candidateIdx)
       : { x: placeholderPos.x + i * (placeholderSize.width + 24), y: placeholderPos.y };
     return {
+      id: crypto.randomUUID(),
       type: m.kind,
       positionX: pos.x,
       positionY: pos.y,
@@ -772,21 +772,49 @@ export async function landResult(
   });
 
   // 5) 单一事务原子落库
-  const { error } = await admin.rpc('land_generation_result', {
+  // 被审核丢弃的对象已经删除；账本只保留本次将提交的正式引用路径。
+  attempt.paths = survivors.flatMap((meta) =>
+    meta.thumbnailPath ? [meta.storagePath, meta.thumbnailPath] : [meta.storagePath]
+  );
+  await recordAttemptPaths(admin, attempt, [], 'staged');
+
+  const { data, error } = await admin.rpc('land_generation_result_once', {
     p_generation_id: generation.id,
     p_owner_id: ownerId,
     p_project_id: generation.project_id,
     p_placeholder_node_id: generation.placeholder_node_id,
+    p_attempt_id: attempt.id,
     p_assets: survivors.map(toAssetJson),
     p_first_node: firstNode,
     p_extra_nodes: extraNodes,
     p_result_asset_id: survivors[0].id,
+    p_provider_output_summary: {
+      attemptId: attempt.id,
+      outputCount: survivors.length,
+      outputs: survivors.map((item) => ({
+        kind: item.kind,
+        mimeType: item.mimeType,
+        width: item.width,
+        height: item.height,
+        durationMs: item.durationMs,
+        sizeBytes: item.sizeBytes,
+      })),
+    },
   });
   if (error) {
+    // 网络 / RPC 未知结果不能立即删除：保留短期 staging，由账本补偿任务安全清理。
+    await setAttemptStatus(admin, attempt, 'rpc_failed', error.message);
     throw new ApiException('internal_error', `结果落库失败：${error.message}`);
   }
-
-  await ensureMediaCandidateEdges(admin, generation, targetNodeId, ownerId);
+  const result = data as LandGenerationResult | null;
+  if (!result) {
+    await setAttemptStatus(admin, attempt, 'rpc_failed', 'RPC 未返回结果');
+    throw new ApiException('internal_error', '结果落库 RPC 未返回结果');
+  }
+  if (!result.landed) {
+    // 并发输家只删除自己的任务级暂存前缀，不影响获胜事务登记的资产。
+    await cleanupAttemptObjects(admin, attempt);
+  }
 }
 
 /**
@@ -803,15 +831,13 @@ export async function markFailed(
   error: string,
   moderationReason?: string,
 ): Promise<void> {
-  if (generation.status === 'succeeded' || generation.status === 'failed') return;
-  const patch: Record<string, unknown> = {
-    status: 'failed',
-    error,
-    completed_at: new Date().toISOString(),
-  };
-  if (moderationReason) {
-    patch.moderation_status = 'blocked';
-    patch.moderation_reason = moderationReason;
+  if (TERMINAL_STATUSES.has(generation.status)) return;
+  const { error: rpcError } = await admin.rpc('fail_generation_once', {
+    p_generation_id: generation.id,
+    p_error: error,
+    p_moderation_reason: moderationReason ?? null,
+  });
+  if (rpcError) {
+    throw new ApiException('internal_error', `提交生成失败终态失败：${rpcError.message}`);
   }
-  await admin.from('generations').update(patch).eq('id', generation.id);
 }

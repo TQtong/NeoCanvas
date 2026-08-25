@@ -140,7 +140,8 @@ function fallbackPosterLayout(content: string): PosterLayout {
   const title = fallbackTitle(content);
   return {
     reply: '好的，正在为你合成一张海报：右侧主体图 + 左侧可编辑文字。',
-    backgroundPrompt: `${content}，竖版海报背景，主体置于画面右侧约三分之二，左侧与顶部、底部留出干净的浅色空白区用于排版，高级、有设计感、配色统一柔和`,
+    backgroundPrompt:
+      `${content}，竖版海报背景，主体置于画面右侧约三分之二，左侧与顶部、底部留出干净的浅色空白区用于排版，高级、有设计感、配色统一柔和`,
     texts: [
       {
         content: title.slice(0, 12),
@@ -213,9 +214,9 @@ export async function buildPosterLayout(
 
     const texts = Array.isArray(parsed.texts)
       ? parsed.texts
-          .map(sanitizeTextElement)
-          .filter((t): t is PosterTextElement => t !== null)
-          .slice(0, 6)
+        .map(sanitizeTextElement)
+        .filter((t): t is PosterTextElement => t !== null)
+        .slice(0, 6)
       : [];
     if (texts.length === 0) return fallbackPosterLayout(content);
     // 保证至少有一个 title（取第一个并升级为标题）
@@ -230,10 +231,9 @@ export async function buildPosterLayout(
       backgroundPrompt += '，画面中不要出现任何文字';
     }
 
-    const reply =
-      typeof parsed.reply === 'string' && parsed.reply.trim()
-        ? parsed.reply.trim()
-        : '好的，正在为你合成海报：右侧主体图 + 左侧可编辑文字。';
+    const reply = typeof parsed.reply === 'string' && parsed.reply.trim()
+      ? parsed.reply.trim()
+      : '好的，正在为你合成海报：右侧主体图 + 左侧可编辑文字。';
 
     return { reply, backgroundPrompt, texts };
   } catch {

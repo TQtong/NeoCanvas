@@ -9,7 +9,13 @@
  */
 
 import { type SubmitGenerationResponse, type UnifiedGenerationRequest } from '../_shared/types.ts';
-import { ApiException, exceptionToResponse, fail, handleCorsPreflight, ok } from '../_shared/response.ts';
+import {
+  ApiException,
+  exceptionToResponse,
+  fail,
+  handleCorsPreflight,
+  ok,
+} from '../_shared/response.ts';
 import { assertProjectOwner, createAdminClient, requireUser } from '../_shared/supabase.ts';
 import { createGeneration } from '../_shared/create-generation.ts';
 

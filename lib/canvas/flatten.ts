@@ -156,14 +156,21 @@ function imageFragment(
   dataUrl: string,
   d: ImageNodeData,
 ): string {
-  const par = d.objectFit === 'contain' ? 'xMidYMid meet' : d.objectFit === 'fill' ? 'none' : 'xMidYMid slice';
+  const par =
+    d.objectFit === 'contain'
+      ? 'xMidYMid meet'
+      : d.objectFit === 'fill'
+        ? 'none'
+        : 'xMidYMid slice';
   const radius = d.cornerRadius ?? 0;
   const clip =
     radius > 0
       ? `<clipPath id="clip-bg"><rect x="${box.x}" y="${box.y}" width="${box.width}" height="${box.height}" rx="${radius}"/></clipPath>`
       : '';
   const clipAttr = radius > 0 ? ' clip-path="url(#clip-bg)"' : '';
-  const filterAttr = isIdentityFilters(d.filters) ? '' : ` style="filter:${filtersToCss(d.filters)}"`;
+  const filterAttr = isIdentityFilters(d.filters)
+    ? ''
+    : ` style="filter:${filtersToCss(d.filters)}"`;
   const image = `<image href="${dataUrl}" x="${box.x}" y="${box.y}" width="${box.width}" height="${box.height}" preserveAspectRatio="${par}"${clipAttr}${filterAttr} opacity="${d.opacity}"/>`;
   return clip + wrapRotation(image, box, d.rotation);
 }
@@ -181,7 +188,8 @@ function textFragment(node: CanvasFlowNode): string {
   const lineHeightPx = fontSize * d.lineHeight;
 
   const anchor = d.align === 'center' ? 'middle' : d.align === 'right' ? 'end' : 'start';
-  const tx = d.align === 'center' ? innerX + innerW / 2 : d.align === 'right' ? innerX + innerW : innerX;
+  const tx =
+    d.align === 'center' ? innerX + innerW / 2 : d.align === 'right' ? innerX + innerW : innerX;
 
   // 行基线：CSS 块级文本首行顶部留半行距，字形上缘约占字号 0.8（近似 ascent）
   const halfLeading = (lineHeightPx - fontSize) / 2;
@@ -190,7 +198,9 @@ function textFragment(node: CanvasFlowNode): string {
 
   const lines = text.split('\n');
   const tspans = lines
-    .map((line, i) => `<tspan x="${tx}" y="${firstBaseline + i * lineHeightPx}">${esc(line)}</tspan>`)
+    .map(
+      (line, i) => `<tspan x="${tx}" y="${firstBaseline + i * lineHeightPx}">${esc(line)}</tspan>`,
+    )
     .join('');
 
   const style =
@@ -215,8 +225,7 @@ function dashArray(style: ShapeNodeData['strokeStyle'], width: number): string {
 function shapeInner(d: ShapeNodeData, w: number, h: number): string {
   const sw = d.strokeWidth;
   const inset = sw / 2;
-  const common =
-    `fill="${esc(d.fill)}" stroke="${esc(d.stroke)}" stroke-width="${sw}"${dashArray(d.strokeStyle, sw)} opacity="${d.opacity}"`;
+  const common = `fill="${esc(d.fill)}" stroke="${esc(d.stroke)}" stroke-width="${sw}"${dashArray(d.strokeStyle, sw)} opacity="${d.opacity}"`;
   switch (d.shape) {
     case 'ellipse':
       return `<ellipse cx="${w / 2}" cy="${h / 2}" rx="${w / 2 - inset}" ry="${h / 2 - inset}" ${common}/>`;

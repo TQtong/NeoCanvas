@@ -19,7 +19,18 @@ import {
   type KeyboardEvent,
 } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, ChevronDown, Share2 } from 'lucide-react';
+import {
+  ArrowLeft,
+  Check,
+  ChevronDown,
+  CloudOff,
+  LoaderCircle,
+  PanelRightClose,
+  PanelRightOpen,
+  Share2,
+  TriangleAlert,
+} from 'lucide-react';
+import type { RealtimeStatus, SyncState } from '@/types';
 import { useTranslation } from '@/i18n';
 import { getBrowserSupabase } from '@/lib/supabase/client';
 import { IconButton } from '@/components/ui/icon-button';
@@ -42,6 +53,18 @@ export interface TopBarProps {
   projectId: string;
   /** 项目标题（受控初值；本地编辑态在提交后由上层数据流回灌）。 */
   title: string;
+  /** 对话面板是否展开。 */
+  chatOpen: boolean;
+  /** Realtime 连接状态。 */
+  realtimeStatus: RealtimeStatus;
+  /** 本地持久化状态。 */
+  syncState: SyncState;
+  /** 切换对话面板展开状态。 */
+  onToggleChat: () => void;
+  /** 重命名成功后的受控标题回写。 */
+  onTitleChange: (title: string) => void;
+  /** 保存失败后的手动重试。 */
+  onRetrySync: () => void;
 }
 
 /**
@@ -50,7 +73,16 @@ export interface TopBarProps {
  * @param props - 见 {@link TopBarProps}
  * @returns 顶栏条
  */
-export function TopBar({ projectId, title }: TopBarProps) {
+export function TopBar({
+  projectId,
+  title,
+  chatOpen,
+  realtimeStatus,
+  syncState,
+  onToggleChat,
+  onTitleChange,
+  onRetrySync,
+}: TopBarProps) {
   const { t } = useTranslation();
   const { success, error: toastError } = useToast();
 
@@ -58,6 +90,7 @@ export function TopBar({ projectId, title }: TopBarProps) {
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(title);
   const inputRef = useRef<HTMLInputElement>(null);
+  const renameInFlightRef = useRef(false);
 
   // 外部 title 变化（如刷新或他端更新）时，若未处于编辑中则同步草稿值
   useEffect(() => {
@@ -79,24 +112,32 @@ export function TopBar({ projectId, title }: TopBarProps) {
 
   // 提交重命名：去空白校验，无变化则静默收起；有变化则写回 projects.title
   const commit = useCallback(async () => {
+    if (renameInFlightRef.current) return;
     const next = value.trim();
     setEditing(false);
     if (!next || next === title) {
       setValue(title);
       return;
     }
-    const { error } = await getBrowserSupabase()
-      .from('projects')
-      .update({ title: next })
-      .eq('id', projectId);
-    if (error) {
-      // 写回失败：回滚草稿并提示
-      setValue(title);
-      toastError(error.message);
-      return;
+    renameInFlightRef.current = true;
+    try {
+      const { error } = await getBrowserSupabase()
+        .from('projects')
+        .update({ title: next })
+        .eq('id', projectId);
+      if (error) {
+        // 写回失败：回滚草稿并提示
+        setValue(title);
+        toastError(error.message);
+        return;
+      }
+      setValue(next);
+      onTitleChange(next);
+      success(t('design.renameProject'));
+    } finally {
+      renameInFlightRef.current = false;
     }
-    success(t('design.renameProject'));
-  }, [value, title, projectId, success, toastError, t]);
+  }, [value, title, projectId, success, toastError, t, onTitleChange]);
 
   // 取消编辑：丢弃草稿、收起输入框
   const cancelEdit = useCallback(() => {
@@ -211,9 +252,75 @@ export function TopBar({ projectId, title }: TopBarProps) {
 
       {/* 右端：分享、面板控制、头像菜单 */}
       <div className="flex items-center gap-1">
+        <Tooltip
+          content={
+            syncState.status === 'error'
+              ? `${t('sync.error')}：${syncState.message}`
+              : t(`sync.${syncState.status}`)
+          }
+        >
+          <button
+            type="button"
+            disabled={syncState.status === 'saved' || syncState.status === 'saving'}
+            onClick={onRetrySync}
+            className={cn(
+              'mr-1 inline-flex h-8 items-center gap-1.5 rounded-lg px-2 text-xs text-muted-foreground transition-colors',
+              'hover:bg-muted hover:text-foreground disabled:cursor-default disabled:hover:bg-transparent',
+              syncState.status === 'error' && 'text-destructive',
+            )}
+            aria-label={
+              syncState.status === 'error'
+                ? `${t('sync.error')}：${syncState.message}`
+                : t(`sync.${syncState.status}`)
+            }
+          >
+            {syncState.status === 'saved' ? (
+              <Check className="size-4 text-emerald-500" />
+            ) : syncState.status === 'saving' ? (
+              <LoaderCircle className="size-4 animate-spin text-amber-500" />
+            ) : syncState.status === 'offline' ? (
+              <CloudOff className="size-4" />
+            ) : (
+              <TriangleAlert className="size-4" />
+            )}
+            <span className="hidden lg:inline">{t(`sync.${syncState.status}`)}</span>
+            {'pendingCount' in syncState && syncState.pendingCount > 0 ? (
+              <span aria-hidden>({syncState.pendingCount})</span>
+            ) : null}
+          </button>
+        </Tooltip>
+
+        <Tooltip content={t(`sync.realtime.${realtimeStatus}`)}>
+          <span
+            className={cn(
+              'mr-1 size-2 rounded-full',
+              realtimeStatus === 'connected'
+                ? 'bg-emerald-500'
+                : realtimeStatus === 'error'
+                  ? 'bg-destructive'
+                  : realtimeStatus === 'disconnected'
+                    ? 'bg-muted-foreground'
+                    : 'animate-pulse bg-amber-500',
+            )}
+            role="status"
+            aria-label={t(`sync.realtime.${realtimeStatus}`)}
+          />
+        </Tooltip>
+
         <Tooltip content={t('common.share')}>
           <IconButton label={t('common.share')} onClick={() => void handleShare()}>
             <Share2 />
+          </IconButton>
+        </Tooltip>
+
+        <Tooltip content={t(chatOpen ? 'design.collapsePanel' : 'design.expandPanel')}>
+          <IconButton
+            label={t(chatOpen ? 'design.collapsePanel' : 'design.expandPanel')}
+            aria-expanded={chatOpen}
+            aria-controls="project-chat-panel"
+            onClick={onToggleChat}
+          >
+            {chatOpen ? <PanelRightClose /> : <PanelRightOpen />}
           </IconButton>
         </Tooltip>
 

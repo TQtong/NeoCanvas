@@ -45,7 +45,7 @@ export type ProfileRow = {
   locale: string;
   created_at: string;
   updated_at: string;
-}
+};
 
 /** `projects` 表行。 */
 export type ProjectRow = {
@@ -62,7 +62,7 @@ export type ProjectRow = {
   created_at: string;
   updated_at: string;
   last_opened_at: string | null;
-}
+};
 
 /**
  * `canvas_nodes` 表行。`data` 为类型私有内容（JSONB），与 `type` 配合还原为
@@ -86,7 +86,7 @@ export type CanvasNodeRow = {
   created_by: string;
   created_at: string;
   updated_at: string;
-}
+};
 
 /** `canvas_edges` 表行。 */
 export type CanvasEdgeRow = {
@@ -99,7 +99,7 @@ export type CanvasEdgeRow = {
   type: string;
   data: EdgeData;
   created_at: string;
-}
+};
 
 /** `conversations` 表行。 */
 export type ConversationRow = {
@@ -109,7 +109,7 @@ export type ConversationRow = {
   target_node_id: string | null;
   created_at: string;
   updated_at: string;
-}
+};
 
 /** `messages` 表行。 */
 export type MessageRow = {
@@ -124,7 +124,7 @@ export type MessageRow = {
   mentions: MessageMention[];
   attachments: MessageAttachment[];
   created_at: string;
-}
+};
 
 /** `generations` 表行。 */
 export type GenerationRow = {
@@ -146,6 +146,22 @@ export type GenerationRow = {
   result_mode: 'new_primary' | 'candidate_for_target';
   error: string | null;
   idempotency_key: string | null;
+  /** 发起生成的业务用户；用于服务角色路径显式归属校验。 */
+  requester_id: string;
+  /** 幂等操作域，当前生成请求固定为 generation。 */
+  operation_type: string;
+  /** 规范化请求的 SHA-256。 */
+  request_hash: string | null;
+  /** 原子提交写入 pgmq 后返回的消息 id。 */
+  submission_queue_message_id: number | null;
+  /** Provider 产出元数据摘要，不含临时地址和凭据。 */
+  provider_output_summary: Record<string, unknown> | null;
+  /** 每任务 webhook secret 的 SHA-256；不保存明文。 */
+  webhook_secret_hash: string | null;
+  webhook_secret_expires_at: string | null;
+  /** poller 的短租约，防多个批次同时查询同一任务。 */
+  poll_lease_token: string | null;
+  poll_lease_until: string | null;
   /** 内容安全审核状态：pending / passed / blocked。 */
   moderation_status: string;
   /** 审核拦截原因（命中策略或产出被过滤），无则为空。 */
@@ -153,7 +169,31 @@ export type GenerationRow = {
   created_at: string;
   updated_at: string;
   completed_at: string | null;
-}
+};
+
+/** `generation_output_attempts` 暂存补偿账本。 */
+export type GenerationOutputAttemptRow = {
+  id: string;
+  generation_id: string;
+  owner_id: string;
+  staging_prefix: string;
+  storage_bucket: string;
+  object_paths: string[];
+  status: 'uploading' | 'staged' | 'committed' | 'discarded' | 'rpc_failed' | 'cleaned';
+  cleanup_after: string;
+  error: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+/** `generation_webhook_events` 回调重放门禁行。 */
+export type GenerationWebhookEventRow = {
+  id: string;
+  generation_id: string;
+  provider: Provider;
+  event_key: string;
+  received_at: string;
+};
 
 /** `assets` 表行。 */
 export type AssetRow = {
@@ -172,7 +212,7 @@ export type AssetRow = {
   size_bytes: number | null;
   thumbnail_path: string | null;
   created_at: string;
-}
+};
 
 /** `model_catalog` 表行。 */
 export type ModelCatalogRow = {
@@ -188,7 +228,7 @@ export type ModelCatalogRow = {
   /** 归属用户：null=内置种子（全局只读）；非空=该用户自有模型。 */
   user_id: string | null;
   created_at: string;
-}
+};
 
 /**
  * Supabase 数据库的强类型描述，供 `createClient<Database>` 泛型使用，
@@ -259,6 +299,27 @@ export interface Database {
           provider: Provider;
         };
         Update: Partial<GenerationRow>;
+        Relationships: [];
+      };
+      generation_output_attempts: {
+        Row: GenerationOutputAttemptRow;
+        Insert: Partial<Omit<GenerationOutputAttemptRow, 'created_at' | 'updated_at'>> & {
+          id: string;
+          generation_id: string;
+          owner_id: string;
+          staging_prefix: string;
+        };
+        Update: Partial<GenerationOutputAttemptRow>;
+        Relationships: [];
+      };
+      generation_webhook_events: {
+        Row: GenerationWebhookEventRow;
+        Insert: Partial<Omit<GenerationWebhookEventRow, 'id' | 'received_at'>> & {
+          generation_id: string;
+          provider: Provider;
+          event_key: string;
+        };
+        Update: Partial<GenerationWebhookEventRow>;
         Relationships: [];
       };
       assets: {

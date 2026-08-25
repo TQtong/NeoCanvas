@@ -1,26 +1,42 @@
 'use client';
 
 /**
- * 画布撤销 / 重做（第 01 篇第六节）。
+ * 画布操作差异式撤销 / 重做。
  *
- * 以节点 / 边快照构建历史栈：交互结束后（防抖）记录当前图为一帧；撤销 / 重做在帧间
- * 切换并经状态库的 restoreGraph 落回，差异自动标记脏 / 删除集以持久化。快照在拖动 /
- * 缩放进行中不记录，避免每帧入栈。
+ * 历史条目只保存本次操作涉及实体的 before/after。拖拽、缩放和旋转通过 Store 的显式事务边界
+ * 合并；文本等无显式边界的连续编辑使用短防抖合并。运行时签名 URL、选择态和 Realtime 回流
+ * 不进入本地历史，undo/redo 仍通过普通 dirty/outbox 管道持久化。
  *
  * @module components/canvas/use-canvas-history
  */
 
 import { useCallback, useEffect, useRef } from 'react';
-import { useCanvasStore } from '@/stores/canvas-store';
-import type { CanvasFlowEdge, CanvasFlowNode } from '@/lib/canvas/node-mapper';
+import { useCanvasStore, type CanvasHistoryPatch } from '@/stores/canvas-store';
+import { nodeToColumns, type CanvasFlowEdge, type CanvasFlowNode } from '@/lib/canvas/node-mapper';
+import { uuid } from '@/lib/utils/id';
 
 /** 历史栈最大深度。 */
 const MAX_HISTORY = 60;
+/** 无显式边界的连续编辑合并窗口。 */
+const IMPLICIT_TRANSACTION_MS = 400;
 
-/** 一帧图快照。 */
-interface Snapshot {
-  nodes: CanvasFlowNode[];
-  edges: CanvasFlowEdge[];
+/** 一条差异式历史事务。 */
+export interface CanvasHistoryEntry {
+  id: string;
+  label: string;
+  nodesBefore: Record<string, CanvasFlowNode | null>;
+  nodesAfter: Record<string, CanvasFlowNode | null>;
+  edgesBefore: Record<string, CanvasFlowEdge | null>;
+  edgesAfter: Record<string, CanvasFlowEdge | null>;
+  createdAt: string;
+}
+
+interface ActiveHistoryEntry {
+  label: string;
+  nodesBefore: Map<string, CanvasFlowNode | null>;
+  nodesAfter: Map<string, CanvasFlowNode | null>;
+  edgesBefore: Map<string, CanvasFlowEdge | null>;
+  edgesAfter: Map<string, CanvasFlowEdge | null>;
 }
 
 /** useCanvasHistory 返回值。 */
@@ -29,12 +45,45 @@ export interface UseCanvasHistory {
   redo: () => void;
 }
 
-/** 浅克隆节点 / 边（含 data 浅拷贝），用于快照隔离。 */
-function cloneSnapshot(nodes: CanvasFlowNode[], edges: CanvasFlowEdge[]): Snapshot {
+/** 深拷贝节点的可持久化与运行时数据，隔离后续原地嵌套修改。 */
+function cloneNode(node: CanvasFlowNode | undefined): CanvasFlowNode | null {
+  if (!node) return null;
   return {
-    nodes: nodes.map((n) => ({ ...n, data: { ...n.data }, position: { ...n.position } })),
-    edges: edges.map((e) => ({ ...e })),
+    ...node,
+    position: { ...node.position },
+    data: structuredClone(node.data),
+    style: node.style ? structuredClone(node.style) : node.style,
   };
+}
+
+/** 深拷贝边数据。 */
+function cloneEdge(edge: CanvasFlowEdge | undefined): CanvasFlowEdge | null {
+  if (!edge) return null;
+  return { ...edge, data: edge.data ? structuredClone(edge.data) : edge.data };
+}
+
+/** 只比较持久化字段，排除签名 URL、进度和选择态。 */
+function nodeFingerprint(node: CanvasFlowNode | null): string {
+  return node ? JSON.stringify(nodeToColumns(node)) : 'null';
+}
+
+/** 边的持久化指纹。 */
+function edgeFingerprint(edge: CanvasFlowEdge | null): string {
+  return edge
+    ? JSON.stringify({
+        source: edge.source,
+        target: edge.target,
+        sourceHandle: edge.sourceHandle ?? null,
+        targetHandle: edge.targetHandle ?? null,
+        type: edge.type ?? 'default',
+        data: edge.data ?? {},
+      })
+    : 'null';
+}
+
+/** Map 转 Record，值已在捕获时隔离。 */
+function mapToRecord<T>(map: Map<string, T>): Record<string, T> {
+  return Object.fromEntries(map);
 }
 
 /**
@@ -44,65 +93,174 @@ function cloneSnapshot(nodes: CanvasFlowNode[], edges: CanvasFlowEdge[]): Snapsh
  * @returns undo / redo 动作
  */
 export function useCanvasHistory(projectId: string): UseCanvasHistory {
-  const past = useRef<Snapshot[]>([]);
-  const future = useRef<Snapshot[]>([]);
+  const past = useRef<CanvasHistoryEntry[]>([]);
+  const future = useRef<CanvasHistoryEntry[]>([]);
+  const active = useRef<ActiveHistoryEntry | null>(null);
+  const explicitTransaction = useRef(false);
   const isRestoring = useRef(false);
-  const lastSignature = useRef<string>('');
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const commitRef = useRef<() => void>(() => undefined);
 
-  // 切项目清空历史
   useEffect(() => {
     past.current = [];
     future.current = [];
-    lastSignature.current = '';
-  }, [projectId]);
+    active.current = null;
+    explicitTransaction.current = false;
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = null;
 
-  // 监听图结构变化，防抖记录快照
-  useEffect(() => {
-    let timer: ReturnType<typeof setTimeout> | null = null;
+    /** 把有效差异提交到 past；操作最终回到原状时不产生空条目。 */
+    const commit = (): void => {
+      if (timer.current) clearTimeout(timer.current);
+      timer.current = null;
+      const entry = active.current;
+      active.current = null;
+      if (!entry) return;
 
-    const unsubscribe = useCanvasStore.subscribe((state, prev) => {
+      for (const id of Array.from(entry.nodesBefore.keys())) {
+        if (
+          nodeFingerprint(entry.nodesBefore.get(id) ?? null) ===
+          nodeFingerprint(entry.nodesAfter.get(id) ?? null)
+        ) {
+          entry.nodesBefore.delete(id);
+          entry.nodesAfter.delete(id);
+        }
+      }
+      for (const id of Array.from(entry.edgesBefore.keys())) {
+        if (
+          edgeFingerprint(entry.edgesBefore.get(id) ?? null) ===
+          edgeFingerprint(entry.edgesAfter.get(id) ?? null)
+        ) {
+          entry.edgesBefore.delete(id);
+          entry.edgesAfter.delete(id);
+        }
+      }
+      if (entry.nodesBefore.size === 0 && entry.edgesBefore.size === 0) return;
+
+      past.current.push({
+        id: uuid(),
+        label: entry.label,
+        nodesBefore: mapToRecord(entry.nodesBefore),
+        nodesAfter: mapToRecord(entry.nodesAfter),
+        edgesBefore: mapToRecord(entry.edgesBefore),
+        edgesAfter: mapToRecord(entry.edgesAfter),
+        createdAt: new Date().toISOString(),
+      });
+      if (past.current.length > MAX_HISTORY) past.current.shift();
+      future.current = [];
+    };
+    commitRef.current = commit;
+
+    const unsubscribe = useCanvasStore.subscribe((state, previous) => {
       if (isRestoring.current) return;
-      if (state.nodes === prev.nodes && state.edges === prev.edges) return;
-      // 以节点 id+位置+尺寸的轻量签名判断是否实质变化
-      const signature = state.nodes
-        .map((n) => `${n.id}:${Math.round(n.position.x)},${Math.round(n.position.y)},${n.width},${n.height},${n.zIndex}`)
-        .join('|');
-      if (signature === lastSignature.current) return;
-      // 先把变化前的状态入栈
-      const prevSnapshot = cloneSnapshot(prev.nodes, prev.edges);
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(() => {
-        // 用变化前快照作为可回退帧
-        past.current.push(prevSnapshot);
-        if (past.current.length > MAX_HISTORY) past.current.shift();
-        future.current = [];
-        lastSignature.current = signature;
-      }, 400);
+
+      if (state._historyBoundary !== previous._historyBoundary && state._historyBoundary) {
+        if (state._historyBoundary.phase === 'begin') {
+          commit();
+          explicitTransaction.current = true;
+          active.current = {
+            label: state._historyBoundary.label,
+            nodesBefore: new Map(),
+            nodesAfter: new Map(),
+            edgesBefore: new Map(),
+            edgesAfter: new Map(),
+          };
+        } else {
+          if (active.current) active.current.label = state._historyBoundary.label;
+          explicitTransaction.current = false;
+          commit();
+        }
+      }
+
+      if (state.nodes === previous.nodes && state.edges === previous.edges) return;
+      const previousNodes = new Map(previous.nodes.map((node) => [node.id, node]));
+      const currentNodes = new Map(state.nodes.map((node) => [node.id, node]));
+      const nodeIds = new Set([
+        ...state._dirtyNodeIds,
+        ...previous._dirtyNodeIds,
+        ...state._deletedNodeIds,
+        ...previous._deletedNodeIds,
+      ]);
+      const previousEdges = new Map(previous.edges.map((edge) => [edge.id, edge]));
+      const currentEdges = new Map(state.edges.map((edge) => [edge.id, edge]));
+      const edgeIds = new Set([
+        ...state._dirtyEdgeIds,
+        ...previous._dirtyEdgeIds,
+        ...state._deletedEdgeIds,
+        ...previous._deletedEdgeIds,
+      ]);
+
+      let changed = false;
+      const ensureActive = (): ActiveHistoryEntry => {
+        active.current ??= {
+          label: '画布操作',
+          nodesBefore: new Map(),
+          nodesAfter: new Map(),
+          edgesBefore: new Map(),
+          edgesAfter: new Map(),
+        };
+        return active.current;
+      };
+
+      for (const id of nodeIds) {
+        const before = cloneNode(previousNodes.get(id));
+        const after = cloneNode(currentNodes.get(id));
+        if (nodeFingerprint(before) === nodeFingerprint(after)) continue;
+        const entry = ensureActive();
+        if (!entry.nodesBefore.has(id)) entry.nodesBefore.set(id, before);
+        entry.nodesAfter.set(id, after);
+        changed = true;
+      }
+      for (const id of edgeIds) {
+        const before = cloneEdge(previousEdges.get(id));
+        const after = cloneEdge(currentEdges.get(id));
+        if (edgeFingerprint(before) === edgeFingerprint(after)) continue;
+        const entry = ensureActive();
+        if (!entry.edgesBefore.has(id)) entry.edgesBefore.set(id, before);
+        entry.edgesAfter.set(id, after);
+        changed = true;
+      }
+
+      if (changed && !explicitTransaction.current) {
+        if (timer.current) clearTimeout(timer.current);
+        timer.current = setTimeout(commit, IMPLICIT_TRANSACTION_MS);
+      }
     });
 
     return () => {
       unsubscribe();
-      if (timer) clearTimeout(timer);
+      if (timer.current) clearTimeout(timer.current);
+      timer.current = null;
+      active.current = null;
+      commitRef.current = () => undefined;
     };
-  }, []);
+  }, [projectId]);
 
   const undo = useCallback(() => {
-    const snapshot = past.current.pop();
-    if (!snapshot) return;
-    const { nodes, edges } = useCanvasStore.getState();
-    future.current.push(cloneSnapshot(nodes, edges));
+    commitRef.current();
+    const entry = past.current.pop();
+    if (!entry) return;
+    future.current.push(entry);
     isRestoring.current = true;
-    useCanvasStore.getState().restoreGraph(snapshot.nodes, snapshot.edges);
+    const patch: CanvasHistoryPatch = {
+      nodes: entry.nodesBefore,
+      edges: entry.edgesBefore,
+    };
+    useCanvasStore.getState().applyHistoryPatch(patch);
     isRestoring.current = false;
   }, []);
 
   const redo = useCallback(() => {
-    const snapshot = future.current.pop();
-    if (!snapshot) return;
-    const { nodes, edges } = useCanvasStore.getState();
-    past.current.push(cloneSnapshot(nodes, edges));
+    commitRef.current();
+    const entry = future.current.pop();
+    if (!entry) return;
+    past.current.push(entry);
+    if (past.current.length > MAX_HISTORY) past.current.shift();
     isRestoring.current = true;
-    useCanvasStore.getState().restoreGraph(snapshot.nodes, snapshot.edges);
+    useCanvasStore.getState().applyHistoryPatch({
+      nodes: entry.nodesAfter,
+      edges: entry.edgesAfter,
+    });
     isRestoring.current = false;
   }, []);
 

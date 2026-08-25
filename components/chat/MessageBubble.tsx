@@ -71,9 +71,7 @@ function MentionChip({ mention, onAccent }: { mention: MessageMention; onAccent:
       className={cn(
         'inline-flex max-w-[12rem] items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-medium',
         // 在紫色气泡上用半透明白底，在浅灰气泡上用强调色
-        onAccent
-          ? 'bg-accent-foreground/15 text-accent-foreground'
-          : 'bg-accent-muted text-accent',
+        onAccent ? 'bg-accent-foreground/15 text-accent-foreground' : 'bg-accent-muted text-accent',
       )}
     >
       <Icon className="size-3 shrink-0 opacity-80" />
@@ -116,9 +114,7 @@ export function MessageBubble({ message }: { message: MessageView }) {
       <div
         className={cn(
           'max-w-[85%] rounded-2xl px-4 py-2.5 text-sm shadow-soft',
-          isUser
-            ? 'ml-auto bg-accent text-accent-foreground'
-            : 'mr-auto bg-muted text-foreground',
+          isUser ? 'ml-auto bg-accent text-accent-foreground' : 'mr-auto bg-muted text-foreground',
         )}
       >
         {/* 附件缩略行：置于文本之上 */}
@@ -162,7 +158,9 @@ export function MessageBubble({ message }: { message: MessageView }) {
           <span
             className={cn(
               'mt-1.5 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium',
-              onAccent ? 'bg-accent-foreground/15 text-accent-foreground' : 'bg-accent/10 text-accent',
+              onAccent
+                ? 'bg-accent-foreground/15 text-accent-foreground'
+                : 'bg-accent/10 text-accent',
             )}
           >
             <Sparkles className="size-3.5 shrink-0 animate-pulse-soft" />

@@ -18,6 +18,11 @@ import { replicateAdapter } from './replicate.ts';
 import { siliconflowAdapter } from './siliconflow.ts';
 import { minimaxAdapter } from './minimax.ts';
 import { jimengAdapter } from './jimeng.ts';
+import { requireTestProviderEnabled, TEST_PROVIDER } from '../test-provider.ts';
+import { testAdapter } from './test.ts';
+
+/** 适配器注册表可解析的 Provider，测试项不进入公开生产契约。 */
+export type ResolvedAdapterProvider = BuiltInProvider | typeof TEST_PROVIDER;
 
 /** 提供商 → 适配器。 */
 const REGISTRY: Record<BuiltInProvider, ModelAdapter> = {
@@ -38,7 +43,11 @@ const REGISTRY: Record<BuiltInProvider, ModelAdapter> = {
  * @returns 对应适配器
  * @throws {ApiException} 未知提供商（model_unavailable）
  */
-export function getAdapter(provider: BuiltInProvider): ModelAdapter {
+export function getAdapter(provider: ResolvedAdapterProvider): ModelAdapter {
+  if (provider === TEST_PROVIDER) {
+    requireTestProviderEnabled();
+    return testAdapter;
+  }
   const adapter = REGISTRY[provider];
   if (!adapter) {
     throw new ApiException('model_unavailable', `未知提供商：${provider}`);

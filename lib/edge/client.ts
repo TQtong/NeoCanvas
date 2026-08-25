@@ -104,9 +104,7 @@ export async function* invokeEdgeStream<TEvent>(
     while (boundary !== -1) {
       const rawEvent = buffer.slice(0, boundary);
       buffer = buffer.slice(boundary + 2);
-      const dataLine = rawEvent
-        .split('\n')
-        .find((line) => line.startsWith('data:'));
+      const dataLine = rawEvent.split('\n').find((line) => line.startsWith('data:'));
       if (dataLine) {
         const json = dataLine.slice('data:'.length).trim();
         if (json && json !== '[DONE]') {

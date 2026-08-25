@@ -8,11 +8,13 @@
  */
 
 import { type GenerationRow, type ModelCatalogRow } from '../_shared/types.ts';
-import { exceptionToResponse, ok } from '../_shared/response.ts';
+import { exceptionToResponse, fail, ok } from '../_shared/response.ts';
 import { createAdminClient, type SupabaseClient } from '../_shared/supabase.ts';
 import { getAdapter } from '../_shared/adapters/registry.ts';
 import { resolveProviderAdapter } from '../_shared/credentials.ts';
 import { buildModelContext, landResult, markFailed } from '../_shared/pipeline.ts';
+import { requireInternalServiceRole } from '../_shared/internal-auth.ts';
+import { requireAccessibleModel } from '../_shared/models.ts';
 
 /** 单次轮询的最大任务数。 */
 const BATCH = 20;
@@ -21,12 +23,12 @@ const BATCH = 20;
 async function advance(admin: SupabaseClient, generation: GenerationRow): Promise<void> {
   if (!generation.external_job_id) return;
 
-  const { data: model } = await admin
-    .from('model_catalog')
-    .select('*')
-    .eq('key', generation.model_key)
-    .single();
-  const modelRow = model as ModelCatalogRow;
+  const modelRow: ModelCatalogRow = await requireAccessibleModel(
+    admin,
+    generation.model_key,
+    generation.requester_id,
+    generation.modality,
+  );
 
   const adapter = getAdapter(
     await resolveProviderAdapter(admin, generation.provider, generation.project_id),
@@ -64,20 +66,29 @@ async function advance(admin: SupabaseClient, generation: GenerationRow): Promis
   }
 }
 
-Deno.serve(async () => {
+Deno.serve(async (request) => {
+  if (request.method !== 'POST') return fail('invalid_params', '仅支持 POST');
   try {
+    requireInternalServiceRole(request);
     const admin = createAdminClient();
-    const { data: rows } = await admin
-      .from('generations')
-      .select('*')
-      .eq('status', 'running')
-      .not('external_job_id', 'is', null)
-      .order('updated_at', { ascending: true })
-      .limit(BATCH);
+    const { data: rows, error: claimError } = await admin.rpc('claim_generation_poll_batch', {
+      p_qty: BATCH,
+      p_lease_seconds: 120,
+    });
+    if (claimError) throw claimError;
 
     const generations = (rows ?? []) as GenerationRow[];
     for (const generation of generations) {
-      await advance(admin, generation);
+      try {
+        await advance(admin, generation);
+      } finally {
+        if (generation.poll_lease_token) {
+          await admin.rpc('release_generation_poll_lease', {
+            p_generation_id: generation.id,
+            p_lease_token: generation.poll_lease_token,
+          });
+        }
+      }
     }
     return ok({ polled: generations.length });
   } catch (error) {

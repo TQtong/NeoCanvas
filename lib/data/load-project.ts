@@ -14,6 +14,7 @@ import type {
   CanvasEdgeRow,
   CanvasNodeRow,
   ConversationRow,
+  GenerationRow,
   MessageRow,
   ProjectRow,
 } from '@/types';
@@ -29,12 +30,16 @@ export interface ProjectBundle {
   nodes: CanvasNodeRow[];
   /** 画布边。 */
   edges: CanvasEdgeRow[];
-  /** 主会话（最早创建的一条）。 */
+  /** 当前会话（最近更新的一条）。 */
   conversation: ConversationRow | null;
+  /** 项目内会话摘要，按最近更新排序。 */
+  conversations: ConversationRow[];
   /** 主会话的最近一页历史消息（按时间升序）。 */
   messages: MessageRow[];
   /** 是否还有更早的历史消息可加载（keyset 分页）。 */
   hasMoreMessages: boolean;
+  /** 当前项目生成任务快照，用于恢复消息进行态和生成关联。 */
+  generations: GenerationRow[];
 }
 
 /**
@@ -74,6 +79,7 @@ async function attachRuntimeMediaUrls(
       data: {
         ...node.data,
         src: view.url,
+        urlExpiresAt: view.expiresAt,
         ...(node.type === 'image'
           ? { thumbnailSrc: view.thumbnailUrl }
           : { posterSrc: view.thumbnailUrl }),
@@ -102,7 +108,7 @@ export async function loadProjectBundle(
 
   if (!project) return null;
 
-  const [nodesResult, edgesResult, conversationResult] = await Promise.all([
+  const [nodesResult, edgesResult, conversationResult, generationsResult] = await Promise.all([
     supabase
       .from('canvas_nodes')
       .select('*')
@@ -113,11 +119,17 @@ export async function loadProjectBundle(
       .from('conversations')
       .select('*')
       .eq('project_id', projectId)
-      .order('created_at', { ascending: true })
-      .limit(1),
+      .order('updated_at', { ascending: false })
+      .order('id', { ascending: false }),
+    supabase
+      .from('generations')
+      .select('*')
+      .eq('project_id', projectId)
+      .order('created_at', { ascending: true }),
   ]);
 
-  const conversation = conversationResult.data?.[0] ?? null;
+  const conversations = conversationResult.data ?? [];
+  const conversation = conversations[0] ?? null;
   let messages: MessageRow[] = [];
   let hasMoreMessages = false;
   if (conversation) {
@@ -141,8 +153,10 @@ export async function loadProjectBundle(
     nodes,
     edges: edgesResult.data ?? [],
     conversation,
+    conversations,
     messages,
     hasMoreMessages,
+    generations: generationsResult.data ?? [],
   };
 }
 

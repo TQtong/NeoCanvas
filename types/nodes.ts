@@ -164,6 +164,8 @@ export type ImageNodeData = NodeDataBase & {
   src?: string | null;
   /** 运行时注入：缩略图签名 URL，不持久化。 */
   thumbnailSrc?: string | null;
+  /** 运行时注入：当前签名 URL 到期时间（ISO）。 */
+  urlExpiresAt?: string | null;
 } & MediaWorkflowFields;
 
 /**
@@ -262,6 +264,8 @@ export type VideoNodeData = NodeDataBase & {
   src?: string | null;
   /** 运行时注入：封面签名 URL，不持久化。 */
   posterSrc?: string | null;
+  /** 运行时注入：当前签名 URL 到期时间（ISO）。 */
+  urlExpiresAt?: string | null;
 } & MediaWorkflowFields;
 
 /**

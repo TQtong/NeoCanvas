@@ -69,7 +69,13 @@ function AnnotationEdgeComponent({
           </div>
         </EdgeLabelRenderer>
       )}
-      <EdgeDeleteButton edgeId={id} x={labelX} y={labelY} show={active} onHoverChange={setHovered} />
+      <EdgeDeleteButton
+        edgeId={id}
+        x={labelX}
+        y={labelY}
+        show={active}
+        onHoverChange={setHovered}
+      />
     </>
   );
 }

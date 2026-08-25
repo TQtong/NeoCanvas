@@ -80,6 +80,9 @@ verify_jwt = false
 [functions.poll-generations]
 verify_jwt = false
 
+[functions.cleanup-generation-staging]
+verify_jwt = false
+
 [functions.generation-webhook]
 verify_jwt = false
 

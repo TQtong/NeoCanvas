@@ -60,9 +60,17 @@ export function DropdownMenuSeparator({ className }: { className?: string }) {
 }
 
 /** 标签。 */
-export function DropdownMenuLabel({ className, children }: { className?: string; children: React.ReactNode }) {
+export function DropdownMenuLabel({
+  className,
+  children,
+}: {
+  className?: string;
+  children: React.ReactNode;
+}) {
   return (
-    <DropdownPrimitive.Label className={cn('px-2.5 py-1.5 text-xs text-muted-foreground', className)}>
+    <DropdownPrimitive.Label
+      className={cn('px-2.5 py-1.5 text-xs text-muted-foreground', className)}
+    >
       {children}
     </DropdownPrimitive.Label>
   );

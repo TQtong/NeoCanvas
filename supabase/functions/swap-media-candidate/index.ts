@@ -10,7 +10,13 @@ import {
   type SwapMediaCandidateRequest,
   type SwapMediaCandidateResponse,
 } from '../_shared/types.ts';
-import { ApiException, exceptionToResponse, fail, handleCorsPreflight, ok } from '../_shared/response.ts';
+import {
+  ApiException,
+  exceptionToResponse,
+  fail,
+  handleCorsPreflight,
+  ok,
+} from '../_shared/response.ts';
 import { assertProjectOwner, createAdminClient, requireUser } from '../_shared/supabase.ts';
 
 Deno.serve(async (request) => {

@@ -100,29 +100,35 @@ function capTotalOutputs(steps: OrchestrationStep[]): OrchestrationStep[] {
 /** 确定性兜底规划（无 LLM 时）。 */
 function fallbackPlan(input: PlanInput): OrchestrationPlan {
   const hasRefs = input.references.length > 0;
-  const modality: 'image' | 'video' =
-    input.selectedModality === 'video' ? 'video' : 'image';
+  const modality: 'image' | 'video' = input.selectedModality === 'video' ? 'video' : 'image';
   const role: OrchestrationStep['referenceRole'] = modality === 'video' ? 'first_frame' : 'content';
 
   let count = 1;
   let prompt = input.content;
   if (input.agentMode === 'scene') {
-    count = modality === 'image' ? Math.min(sceneGenerationCount(input.scene), input.maxOutputs) : 1;
+    count = modality === 'image'
+      ? Math.min(sceneGenerationCount(input.scene), input.maxOutputs)
+      : 1;
     prompt = composeScenePrompt(input.scene, input.content);
   } else if (input.agentMode === 'orchestrate') {
     count = Math.min(parseCountHeuristic(input.content), input.maxOutputs);
   }
 
-  const reply =
-    input.agentMode === 'scene'
-      ? '正在按所选场景为你产出成套物料，请稍候。'
-      : input.agentMode === 'orchestrate'
-        ? '正在理解你的想法并编排生成，请稍候。'
-        : '好的，正在为你生成。';
+  const reply = input.agentMode === 'scene'
+    ? '正在按所选场景为你产出成套物料，请稍候。'
+    : input.agentMode === 'orchestrate'
+    ? '正在理解你的想法并编排生成，请稍候。'
+    : '好的，正在为你生成。';
 
   return {
     reply,
-    steps: capTotalOutputs([{ modality, count, prompt, referenceRole: role, useReferences: hasRefs }]),
+    steps: capTotalOutputs([{
+      modality,
+      count,
+      prompt,
+      referenceRole: role,
+      useReferences: hasRefs,
+    }]),
   };
 }
 
@@ -147,7 +153,9 @@ function planSystemPrompt(input: PlanInput): string {
     `- 图像步 count 不超过 ${input.maxOutputs}；视频步 count 固定为 1。`,
     `- 允许多步骤以表达序列编排（例如先出多张图、再据其出一段视频，视频步 referenceRole 用 first_frame）。`,
     input.references.length > 0
-      ? `- 可用参考素材：${input.references.map((r) => `${r.label}(${r.kind})`).join('、')}；按需在步骤中 useReferences=true 并选择合适 referenceRole。`
+      ? `- 可用参考素材：${
+        input.references.map((r) => `${r.label}(${r.kind})`).join('、')
+      }；按需在步骤中 useReferences=true 并选择合适 referenceRole。`
       : '- 当前无参考素材，useReferences 一律为 false。',
     input.scene ? `- 当前创作场景：${input.scene}，请贴合该场景。` : '',
     '- prompt 用具体、可生成的中文描述，融入用户意图与场景。',
@@ -175,13 +183,14 @@ export async function buildPlan(input: PlanInput): Promise<OrchestrationPlan> {
     const parsed = JSON.parse(raw) as { reply?: unknown; steps?: unknown };
     const hasRefs = input.references.length > 0;
     const steps = Array.isArray(parsed.steps)
-      ? parsed.steps.map((s) => sanitizeStep(s, input, hasRefs)).filter((s): s is OrchestrationStep => s !== null)
+      ? parsed.steps.map((s) => sanitizeStep(s, input, hasRefs)).filter((
+        s,
+      ): s is OrchestrationStep => s !== null)
       : [];
     const finalSteps = steps.length > 0 ? capTotalOutputs(steps) : fallbackPlan(input).steps;
-    const reply =
-      typeof parsed.reply === 'string' && parsed.reply.trim()
-        ? parsed.reply.trim()
-        : '已理解你的需求，正在为你编排生成。';
+    const reply = typeof parsed.reply === 'string' && parsed.reply.trim()
+      ? parsed.reply.trim()
+      : '已理解你的需求，正在为你编排生成。';
     return { reply, steps: finalSteps };
   } catch {
     // LLM 不可用 / 输出不可解析时回退，保证可用性

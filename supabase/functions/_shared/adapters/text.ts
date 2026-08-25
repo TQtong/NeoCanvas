@@ -37,7 +37,8 @@ export interface LlmAdapter {
 function llmConfig(): { apiKey: string | undefined; model: string; baseUrl: string } {
   const apiKey = Deno.env.get('ORCHESTRATOR_LLM_API_KEY') ?? Deno.env.get('OPENAI_API_KEY');
   const model = Deno.env.get('ORCHESTRATOR_LLM_MODEL') ?? 'gpt-4o-mini';
-  const baseUrl = (Deno.env.get('ORCHESTRATOR_LLM_BASE_URL') ?? 'https://api.openai.com/v1').replace(/\/$/, '');
+  const baseUrl = (Deno.env.get('ORCHESTRATOR_LLM_BASE_URL') ?? 'https://api.openai.com/v1')
+    .replace(/\/$/, '');
   return { apiKey, model, baseUrl };
 }
 
@@ -78,7 +79,9 @@ async function* parseSseDeltas(body: ReadableStream<Uint8Array>): AsyncGenerator
         const payload = line.slice(5).trim();
         if (payload && payload !== '[DONE]') {
           try {
-            const json = JSON.parse(payload) as { choices?: Array<{ delta?: { content?: string } }> };
+            const json = JSON.parse(payload) as {
+              choices?: Array<{ delta?: { content?: string } }>;
+            };
             const delta = json.choices?.[0]?.delta?.content;
             if (delta) yield delta;
           } catch {

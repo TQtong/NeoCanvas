@@ -80,8 +80,20 @@ const CatAvatar: FC<AvatarSvgProps> = ({ className }) => (
     <Eyes cy={52} dx={11} />
     <path d="M47.4 60 H52.6 L50 62.8 Z" fill="#E0706F" />
     <path d="M50 62.8 V65" stroke="#7A4A36" strokeWidth="1.3" strokeLinecap="round" />
-    <path d="M50 65 Q46.5 67.4 43.5 66" stroke="#7A4A36" strokeWidth="1.3" fill="none" strokeLinecap="round" />
-    <path d="M50 65 Q53.5 67.4 56.5 66" stroke="#7A4A36" strokeWidth="1.3" fill="none" strokeLinecap="round" />
+    <path
+      d="M50 65 Q46.5 67.4 43.5 66"
+      stroke="#7A4A36"
+      strokeWidth="1.3"
+      fill="none"
+      strokeLinecap="round"
+    />
+    <path
+      d="M50 65 Q53.5 67.4 56.5 66"
+      stroke="#7A4A36"
+      strokeWidth="1.3"
+      fill="none"
+      strokeLinecap="round"
+    />
     <Blush cy={61} dx={20} />
   </Svg>
 );
@@ -118,8 +130,20 @@ const PandaAvatar: FC<AvatarSvgProps> = ({ className }) => (
     <circle cx="59.4" cy="54.4" r="1.7" fill="#2D2A2E" />
     <path d="M46.5 62 H53.5 L50 65.4 Z" fill="#2D2A2E" />
     <path d="M50 65.4 V67.4" stroke="#2D2A2E" strokeWidth="1.3" strokeLinecap="round" />
-    <path d="M50 67.4 Q46.5 69.4 43.5 68" stroke="#2D2A2E" strokeWidth="1.3" fill="none" strokeLinecap="round" />
-    <path d="M50 67.4 Q53.5 69.4 56.5 68" stroke="#2D2A2E" strokeWidth="1.3" fill="none" strokeLinecap="round" />
+    <path
+      d="M50 67.4 Q46.5 69.4 43.5 68"
+      stroke="#2D2A2E"
+      strokeWidth="1.3"
+      fill="none"
+      strokeLinecap="round"
+    />
+    <path
+      d="M50 67.4 Q53.5 69.4 56.5 68"
+      stroke="#2D2A2E"
+      strokeWidth="1.3"
+      fill="none"
+      strokeLinecap="round"
+    />
   </Svg>
 );
 
@@ -136,8 +160,20 @@ const BearAvatar: FC<AvatarSvgProps> = ({ className }) => (
     <Eyes cy={51} dx={10} />
     <ellipse cx="50" cy="61" rx="4" ry="3" fill="#5A3F2A" />
     <path d="M50 64 V66" stroke="#5A3F2A" strokeWidth="1.3" strokeLinecap="round" />
-    <path d="M50 66 Q46 68 43.5 66.6" stroke="#5A3F2A" strokeWidth="1.3" fill="none" strokeLinecap="round" />
-    <path d="M50 66 Q54 68 56.5 66.6" stroke="#5A3F2A" strokeWidth="1.3" fill="none" strokeLinecap="round" />
+    <path
+      d="M50 66 Q46 68 43.5 66.6"
+      stroke="#5A3F2A"
+      strokeWidth="1.3"
+      fill="none"
+      strokeLinecap="round"
+    />
+    <path
+      d="M50 66 Q54 68 56.5 66.6"
+      stroke="#5A3F2A"
+      strokeWidth="1.3"
+      fill="none"
+      strokeLinecap="round"
+    />
     <Blush cy={63} dx={18} />
   </Svg>
 );
@@ -177,7 +213,13 @@ const FrogAvatar: FC<AvatarSvgProps> = ({ className }) => (
     <circle cx="64.1" cy="32.9" r="1" fill="#FFFFFF" />
     <circle cx="46" cy="52" r="1" fill="#43803A" />
     <circle cx="54" cy="52" r="1" fill="#43803A" />
-    <path d="M35 60 Q50 73 65 60" stroke="#43803A" strokeWidth="2.2" fill="none" strokeLinecap="round" />
+    <path
+      d="M35 60 Q50 73 65 60"
+      stroke="#43803A"
+      strokeWidth="2.2"
+      fill="none"
+      strokeLinecap="round"
+    />
     <Blush cy={58} dx={20} />
   </Svg>
 );

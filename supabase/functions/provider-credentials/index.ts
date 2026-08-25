@@ -83,8 +83,7 @@ function assertSafeBaseUrl(value: string | null | undefined): void {
     throw new ApiException('invalid_params', 'API 端点不是有效 URL');
   }
   const host = url.hostname.toLowerCase();
-  const forbidden =
-    host === 'localhost' ||
+  const forbidden = host === 'localhost' ||
     host.endsWith('.local') ||
     host === '0.0.0.0' ||
     host === '127.0.0.1' ||
@@ -146,15 +145,14 @@ Deno.serve(async (request) => {
           p_label: body.label ?? null,
           p_website_url: body.websiteUrl ?? null,
           p_base_url: body.baseUrl ?? null,
-          p_api_key:
-            adapter === 'jimeng'
-              ? body.apiKey || body.apiSecret
-                ? JSON.stringify({
-                    accessKeyId: body.apiKey ?? '',
-                    secretAccessKey: body.apiSecret ?? '',
-                  })
-                : null
-              : (body.apiKey ?? null),
+          p_api_key: adapter === 'jimeng'
+            ? body.apiKey || body.apiSecret
+              ? JSON.stringify({
+                accessKeyId: body.apiKey ?? '',
+                secretAccessKey: body.apiSecret ?? '',
+              })
+              : null
+            : (body.apiKey ?? null),
           p_enabled: body.enabled ?? true,
         });
         if (error) {
@@ -216,10 +214,9 @@ Deno.serve(async (request) => {
           });
         }
         assertSafeBaseUrl(baseUrl);
-        const probeKey =
-          adapter === 'jimeng' && body.apiKey
-            ? JSON.stringify({ accessKeyId: body.apiKey, secretAccessKey: body.apiSecret ?? '' })
-            : apiKey;
+        const probeKey = adapter === 'jimeng' && body.apiKey
+          ? JSON.stringify({ accessKeyId: body.apiKey, secretAccessKey: body.apiSecret ?? '' })
+          : apiKey;
         const result = await testProviderKey(adapter, probeKey, baseUrl);
         return ok<ProviderCredentialsResponse>({ action: 'test', result });
       }

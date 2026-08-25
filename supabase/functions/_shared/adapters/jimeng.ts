@@ -18,7 +18,7 @@ import {
   type VideoGenerationParams,
 } from '../types.ts';
 import { ApiException } from '../response.ts';
-import { resolveSize, type ModelAdapter, type ModelContext } from './base.ts';
+import { type ModelAdapter, type ModelContext, resolveSize } from './base.ts';
 
 /** 即梦智能视觉 API 的官方根地址。 */
 const DEFAULT_BASE_URL = 'https://visual.volcengineapi.com';
@@ -170,10 +170,12 @@ function parseCredential(rawCredential: string): JimengCredential {
     );
   }
   const credential = parsed as Record<string, unknown>;
-  const accessKeyId =
-    typeof credential.accessKeyId === 'string' ? credential.accessKeyId.trim() : '';
-  const secretAccessKey =
-    typeof credential.secretAccessKey === 'string' ? credential.secretAccessKey.trim() : '';
+  const accessKeyId = typeof credential.accessKeyId === 'string'
+    ? credential.accessKeyId.trim()
+    : '';
+  const secretAccessKey = typeof credential.secretAccessKey === 'string'
+    ? credential.secretAccessKey.trim()
+    : '';
   if (!accessKeyId || !secretAccessKey) {
     throw new ApiException('invalid_params', '即梦凭证缺少 accessKeyId 或 secretAccessKey');
   }
@@ -373,8 +375,9 @@ export const jimengAdapter: ModelAdapter = {
       throw new ApiException('model_unavailable', '即梦模型缺少 req_key 配置');
     }
 
-    const body =
-      request.modality === 'image' ? buildImageBody(request, ctx) : buildVideoBody(request, ctx);
+    const body = request.modality === 'image'
+      ? buildImageBody(request, ctx)
+      : buildVideoBody(request, ctx);
     const response = await callJimeng('CVSync2AsyncSubmitTask', body, ctx);
     if (response.code !== SUCCESS_CODE) {
       throw new ApiException('provider_error', response.message ?? '即梦任务提交失败', {

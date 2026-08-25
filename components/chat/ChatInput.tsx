@@ -28,7 +28,7 @@ import {
   X,
   type LucideIcon,
 } from 'lucide-react';
-import type { MessageAttachment, MessageMention, NodeType } from '@/types';
+import type { MessageAttachment, MessageMention, ModelCatalogEntry, NodeType } from '@/types';
 import { useChatStore } from '@/stores/chat-store';
 import { useConversation } from '@/lib/hooks/use-conversation';
 import { IconButton } from '@/components/ui/icon-button';
@@ -59,6 +59,8 @@ const MENTION_ICON: Record<NodeType, LucideIcon> = {
 export interface ChatInputProps {
   /** 当前项目标识，发送时传入编排函数与附件上传。 */
   projectId: string;
+  /** 当前用户可实际调用的模型目录。 */
+  models: ModelCatalogEntry[];
 }
 
 /** 单个提及胶囊。 */
@@ -128,7 +130,7 @@ function AttachmentChip({
  * @param props - 见 {@link ChatInputProps}
  * @returns 对话输入区
  */
-export function ChatInput({ projectId }: ChatInputProps) {
+export function ChatInput({ projectId, models }: ChatInputProps) {
   const { t, tError } = useTranslation();
   const toast = useToast();
   const { send } = useConversation();
@@ -144,6 +146,7 @@ export function ChatInput({ projectId }: ChatInputProps) {
   const removeAttachment = useChatStore((s) => s.removeAttachment);
   const addMention = useChatStore((s) => s.addMention);
   const isSending = useChatStore((s) => s.isSending);
+  const selectedModelKey = useChatStore((s) => s.selectedModelKey);
   const focusNonce = useChatStore((s) => s.focusNonce);
 
   // 提及选择器开合
@@ -170,7 +173,10 @@ export function ChatInput({ projectId }: ChatInputProps) {
   }, [focusNonce]);
 
   // 是否可发送：有非空文本或至少一个附件，且未在发送中
-  const canSend = (draft.trim().length > 0 || pendingAttachments.length > 0) && !isSending;
+  const hasAvailableModel =
+    selectedModelKey !== null && models.some((model) => model.key === selectedModelKey);
+  const canSend =
+    (draft.trim().length > 0 || pendingAttachments.length > 0) && !isSending && hasAvailableModel;
 
   /** 执行发送：成功后由 send 内部清空草稿，失败以提示条告知。 */
   const handleSend = useCallback(async () => {
@@ -191,7 +197,7 @@ export function ChatInput({ projectId }: ChatInputProps) {
     setDraft(value);
 
     // 光标紧邻处刚键入 `@`（行首或前一字符为空白）时触发提及
-    const prevChar = caret >= 2 ? value[caret - 2] ?? '' : '';
+    const prevChar = caret >= 2 ? (value[caret - 2] ?? '') : '';
     if (value[caret - 1] === '@' && (caret === 1 || /\s/.test(prevChar))) {
       triggerIndexRef.current = caret - 1;
       setMentionOpen(true);
@@ -207,7 +213,7 @@ export function ChatInput({ projectId }: ChatInputProps) {
     addMention(mention);
     const idx = triggerIndexRef.current;
     if (idx != null) {
-      // 剥除触发字符（连同其后紧跟的查询片段尚未实现，仅去掉单个 `@`）
+      // 当前选择器展示完整节点清单，不消费内联查询文本；选中后只剥除作为触发器的 `@`。
       const current = useChatStore.getState().draft;
       if (current[idx] === '@') {
         const next = current.slice(0, idx) + current.slice(idx + 1);
@@ -270,6 +276,12 @@ export function ChatInput({ projectId }: ChatInputProps) {
         style={{ maxHeight: TEXTAREA_MAX_HEIGHT }}
       />
 
+      {!hasAvailableModel ? (
+        <p className="text-destructive px-1.5 text-xs" role="status">
+          {t('home.noAvailableModels')}
+        </p>
+      ) : null}
+
       {/* 提及选择器：以输入区为锚点向上弹出 */}
       <MentionPicker
         open={mentionOpen}
@@ -284,7 +296,7 @@ export function ChatInput({ projectId }: ChatInputProps) {
         </div>
 
         <div className="flex items-center gap-1">
-          <AgentModeDropdown />
+          <AgentModeDropdown models={models} />
           {/* 高级入口占位（3D / 进阶能力，后续接入） */}
           <Tooltip content={t('common.settings')}>
             <IconButton size="sm" label={t('common.settings')} disabled>

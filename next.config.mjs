@@ -4,7 +4,7 @@
  * - App Router 默认开启，无需显式声明。
  * - `images.remotePatterns` 放行 Supabase Storage 的签名 URL 域名，使
  *   `next/image` 可直接渲染存储桶中的媒体；具体域名由环境变量注入。
- * - `serverActions.bodySizeLimit` 适度放宽，以容纳发起创作时附带的小型参考图。
+ * - 本地端到端测试统一使用 127.0.0.1，显式列入开发资源来源。
  */
 
 /** @type {import('next').NextConfig} */
@@ -12,11 +12,7 @@ const nextConfig = {
   // Docker 生产镜像只携带 Next.js 自动追踪出的最小运行依赖。
   output: 'standalone',
   reactStrictMode: true,
-  experimental: {
-    serverActions: {
-      bodySizeLimit: '8mb',
-    },
-  },
+  allowedDevOrigins: ['127.0.0.1'],
   images: {
     remotePatterns: [
       {

@@ -54,6 +54,7 @@ export function messageRowToView(row: MessageRow): MessageView {
     mentions: row.mentions,
     attachments: row.attachments,
     createdAt: row.created_at,
+    userMessageId: row.user_message_id,
   };
 }
 

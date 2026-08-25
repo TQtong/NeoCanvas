@@ -85,7 +85,10 @@ export function useProjects(initialProjects: ProjectSummary[] = []): UseProjects
     return Promise.all(
       (data ?? []).map(async (row) => {
         const summary = projectRowToSummary(row);
-        return { ...summary, thumbnailUrl: await signStorageRef(supabase, summary.thumbnailUrl, THUMBNAIL_WIDTH) };
+        return {
+          ...summary,
+          thumbnailUrl: await signStorageRef(supabase, summary.thumbnailUrl, THUMBNAIL_WIDTH),
+        };
       }),
     );
   }, []);
@@ -165,5 +168,16 @@ export function useProjects(initialProjects: ProjectSummary[] = []): UseProjects
     }
   }, []);
 
-  return { projects, loading, hasMore, error, loadMore, refresh, prepend, rename, softDelete, restore };
+  return {
+    projects,
+    loading,
+    hasMore,
+    error,
+    loadMore,
+    refresh,
+    prepend,
+    rename,
+    softDelete,
+    restore,
+  };
 }

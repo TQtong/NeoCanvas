@@ -8,10 +8,7 @@
  * @module lib/realtime/project-channel
  */
 
-import type {
-  RealtimeChannel,
-  RealtimePostgresChangesPayload,
-} from '@supabase/supabase-js';
+import type { RealtimeChannel, RealtimePostgresChangesPayload } from '@supabase/supabase-js';
 import {
   projectChannelName,
   type ProjectSubscriptionHandlers,

@@ -50,7 +50,9 @@ function GenerationPlaceholderNodeComponent({ id, data }: NodeProps<CanvasFlowNo
     <div
       className={cn(
         'relative flex size-full flex-col items-center justify-center gap-3 overflow-hidden rounded-xl border p-4 text-center',
-        failed ? 'border-danger/40 bg-danger/5' : 'border-dashed border-accent/40 bg-accent-muted/40',
+        failed
+          ? 'border-danger/40 bg-danger/5'
+          : 'border-dashed border-accent/40 bg-accent-muted/40',
       )}
     >
       {failed ? (

@@ -77,7 +77,9 @@ export function CanvasCornerControls() {
           </PopoverContent>
         </Popover>
 
-        <Tooltip content={selectedNodeIds.length > 0 ? t('design.zoomToFit') : t('design.zoomToFit')}>
+        <Tooltip
+          content={selectedNodeIds.length > 0 ? t('design.zoomToFit') : t('design.zoomToFit')}
+        >
           <IconButton size="sm" label={t('design.zoomToFit')} onClick={focusSelection}>
             <Search />
           </IconButton>

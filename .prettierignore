@@ -7,3 +7,7 @@ yarn.lock
 .vercel
 supabase/.branches
 supabase/.temp
+supabase/functions
+coverage
+playwright-report
+test-results

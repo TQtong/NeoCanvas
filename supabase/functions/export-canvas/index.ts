@@ -10,8 +10,19 @@
  */
 
 import { type ExportCanvasRequest } from '../_shared/types.ts';
-import { ApiException, exceptionToResponse, fail, handleCorsPreflight, ok } from '../_shared/response.ts';
-import { assertProjectOwner, createAdminClient, requireUser, type SupabaseClient } from '../_shared/supabase.ts';
+import {
+  ApiException,
+  exceptionToResponse,
+  fail,
+  handleCorsPreflight,
+  ok,
+} from '../_shared/response.ts';
+import {
+  assertProjectOwner,
+  createAdminClient,
+  requireUser,
+  type SupabaseClient,
+} from '../_shared/supabase.ts';
 import { pngToJpeg, pngToPdf, svgToPng } from '../_shared/raster.ts';
 
 /** XML 转义。 */
@@ -54,10 +65,9 @@ async function signAsset(admin: SupabaseClient, assetId: string): Promise<string
 async function renderNode(admin: SupabaseClient, node: NodeRow): Promise<string> {
   const w = node.width ?? 100;
   const h = node.height ?? 100;
-  const transform =
-    node.rotation !== 0
-      ? ` transform="rotate(${node.rotation} ${node.position_x + w / 2} ${node.position_y + h / 2})"`
-      : '';
+  const transform = node.rotation !== 0
+    ? ` transform="rotate(${node.rotation} ${node.position_x + w / 2} ${node.position_y + h / 2})"`
+    : '';
   const x = node.position_x;
   const y = node.position_y;
   const d = node.data;
@@ -69,7 +79,9 @@ async function renderNode(admin: SupabaseClient, node: NodeRow): Promise<string>
       const url = await signAsset(admin, node.asset_id);
       if (!url) return '';
       const radius = Number(d.cornerRadius ?? 8);
-      return `<g${transform}><clipPath id="clip-${node.id}"><rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${radius}"/></clipPath><image href="${esc(url)}" x="${x}" y="${y}" width="${w}" height="${h}" preserveAspectRatio="xMidYMid slice" clip-path="url(#clip-${node.id})"/></g>`;
+      return `<g${transform}><clipPath id="clip-${node.id}"><rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${radius}"/></clipPath><image href="${
+        esc(url)
+      }" x="${x}" y="${y}" width="${w}" height="${h}" preserveAspectRatio="xMidYMid slice" clip-path="url(#clip-${node.id})"/></g>`;
     }
     case 'text': {
       const text = String(d.text ?? '');
@@ -82,9 +94,13 @@ async function renderNode(admin: SupabaseClient, node: NodeRow): Promise<string>
       const lines = text.split('\n');
       const lineHeight = fontSize * Number(d.lineHeight ?? 1.35);
       const tspans = lines
-        .map((line, i) => `<tspan x="${tx}" dy="${i === 0 ? fontSize : lineHeight}">${esc(line)}</tspan>`)
+        .map((line, i) =>
+          `<tspan x="${tx}" dy="${i === 0 ? fontSize : lineHeight}">${esc(line)}</tspan>`
+        )
         .join('');
-      return `<text${transform} y="${y}" font-size="${fontSize}" font-weight="${weight}" fill="${esc(color)}" text-anchor="${anchor}" font-family="sans-serif">${tspans}</text>`;
+      return `<text${transform} y="${y}" font-size="${fontSize}" font-weight="${weight}" fill="${
+        esc(color)
+      }" text-anchor="${anchor}" font-family="sans-serif">${tspans}</text>`;
     }
     case 'shape': {
       const fill = String(d.fill ?? 'none');
@@ -93,19 +109,27 @@ async function renderNode(admin: SupabaseClient, node: NodeRow): Promise<string>
       const radius = Number(d.cornerRadius ?? 0);
       const kind = String(d.shape ?? 'rectangle');
       if (kind === 'ellipse') {
-        return `<ellipse${transform} cx="${x + w / 2}" cy="${y + h / 2}" rx="${w / 2}" ry="${h / 2}" fill="${esc(fill)}" stroke="${esc(stroke)}" stroke-width="${sw}"/>`;
+        return `<ellipse${transform} cx="${x + w / 2}" cy="${y + h / 2}" rx="${w / 2}" ry="${
+          h / 2
+        }" fill="${esc(fill)}" stroke="${esc(stroke)}" stroke-width="${sw}"/>`;
       }
-      return `<rect${transform} x="${x}" y="${y}" width="${w}" height="${h}" rx="${radius}" fill="${esc(fill)}" stroke="${esc(stroke)}" stroke-width="${sw}"/>`;
+      return `<rect${transform} x="${x}" y="${y}" width="${w}" height="${h}" rx="${radius}" fill="${
+        esc(fill)
+      }" stroke="${esc(stroke)}" stroke-width="${sw}"/>`;
     }
     case 'drawing': {
       const path = String(d.path ?? '');
       const stroke = String(d.stroke ?? '#000');
       const sw = Number(d.strokeWidth ?? 3);
-      return `<path${transform} transform-origin="0 0" d="${esc(path)}" fill="none" stroke="${esc(stroke)}" stroke-width="${sw}" stroke-linecap="round" transform="translate(${x} ${y})"/>`;
+      return `<path${transform} transform-origin="0 0" d="${esc(path)}" fill="none" stroke="${
+        esc(stroke)
+      }" stroke-width="${sw}" stroke-linecap="round" transform="translate(${x} ${y})"/>`;
     }
     case 'frame': {
       const bg = String(d.background ?? '#ffffff');
-      return `<rect${transform} x="${x}" y="${y}" width="${w}" height="${h}" rx="6" fill="${esc(bg)}" stroke="#e5e5ea"/>`;
+      return `<rect${transform} x="${x}" y="${y}" width="${w}" height="${h}" rx="6" fill="${
+        esc(bg)
+      }" stroke="#e5e5ea"/>`;
     }
     default:
       return '';
@@ -132,7 +156,9 @@ Deno.serve(async (request) => {
     if (body.options.scope === 'selection' && body.options.nodeIds?.length) {
       query = query.in('id', body.options.nodeIds);
     } else if (body.options.scope === 'frame' && body.options.frameNodeId) {
-      query = query.or(`id.eq.${body.options.frameNodeId},parent_id.eq.${body.options.frameNodeId}`);
+      query = query.or(
+        `id.eq.${body.options.frameNodeId},parent_id.eq.${body.options.frameNodeId}`,
+      );
     }
     const { data: nodes } = await query;
     const rows = (nodes ?? []) as NodeRow[];
@@ -164,12 +190,14 @@ Deno.serve(async (request) => {
     if (!['png', 'jpeg', 'svg', 'pdf'].includes(format)) {
       throw new ApiException('invalid_params', `不支持的导出格式：${format}`);
     }
-    const scale = Math.min(4, Math.max(1, Number.isFinite(body.options.scale) ? body.options.scale : 1));
+    const scale = Math.min(
+      4,
+      Math.max(1, Number.isFinite(body.options.scale) ? body.options.scale : 1),
+    );
 
     // 公共中间产物：SVG（viewBox 固定为包围盒；width/height 按用途设置）
     const fragments = await Promise.all(rows.map((n) => renderNode(admin, n)));
-    const svgBody =
-      `<rect x="${vbX}" y="${vbY}" width="${vbW}" height="${vbH}" fill="#ffffff"/>` +
+    const svgBody = `<rect x="${vbX}" y="${vbY}" width="${vbW}" height="${vbH}" fill="#ffffff"/>` +
       fragments.join('') +
       `</svg>`;
     const svgOpen = (w: number, h: number) =>

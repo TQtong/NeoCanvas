@@ -69,8 +69,14 @@ export function useCanvasTools(wrapperRef: React.RefObject<HTMLDivElement | null
           style: { width: size.width, height: size.height },
         };
         store.getState().addNode(node, { select: true });
-        store.getState().setEditingNode(id);
+        // 回落选择工具与 React Flow 随后的 onPaneClick 都会清理旧编辑态。把新节点编辑态放到
+        // 本轮完整点击事件之后恢复，保证“点击落字”立即出现编辑器且不会把旧编辑态带过来。
         finishAndMaybeReset();
+        requestAnimationFrame(() => {
+          if (store.getState().nodes.some((candidate) => candidate.id === id)) {
+            store.getState().setEditingNode(id);
+          }
+        });
         return;
       }
 
@@ -153,7 +159,11 @@ export function useCanvasTools(wrapperRef: React.RefObject<HTMLDivElement | null
           style: { width, height },
         });
       } else if (mode === 'draw') {
-        drawingPoints.push({ x: flow.x - origin.x, y: flow.y - origin.y, pressure: event.pressure || 1 });
+        drawingPoints.push({
+          x: flow.x - origin.x,
+          y: flow.y - origin.y,
+          pressure: event.pressure || 1,
+        });
         store.getState().updateNodeData(creatingId, {
           points: [...drawingPoints],
           path: pointsToSmoothPath(drawingPoints, 0.5),
@@ -186,7 +196,11 @@ export function useCanvasTools(wrapperRef: React.RefObject<HTMLDivElement | null
             maxX = Math.max(maxX, p.x);
             maxY = Math.max(maxY, p.y);
           }
-          const normalized = drawingPoints.map((p) => ({ x: p.x - minX, y: p.y - minY, pressure: p.pressure }));
+          const normalized = drawingPoints.map((p) => ({
+            x: p.x - minX,
+            y: p.y - minY,
+            pressure: p.pressure,
+          }));
           const width = Math.max(1, maxX - minX);
           const height = Math.max(1, maxY - minY);
           store.getState().updateNode(id, {

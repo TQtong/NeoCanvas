@@ -163,7 +163,9 @@ export function useSequenceVideo(): UseSequenceVideo {
         for (const m of members) {
           // 仅图片成员做拍平（video 成员无静态底图可合成，按原始资产入帧）
           const overlays =
-            m.node.data.type === 'image' ? collectGroupOverlays(nodes, m.node, descriptionNoteIds) : [];
+            m.node.data.type === 'image'
+              ? collectGroupOverlays(nodes, m.node, descriptionNoteIds)
+              : [];
           let assetId = m.assetId;
           if (overlays.length > 0) {
             try {

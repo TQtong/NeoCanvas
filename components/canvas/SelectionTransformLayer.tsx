@@ -55,7 +55,7 @@ export function SelectionTransformLayer() {
   const zoom = useStore((s) => s.transform[2]);
   const selectedNodeIds = useCanvasStore((s) => s.selectedNodeIds);
   const nodes = useCanvasStore((s) => s.nodes);
-  const updateNode = useCanvasStore((s) => s.updateNode);
+  const updateNodesBatch = useCanvasStore((s) => s.updateNodesBatch);
 
   const dragRef = useRef<{
     dir: HandleDir;
@@ -72,6 +72,7 @@ export function SelectionTransformLayer() {
       if (!group) return;
       event.stopPropagation();
       event.preventDefault();
+      useCanvasStore.getState().beginHistoryTransaction('缩放选择');
       const startPointer = reactFlow.screenToFlowPosition({ x: event.clientX, y: event.clientY });
       const members = selectedNodes.map((n) => ({ id: n.id, box: nodeBox(n) }));
       dragRef.current = { dir, startGroup: group, startPointer, members };
@@ -83,30 +84,37 @@ export function SelectionTransformLayer() {
         const dx = pointer.x - drag.startPointer.x;
         const dy = pointer.y - drag.startPointer.y;
         const newGroup = resizeGroup(drag.startGroup, drag.dir, dx, dy);
-        for (const member of drag.members) {
+        const changes = drag.members.map((member) => {
           const next = transformBoxWithinGroup(member.box, drag.startGroup, newGroup);
-          updateNode(member.id, {
-            position: { x: next.x, y: next.y },
-            width: Math.max(MIN_NODE_WIDTH, next.width),
-            height: Math.max(MIN_NODE_HEIGHT, next.height),
-            style: {
+          return {
+            id: member.id,
+            patch: {
+              position: { x: next.x, y: next.y },
               width: Math.max(MIN_NODE_WIDTH, next.width),
               height: Math.max(MIN_NODE_HEIGHT, next.height),
+              style: {
+                width: Math.max(MIN_NODE_WIDTH, next.width),
+                height: Math.max(MIN_NODE_HEIGHT, next.height),
+              },
             },
-          });
-        }
+          };
+        });
+        updateNodesBatch(changes);
       };
 
       const onUp = () => {
         dragRef.current = null;
         window.removeEventListener('pointermove', onMove);
         window.removeEventListener('pointerup', onUp);
+        window.removeEventListener('pointercancel', onUp);
+        useCanvasStore.getState().endHistoryTransaction('缩放选择');
       };
 
       window.addEventListener('pointermove', onMove);
       window.addEventListener('pointerup', onUp);
+      window.addEventListener('pointercancel', onUp);
     },
-    [group, reactFlow, selectedNodes, updateNode],
+    [group, reactFlow, selectedNodes, updateNodesBatch],
   );
 
   if (!group) return null;

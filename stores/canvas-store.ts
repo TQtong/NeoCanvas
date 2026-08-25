@@ -26,6 +26,7 @@ import type {
   ImageNodeData,
   NodeData,
   RealtimeChange,
+  SyncState,
   VideoNodeData,
   Viewport,
 } from '@/types';
@@ -73,10 +74,11 @@ export interface MarqueeState {
   currentY: number;
 }
 
-interface MediaRuntimeFields {
+export interface MediaRuntimeFields {
   src: string;
   thumbnailSrc?: string | null;
   posterSrc?: string | null;
+  urlExpiresAt?: string | null;
 }
 
 function isMediaPanelTarget(node: CanvasFlowNode | undefined): boolean {
@@ -124,6 +126,34 @@ export interface DirtyFlush {
   edgeDeletes: string[];
 }
 
+/** 一次批量节点顶层字段更新。 */
+export interface NodeBatchChange {
+  id: string;
+  patch: Partial<CanvasFlowNode>;
+}
+
+/** 从 IndexedDB outbox 恢复到画布的本地 mutation 投影。 */
+export interface CanvasOutboxReplay {
+  nodeUpserts: CanvasFlowNode[];
+  nodeDeletes: string[];
+  edgeUpserts: CanvasFlowEdge[];
+  edgeDeletes: string[];
+  viewport?: Viewport;
+}
+
+/** 历史事务显式边界；连续指针操作在 begin/end 之间合并为一个条目。 */
+export interface HistoryBoundary {
+  sequence: number;
+  phase: 'begin' | 'end';
+  label: string;
+}
+
+/** 历史差异应用载荷；null 表示该实体在目标状态中不存在。 */
+export interface CanvasHistoryPatch {
+  nodes: Record<string, CanvasFlowNode | null>;
+  edges: Record<string, CanvasFlowEdge | null>;
+}
+
 /** 画布状态库的状态与动作。 */
 export interface CanvasState {
   /** 所属项目。 */
@@ -152,6 +182,10 @@ export interface CanvasState {
   clipboard: CanvasFlowNode[];
   /** 是否处于连续创建模式（创建后不回落选择工具）。 */
   continuousCreate: boolean;
+  /** 本地写入的保存状态，与 Realtime 连接状态分开。 */
+  syncState: SyncState;
+  /** 最近一次历史事务边界事件。 */
+  _historyBoundary: HistoryBoundary | null;
 
   // ----- 内部：持久化脏集与版本对照（回声抑制） -----
   /** 脏节点 id。 */
@@ -167,6 +201,8 @@ export interface CanvasState {
   /** 节点服务端版本（updated_at），用于回声抑制与最后写入胜出。 */
   _nodeVersions: Record<string, string>;
   _assetRuntime: Record<string, MediaRuntimeFields>;
+  /** 仅在媒体资产引用集合变化时递增，避免位置拖拽触发媒体全量扫描。 */
+  _mediaRevision: number;
   /** 已 flush、写回未确认的节点 id（在途持久化）；用于抑制自身写入的回声。 */
   _pendingNodeIds: Set<string>;
   /** 视口是否脏。 */
@@ -180,6 +216,17 @@ export interface CanvasState {
     edgeRows: CanvasEdgeRow[];
     viewport: Viewport;
   }) => void;
+  /**
+   * 以重连后的服务端快照校正已确认投影，同时保留脏、在途和本地待删实体。
+   * 服务端缺失且本地也无未提交操作的实体会被移除。
+   */
+  reconcileSnapshot: (params: {
+    nodeRows: CanvasNodeRow[];
+    edgeRows: CanvasEdgeRow[];
+    viewport: Viewport;
+  }) => void;
+  /** 把权威生成快照批量投影到占位节点，不产生持久化脏标记。 */
+  reconcileGenerationSnapshot: (generations: GenerationRow[]) => void;
   /** 离开项目时重置。 */
   reset: () => void;
 
@@ -196,10 +243,18 @@ export interface CanvasState {
   addNodes: (nodes: CanvasFlowNode[], options?: { select?: boolean; persist?: boolean }) => void;
   /** 更新节点（合并顶层字段）。 */
   updateNode: (id: string, patch: Partial<CanvasFlowNode>) => void;
+  /** 一次遍历更新多个节点，供多选变换、对齐与组联动复用。 */
+  updateNodesBatch: (changes: NodeBatchChange[]) => void;
+  /** 开始一个显式历史事务。 */
+  beginHistoryTransaction: (label: string) => void;
+  /** 结束当前显式历史事务。 */
+  endHistoryTransaction: (label?: string) => void;
   /** 更新节点 data（合并），标记脏集以持久化。 */
   updateNodeData: (id: string, dataPatch: Partial<NodeData>) => void;
   /** 仅更新运行时 data 字段（如签名 URL、进度），不标记脏集、不触发持久化。 */
   setNodeRuntime: (id: string, dataPatch: Partial<NodeData>) => void;
+  /** 一次更新所有引用同一资产的媒体节点运行时 URL。 */
+  setAssetRuntime: (assetId: string, fields: MediaRuntimeFields) => void;
   /**
    * 删除节点（连带其作为父的子节点解除父子并删自身、清理相连边）。
    * `persist:false` 仅本地移除、不记录删除、不回写 DB（写入权归服务端 + 实时回流，用于原地
@@ -295,6 +350,12 @@ export interface CanvasState {
   applyRemoteGeneration: (change: RealtimeChange<GenerationRow>) => void;
 
   // ----- 持久化协调 -----
+  /** 把 IndexedDB 中未确认的 mutation 重放到已水合的服务端快照之上。 */
+  replayOutbox: (replay: CanvasOutboxReplay) => void;
+  /** 更新用户可见的保存状态。 */
+  setSyncState: (syncState: SyncState) => void;
+  /** 应用撤销/重做差异，并只把受影响实体标记为待持久化。 */
+  applyHistoryPatch: (patch: CanvasHistoryPatch) => void;
   /** 以快照整体替换节点 / 边（用于撤销 / 重做），并据差异标记脏 / 删除集以持久化。 */
   restoreGraph: (nodes: CanvasFlowNode[], edges: CanvasFlowEdge[]) => void;
   /** 标记某节点已持久化（记录服务端版本并清除在途标记，用于回声抑制）。 */
@@ -312,6 +373,8 @@ export interface CanvasState {
   flushDirty: () => DirtyFlush;
   /** 取出并清空视口脏标记。 */
   flushViewportDirty: () => boolean;
+  /** 视口保存失败时恢复脏标记。 */
+  markViewportPersistFailed: () => void;
 }
 
 /** 默认背景：点状网格。 */
@@ -376,6 +439,7 @@ function runtimeFieldsFromNode(
   if (node.data.type === 'video') {
     fields.posterSrc = node.data.posterSrc;
   }
+  fields.urlExpiresAt = node.data.urlExpiresAt;
 
   return { assetId: node.data.assetId, fields };
 }
@@ -415,6 +479,7 @@ function hydrateRuntimeMediaFields(
   if (node.data.type === 'video') {
     runtimeFields.posterSrc = runtimeSource.posterSrc;
   }
+  runtimeFields.urlExpiresAt = runtimeSource.urlExpiresAt;
 
   // 媒体 URL 是运行时字段。候选替换时 DB 只回流 asset_id，复用本地已签名 URL 避免短暂白屏。
   return { ...node, data: { ...node.data, ...runtimeFields } as NodeData };
@@ -434,6 +499,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   layersOpen: false,
   clipboard: [],
   continuousCreate: false,
+  syncState: { status: 'saved', confirmedAt: new Date().toISOString() },
+  _historyBoundary: null,
 
   _dirtyNodeIds: new Set(),
   _deletedNodeIds: new Set(),
@@ -441,6 +508,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   _deletedEdgeIds: new Set(),
   _nodeVersions: {},
   _assetRuntime: {},
+  _mediaRevision: 0,
   _pendingNodeIds: new Set(),
   _pendingEdgeIds: new Set(),
   _viewportDirty: false,
@@ -468,10 +536,114 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       _deletedEdgeIds: new Set(),
       _nodeVersions: versions,
       _assetRuntime: mergeAssetRuntime({}, nodes),
+      _mediaRevision: 1,
       _pendingNodeIds: new Set(),
       _pendingEdgeIds: new Set(),
       _viewportDirty: false,
+      syncState: { status: 'saved', confirmedAt: new Date().toISOString() },
+      _historyBoundary: null,
     });
+  },
+
+  reconcileSnapshot: ({ nodeRows, edgeRows, viewport }) => {
+    set((state) => {
+      const localNodes = new Map(state.nodes.map((node) => [node.id, node]));
+      const remoteNodeIds = new Set(nodeRows.map((row) => row.id));
+      const nextVersions = { ...state._nodeVersions };
+      const nextNodes: CanvasFlowNode[] = [];
+
+      for (const row of nodeRows) {
+        nextVersions[row.id] = row.updated_at;
+        if (state._deletedNodeIds.has(row.id)) continue;
+        const local = localNodes.get(row.id);
+        const preserveLocal =
+          Boolean(local) &&
+          (state._dirtyNodeIds.has(row.id) ||
+            state._pendingNodeIds.has(row.id) ||
+            state.editingNodeId === row.id);
+        if (preserveLocal && local) {
+          nextNodes.push(local);
+          continue;
+        }
+        nextNodes.push(hydrateRuntimeMediaFields(rowToNode(row), state.nodes, state._assetRuntime));
+      }
+
+      // 新建后尚未被服务端快照包含的本地实体必须继续可见，直至持久化确认或明确失败。
+      for (const local of state.nodes) {
+        if (remoteNodeIds.has(local.id) || state._deletedNodeIds.has(local.id)) continue;
+        if (state._dirtyNodeIds.has(local.id) || state._pendingNodeIds.has(local.id)) {
+          nextNodes.push(local);
+        }
+      }
+
+      const localEdges = new Map(state.edges.map((edge) => [edge.id, edge]));
+      const remoteEdgeIds = new Set(edgeRows.map((row) => row.id));
+      const nextEdges: CanvasFlowEdge[] = [];
+      for (const row of edgeRows) {
+        if (state._deletedEdgeIds.has(row.id)) continue;
+        const local = localEdges.get(row.id);
+        if (local && (state._dirtyEdgeIds.has(row.id) || state._pendingEdgeIds.has(row.id))) {
+          nextEdges.push(local);
+        } else {
+          nextEdges.push(rowToEdge(row));
+        }
+      }
+      for (const local of state.edges) {
+        if (remoteEdgeIds.has(local.id) || state._deletedEdgeIds.has(local.id)) continue;
+        if (state._dirtyEdgeIds.has(local.id) || state._pendingEdgeIds.has(local.id)) {
+          nextEdges.push(local);
+        }
+      }
+
+      nextNodes.sort((a, b) => (a.zIndex ?? 0) - (b.zIndex ?? 0));
+      const nextNodeIds = new Set(nextNodes.map((node) => node.id));
+      return {
+        nodes: nextNodes,
+        edges: nextEdges,
+        viewport: state._viewportDirty ? state.viewport : viewport,
+        selectedNodeIds: state.selectedNodeIds.filter((id) => nextNodeIds.has(id)),
+        _nodeVersions: nextVersions,
+        _assetRuntime: mergeAssetRuntime(state._assetRuntime, nextNodes),
+        _mediaRevision: state._mediaRevision + 1,
+      };
+    });
+  },
+
+  reconcileGenerationSnapshot: (generations) => {
+    const byGenerationId = new Map(generations.map((row) => [row.id, row]));
+    const byPlaceholderId = new Map(
+      generations.flatMap((row) =>
+        row.placeholder_node_id ? ([[row.placeholder_node_id, row]] as const) : [],
+      ),
+    );
+    const currentNodes = get().nodes;
+    let changed = false;
+    const nodes = currentNodes.map((node) => {
+      if (node.data.type !== 'generation_placeholder') return node;
+      const generation =
+        byPlaceholderId.get(node.id) ??
+        (node.data.generationId ? byGenerationId.get(node.data.generationId) : undefined);
+      if (!generation) return node;
+      const view = generationRowToView(generation);
+      if (
+        node.data.progress === view.progress &&
+        node.data.statusLabel === view.status &&
+        node.data.errorMessage === (view.error ?? undefined)
+      ) {
+        return node;
+      }
+      changed = true;
+      return {
+        ...node,
+        data: {
+          ...node.data,
+          progress: view.progress,
+          statusLabel: view.status,
+          errorMessage: view.error ?? undefined,
+        },
+      };
+    });
+    if (changed) set({ nodes });
   },
 
   reset: () => {
@@ -492,9 +664,12 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       _deletedEdgeIds: new Set(),
       _nodeVersions: {},
       _assetRuntime: {},
+      _mediaRevision: 0,
       _pendingNodeIds: new Set(),
       _pendingEdgeIds: new Set(),
       _viewportDirty: false,
+      syncState: { status: 'saved', confirmedAt: new Date().toISOString() },
+      _historyBoundary: null,
     });
   },
 
@@ -538,6 +713,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       selectedNodeIds: Array.from(selected),
       _dirtyNodeIds: dirty,
       _deletedNodeIds: deleted,
+      _mediaRevision: effectiveRemoveIds.size > 0 ? state._mediaRevision + 1 : state._mediaRevision,
     });
   },
 
@@ -575,6 +751,11 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         nodes,
         selectedNodeIds: select ? newNodes.map((n) => n.id) : state.selectedNodeIds,
         _assetRuntime: mergeAssetRuntime(state._assetRuntime, newNodes),
+        _mediaRevision: newNodes.some(
+          (node) => (node.data.type === 'image' || node.data.type === 'video') && node.data.assetId,
+        )
+          ? state._mediaRevision + 1
+          : state._mediaRevision,
       };
       if (!persist) return base;
       const dirty = new Set(state._dirtyNodeIds);
@@ -584,13 +765,56 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   },
 
   updateNode: (id, patch) => {
-    const dirty = new Set(get()._dirtyNodeIds);
-    dirty.add(id);
-    set((state) => ({
-      nodes: state.nodes.map((n) => (n.id === id ? { ...n, ...patch } : n)),
-      _dirtyNodeIds: dirty,
-    }));
+    get().updateNodesBatch([{ id, patch }]);
   },
+
+  updateNodesBatch: (changes) => {
+    if (changes.length === 0) return;
+    const patchById = new Map<string, Partial<CanvasFlowNode>>();
+    for (const change of changes) {
+      if (patchById.has(change.id)) {
+        throw new Error(`批量节点更新包含重复标识：${change.id}`);
+      }
+      patchById.set(change.id, change.patch);
+    }
+
+    set((state) => {
+      const knownIds = new Set(state.nodes.map((node) => node.id));
+      for (const id of patchById.keys()) {
+        if (!knownIds.has(id)) throw new Error(`批量节点更新引用了不存在的节点：${id}`);
+      }
+      const dirty = new Set(state._dirtyNodeIds);
+      for (const id of patchById.keys()) dirty.add(id);
+      const nodes = state.nodes.map((node) => {
+        const patch = patchById.get(node.id);
+        return patch ? { ...node, ...patch } : node;
+      });
+      const changedNodes = nodes.filter((node) => patchById.has(node.id));
+      return {
+        nodes,
+        _dirtyNodeIds: dirty,
+        _assetRuntime: mergeAssetRuntime(state._assetRuntime, changedNodes),
+      };
+    });
+  },
+
+  beginHistoryTransaction: (label) =>
+    set((state) => ({
+      _historyBoundary: {
+        sequence: (state._historyBoundary?.sequence ?? 0) + 1,
+        phase: 'begin',
+        label,
+      },
+    })),
+
+  endHistoryTransaction: (label) =>
+    set((state) => ({
+      _historyBoundary: {
+        sequence: (state._historyBoundary?.sequence ?? 0) + 1,
+        phase: 'end',
+        label: label ?? state._historyBoundary?.label ?? '画布操作',
+      },
+    })),
 
   updateNodeData: (id, dataPatch) => {
     const dirty = new Set(get()._dirtyNodeIds);
@@ -606,6 +830,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         _assetRuntime: changed
           ? mergeAssetRuntime(state._assetRuntime, [changed])
           : state._assetRuntime,
+        _mediaRevision:
+          changed && 'assetId' in dataPatch ? state._mediaRevision + 1 : state._mediaRevision,
       };
     });
   },
@@ -623,6 +849,21 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
           : state._assetRuntime,
       };
     });
+  },
+
+  setAssetRuntime: (assetId, fields) => {
+    set((state) => ({
+      nodes: state.nodes.map((node) => {
+        if (
+          (node.data.type !== 'image' && node.data.type !== 'video') ||
+          node.data.assetId !== assetId
+        ) {
+          return node;
+        }
+        return { ...node, data: { ...node.data, ...fields } as NodeData };
+      }),
+      _assetRuntime: { ...state._assetRuntime, [assetId]: fields },
+    }));
   },
 
   removeNodes: (ids, options) => {
@@ -656,6 +897,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         selectedNodeIds: nextSelection,
         _dirtyNodeIds: dirty,
         _dirtyEdgeIds: edgeDirty,
+        _mediaRevision: state._mediaRevision + 1,
       });
       return;
     }
@@ -681,6 +923,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       _dirtyNodeIds: dirty,
       _dirtyEdgeIds: edgeDirty,
       _deletedEdgeIds: edgeDeleted,
+      _mediaRevision: state._mediaRevision + 1,
     });
   },
 
@@ -689,19 +932,30 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     set((state) => {
       const nodes = state.nodes.map((n) => (n.id === id ? node : n));
       const assetRuntime = mergeAssetRuntime(state._assetRuntime, [node]);
+      const mediaRevision = state._mediaRevision + 1;
       if (persist) {
         const dirty = new Set(state._dirtyNodeIds);
         dirty.add(node.id);
-        return { nodes, _dirtyNodeIds: dirty, _assetRuntime: assetRuntime };
+        return {
+          nodes,
+          _dirtyNodeIds: dirty,
+          _assetRuntime: assetRuntime,
+          _mediaRevision: mediaRevision,
+        };
       }
       // 不持久化：清除该行的脏标记，确保客户端不再回写此行（写入权交给服务端 + 实时回流）
       if (state._dirtyNodeIds.has(id) || state._dirtyNodeIds.has(node.id)) {
         const dirty = new Set(state._dirtyNodeIds);
         dirty.delete(id);
         dirty.delete(node.id);
-        return { nodes, _dirtyNodeIds: dirty, _assetRuntime: assetRuntime };
+        return {
+          nodes,
+          _dirtyNodeIds: dirty,
+          _assetRuntime: assetRuntime,
+          _mediaRevision: mediaRevision,
+        };
       }
-      return { nodes, _assetRuntime: assetRuntime };
+      return { nodes, _assetRuntime: assetRuntime, _mediaRevision: mediaRevision };
     });
   },
 
@@ -1045,9 +1299,18 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     if (eventType === 'DELETE') {
       const id = (change.old as Partial<CanvasNodeRow>).id;
       if (!id) return;
+      const local = get();
+      if (
+        local._dirtyNodeIds.has(id) ||
+        local._pendingNodeIds.has(id) ||
+        local.editingNodeId === id
+      ) {
+        return;
+      }
       set((state) => ({
         nodes: state.nodes.filter((n) => n.id !== id),
         selectedNodeIds: state.selectedNodeIds.filter((sid) => sid !== id),
+        _mediaRevision: state._mediaRevision + 1,
       }));
       return;
     }
@@ -1095,6 +1358,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         nodes: merged,
         _nodeVersions: { ...state._nodeVersions, [row.id]: row.updated_at },
         _assetRuntime: mergeAssetRuntime(state._assetRuntime, [nodeWithRuntime]),
+        _mediaRevision: state._mediaRevision + 1,
       };
     });
   },
@@ -1103,6 +1367,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     if (change.eventType === 'DELETE') {
       const id = (change.old as Partial<CanvasEdgeRow>).id;
       if (!id) return;
+      const local = get();
+      if (local._dirtyEdgeIds.has(id) || local._pendingEdgeIds.has(id)) return;
       set((state) => ({ edges: state.edges.filter((e) => e.id !== id) }));
       return;
     }
@@ -1153,6 +1419,138 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     }));
   },
 
+  replayOutbox: ({ nodeUpserts, nodeDeletes, edgeUpserts, edgeDeletes, viewport }) => {
+    set((state) => {
+      const nodeDeleteSet = new Set(nodeDeletes);
+      const nodeUpsertById = new Map(nodeUpserts.map((node) => [node.id, node]));
+      const nodes = state.nodes
+        .filter((node) => !nodeDeleteSet.has(node.id))
+        .map((node) => nodeUpsertById.get(node.id) ?? node);
+      const existingNodeIds = new Set(nodes.map((node) => node.id));
+      for (const node of nodeUpserts) {
+        if (!nodeDeleteSet.has(node.id) && !existingNodeIds.has(node.id)) nodes.push(node);
+      }
+      nodes.sort((a, b) => (a.zIndex ?? 0) - (b.zIndex ?? 0));
+
+      const edgeDeleteSet = new Set(edgeDeletes);
+      const edgeUpsertById = new Map(edgeUpserts.map((edge) => [edge.id, edge]));
+      const validNodeIds = new Set(nodes.map((node) => node.id));
+      const edges = state.edges
+        .filter(
+          (edge) =>
+            !edgeDeleteSet.has(edge.id) &&
+            validNodeIds.has(edge.source) &&
+            validNodeIds.has(edge.target),
+        )
+        .map((edge) => edgeUpsertById.get(edge.id) ?? edge);
+      const existingEdgeIds = new Set(edges.map((edge) => edge.id));
+      for (const edge of edgeUpserts) {
+        if (
+          !edgeDeleteSet.has(edge.id) &&
+          !existingEdgeIds.has(edge.id) &&
+          validNodeIds.has(edge.source) &&
+          validNodeIds.has(edge.target)
+        ) {
+          edges.push(edge);
+        }
+      }
+
+      const dirtyNodes = new Set(state._dirtyNodeIds);
+      const deletedNodes = new Set(state._deletedNodeIds);
+      for (const node of nodeUpserts) {
+        dirtyNodes.add(node.id);
+        deletedNodes.delete(node.id);
+      }
+      for (const id of nodeDeletes) {
+        dirtyNodes.delete(id);
+        deletedNodes.add(id);
+      }
+
+      const dirtyEdges = new Set(state._dirtyEdgeIds);
+      const deletedEdges = new Set(state._deletedEdgeIds);
+      for (const edge of edgeUpserts) {
+        dirtyEdges.add(edge.id);
+        deletedEdges.delete(edge.id);
+      }
+      for (const id of edgeDeletes) {
+        dirtyEdges.delete(id);
+        deletedEdges.add(id);
+      }
+
+      return {
+        nodes,
+        edges,
+        viewport: viewport ?? state.viewport,
+        selectedNodeIds: state.selectedNodeIds.filter((id) => validNodeIds.has(id)),
+        _dirtyNodeIds: dirtyNodes,
+        _deletedNodeIds: deletedNodes,
+        _dirtyEdgeIds: dirtyEdges,
+        _deletedEdgeIds: deletedEdges,
+        _viewportDirty: Boolean(viewport) || state._viewportDirty,
+        _assetRuntime: mergeAssetRuntime(state._assetRuntime, nodes),
+        _mediaRevision: state._mediaRevision + 1,
+      };
+    });
+  },
+
+  setSyncState: (syncState) => set({ syncState }),
+
+  applyHistoryPatch: (patch) => {
+    set((state) => {
+      const nodeById = new Map(state.nodes.map((node) => [node.id, node]));
+      const dirtyNodes = new Set(state._dirtyNodeIds);
+      const deletedNodes = new Set(state._deletedNodeIds);
+      for (const [id, node] of Object.entries(patch.nodes)) {
+        if (node === null) {
+          nodeById.delete(id);
+          dirtyNodes.delete(id);
+          deletedNodes.add(id);
+        } else {
+          const current = nodeById.get(id);
+          nodeById.set(id, { ...node, selected: current?.selected ?? false });
+          dirtyNodes.add(id);
+          deletedNodes.delete(id);
+        }
+      }
+      const nodes = Array.from(nodeById.values()).sort((a, b) => (a.zIndex ?? 0) - (b.zIndex ?? 0));
+      const validNodeIds = new Set(nodes.map((node) => node.id));
+
+      const edgeById = new Map(state.edges.map((edge) => [edge.id, edge]));
+      const dirtyEdges = new Set(state._dirtyEdgeIds);
+      const deletedEdges = new Set(state._deletedEdgeIds);
+      for (const [id, edge] of Object.entries(patch.edges)) {
+        if (edge === null) {
+          edgeById.delete(id);
+          dirtyEdges.delete(id);
+          deletedEdges.add(id);
+        } else {
+          edgeById.set(id, edge);
+          dirtyEdges.add(id);
+          deletedEdges.delete(id);
+        }
+      }
+      // 历史条目缺少的悬挂边也必须随节点删除，保持本地与数据库外键语义一致。
+      for (const [id, edge] of edgeById) {
+        if (validNodeIds.has(edge.source) && validNodeIds.has(edge.target)) continue;
+        edgeById.delete(id);
+        dirtyEdges.delete(id);
+        deletedEdges.add(id);
+      }
+
+      return {
+        nodes,
+        edges: Array.from(edgeById.values()),
+        selectedNodeIds: state.selectedNodeIds.filter((id) => validNodeIds.has(id)),
+        _dirtyNodeIds: dirtyNodes,
+        _deletedNodeIds: deletedNodes,
+        _dirtyEdgeIds: dirtyEdges,
+        _deletedEdgeIds: deletedEdges,
+        _assetRuntime: mergeAssetRuntime(state._assetRuntime, nodes),
+        _mediaRevision: state._mediaRevision + 1,
+      };
+    });
+  },
+
   restoreGraph: (nodes, edges) => {
     const state = get();
     const prevNodeIds = new Set(state.nodes.map((n) => n.id));
@@ -1195,9 +1593,18 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     set((state) => {
       const pending = new Set(state._pendingNodeIds);
       for (const id of ids) pending.delete(id);
+      const existingIds = new Set(state.nodes.map((node) => node.id));
+      const dirty = new Set(state._dirtyNodeIds);
+      for (const id of ids) {
+        if (existingIds.has(id) && !state._deletedNodeIds.has(id)) dirty.add(id);
+      }
       const deleted = new Set(state._deletedNodeIds);
       for (const id of deletedIds) deleted.add(id);
-      return { _pendingNodeIds: pending, _deletedNodeIds: deleted };
+      return {
+        _pendingNodeIds: pending,
+        _dirtyNodeIds: dirty,
+        _deletedNodeIds: deleted,
+      };
     });
   },
 
@@ -1213,9 +1620,18 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     set((state) => {
       const pending = new Set(state._pendingEdgeIds);
       for (const id of ids) pending.delete(id);
+      const existingIds = new Set(state.edges.map((edge) => edge.id));
+      const dirty = new Set(state._dirtyEdgeIds);
+      for (const id of ids) {
+        if (existingIds.has(id) && !state._deletedEdgeIds.has(id)) dirty.add(id);
+      }
       const deleted = new Set(state._deletedEdgeIds);
       for (const id of deletedIds) deleted.add(id);
-      return { _pendingEdgeIds: pending, _deletedEdgeIds: deleted };
+      return {
+        _pendingEdgeIds: pending,
+        _dirtyEdgeIds: dirty,
+        _deletedEdgeIds: deleted,
+      };
     });
   },
 
@@ -1265,4 +1681,6 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     if (dirty) set({ _viewportDirty: false });
     return dirty;
   },
+
+  markViewportPersistFailed: () => set({ _viewportDirty: true }),
 }));

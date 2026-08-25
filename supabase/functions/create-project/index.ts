@@ -10,11 +10,16 @@
 import {
   type CreateProjectRequest,
   type CreateProjectResponse,
-  type ModelCatalogRow,
   type ReferenceMaterial,
   type UnifiedGenerationRequest,
 } from '../_shared/types.ts';
-import { ApiException, exceptionToResponse, fail, handleCorsPreflight, ok } from '../_shared/response.ts';
+import {
+  ApiException,
+  exceptionToResponse,
+  fail,
+  handleCorsPreflight,
+  ok,
+} from '../_shared/response.ts';
 import { createAdminClient, requireUser } from '../_shared/supabase.ts';
 import {
   buildGenerationParams,
@@ -22,6 +27,7 @@ import {
   defaultPlacementSize,
 } from '../_shared/params.ts';
 import { createGeneration } from '../_shared/create-generation.ts';
+import { requireAccessibleModel } from '../_shared/models.ts';
 
 Deno.serve(async (request) => {
   const preflight = handleCorsPreflight(request);
@@ -34,16 +40,14 @@ Deno.serve(async (request) => {
     const body = (await request.json()) as CreateProjectRequest;
 
     const prompt = (body.prompt ?? '').trim();
-    const modelKey = body.modelKey;
+    const modelKey = body.modelKey?.trim() || null;
     const scene = body.scene ?? null;
 
-    // 取模型（决定默认生成模态与参数）
-    const { data: model } = await admin
-      .from('model_catalog')
-      .select('*')
-      .eq('key', modelKey)
-      .maybeSingle();
-    const modelRow = model as ModelCatalogRow | null;
+    // 空白项目不依赖模型凭据；一旦要求进入即生成，必须提供并通过统一归属判定。
+    const modelRow = modelKey ? await requireAccessibleModel(admin, modelKey, userId) : null;
+    if (body.generateOnCreate && !modelRow) {
+      throw new ApiException('model_not_accessible', '进入即生成必须选择可访问的模型');
+    }
 
     // 在单一事务内原子创建「项目 + 会话 + 首条用户消息」，并按 client_request_id 去重
     // （连点重复请求复用既有项目而不重建，第 06 篇第四节）。
@@ -66,13 +70,14 @@ Deno.serve(async (request) => {
       message_id: string;
       deduplicated: boolean;
     };
-    const { project_id: projectId, conversation_id: conversationId, message_id: messageId } = created;
+    const { project_id: projectId, conversation_id: conversationId, message_id: messageId } =
+      created;
 
     // 进入即生成首图。以首条用户消息 id 作幂等键：重复请求（含连点命中幂等的项目）复用
     // 既有生成而不重复建任务。
     let generationId: string | null = null;
     let placeholderNodeId: string | null = null;
-    if (body.generateOnCreate && prompt && modelRow && modelRow.is_active) {
+    if (body.generateOnCreate && prompt && modelRow && modelKey) {
       const references: ReferenceMaterial[] = (body.attachments ?? []).map((a) => ({
         origin: 'attachment',
         assetId: a.assetId,
@@ -92,7 +97,12 @@ Deno.serve(async (request) => {
         prompt: composeScenePrompt(scene, prompt),
         params,
         idempotencyKey: messageId,
-        placement: { x: -size.width / 2, y: -size.height / 2, width: size.width, height: size.height },
+        placement: {
+          x: -size.width / 2,
+          y: -size.height / 2,
+          width: size.width,
+          height: size.height,
+        },
       };
       const result = await createGeneration(admin, genRequest, userId);
       generationId = result.generationId;

@@ -36,6 +36,7 @@ import {
   posterPlacement,
 } from '../_shared/poster.ts';
 import { createGeneration } from '../_shared/create-generation.ts';
+import { listAccessibleModels, requireAccessibleModel } from '../_shared/models.ts';
 
 /** 流式编码一个 SSE 事件。 */
 function sse(event: unknown): Uint8Array {
@@ -48,10 +49,13 @@ function* chunkText(text: string, size = 12): Generator<string> {
 }
 
 /** 取模型目录当前可服务的产出模态集合。 */
-async function getActiveModalities(admin: SupabaseClient): Promise<Modality[]> {
-  const { data } = await admin.from('model_catalog').select('modality').eq('is_active', true);
+async function getActiveModalities(
+  admin: SupabaseClient,
+  userId: string,
+): Promise<Modality[]> {
+  const data = await listAccessibleModels(admin, userId);
   const set = new Set<Modality>();
-  for (const row of (data ?? []) as Array<{ modality: Modality }>) set.add(row.modality);
+  for (const row of data) set.add(row.modality);
   return Array.from(set);
 }
 
@@ -61,25 +65,13 @@ async function pickModelForModality(
   modality: Modality,
   selectedKey: string,
   selectedModality: Modality,
+  userId: string,
 ): Promise<ModelCatalogRow | null> {
   if (modality === selectedModality) {
-    const { data } = await admin
-      .from('model_catalog')
-      .select('*')
-      .eq('key', selectedKey)
-      .maybeSingle();
-    const row = data as ModelCatalogRow | null;
-    if (row && row.is_active) return row;
+    return requireAccessibleModel(admin, selectedKey, userId, modality);
   }
-  const { data } = await admin
-    .from('model_catalog')
-    .select('*')
-    .eq('modality', modality)
-    .eq('is_active', true)
-    .order('sort_order', { ascending: true })
-    .limit(1)
-    .maybeSingle();
-  return (data as ModelCatalogRow | null) ?? null;
+  const rows = await listAccessibleModels(admin, userId, modality);
+  return rows[0] ?? null;
 }
 
 /** 由提及节点 + 附件构造某步的参考素材（统一赋予该步的引用角色）。 */
@@ -145,10 +137,17 @@ async function planToSpecs(
   body: AgentOrchestrateRequest,
   steps: OrchestrationStep[],
   selectedModality: Modality,
+  userId: string,
 ): Promise<GenerationSpec[]> {
   const specs: GenerationSpec[] = [];
   for (const step of steps) {
-    const model = await pickModelForModality(admin, step.modality, body.modelKey, selectedModality);
+    const model = await pickModelForModality(
+      admin,
+      step.modality,
+      body.modelKey,
+      selectedModality,
+      userId,
+    );
     if (!model) continue; // 目录无法服务该模态则跳过该步
     const references = step.useReferences ? buildStepReferences(body, step.referenceRole) : [];
     const params = buildGenerationParams(step.modality, model.default_params, references);
@@ -229,8 +228,9 @@ Deno.serve(async (request) => {
           controller.enqueue(
             sse({ type: 'message_created', assistantMessageId: replay.assistantMessageId }),
           );
-          if (replay.content)
+          if (replay.content) {
             controller.enqueue(sse({ type: 'text_delta', delta: replay.content }));
+          }
           for (const p of replay.placeholders) {
             controller.enqueue(
               sse({
@@ -254,12 +254,7 @@ Deno.serve(async (request) => {
         controller.enqueue(sse({ type: 'message_created', assistantMessageId }));
 
         // 取所选模型与场景，构造规划输入
-        const { data: model } = await admin
-          .from('model_catalog')
-          .select('*')
-          .eq('key', body.modelKey)
-          .maybeSingle();
-        const modelRow = model as ModelCatalogRow | null;
+        const modelRow = await requireAccessibleModel(admin, body.modelKey, userId);
         const { data: project } = await admin
           .from('projects')
           .select('initial_scene')
@@ -267,16 +262,11 @@ Deno.serve(async (request) => {
           .maybeSingle();
         const scene = (project?.initial_scene as Scene | null) ?? null;
 
-        const selectedModality: Modality = modelRow?.modality ?? 'image';
+        const selectedModality: Modality = modelRow.modality;
 
         // 海报意图：走「分层合成」——生成「无文字的版式化背景图」并叠加可编辑文字节点，
         // 而非把文字烤进图里（原始文生图模型渲染中文文字不可靠，见 _shared/poster.ts）。
-        if (
-          detectPosterIntent(body.content) &&
-          selectedModality === 'image' &&
-          modelRow &&
-          modelRow.is_active
-        ) {
+        if (detectPosterIntent(body.content) && selectedModality === 'image') {
           const layout = await buildPosterLayout(body.content, scene);
           for (const piece of chunkText(layout.reply)) {
             controller.enqueue(sse({ type: 'text_delta', delta: piece }));
@@ -352,7 +342,7 @@ Deno.serve(async (request) => {
           return;
         }
 
-        const availableModalities = await getActiveModalities(admin);
+        const availableModalities = await getActiveModalities(admin, userId);
         const referencesSummary = [
           ...body.mentions
             .filter((m) => m.assetId)
@@ -366,7 +356,7 @@ Deno.serve(async (request) => {
           content: body.content,
           scene,
           selectedModality,
-          maxOutputs: modelRow?.capabilities.maxOutputs ?? 4,
+          maxOutputs: modelRow.capabilities.maxOutputs,
           references: referencesSummary,
           availableModalities,
         });
@@ -378,8 +368,8 @@ Deno.serve(async (request) => {
 
         // 展开计划为生成规格，居中排布
         const generationIds: string[] = [];
-        if (modelRow && modelRow.is_active) {
-          const specs = await planToSpecs(admin, body, plan.steps, selectedModality);
+        {
+          const specs = await planToSpecs(admin, body, plan.steps, selectedModality, userId);
           const totalWidth = specs.reduce((sum, s) => sum + s.width + 24, 0) - 24;
           // 新一批落在既有画布内容右侧的空白处；画布为空（首次生成）则按批宽以原点居中
           const batchStartX = await nextBatchStartX(admin, body.projectId);

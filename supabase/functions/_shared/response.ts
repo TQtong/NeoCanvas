@@ -7,12 +7,7 @@
  * @module functions/_shared/response
  */
 
-import {
-  type ApiError,
-  type ApiResponse,
-  type ErrorCode,
-  ERROR_HTTP_STATUS,
-} from './types.ts';
+import { type ApiError, type ApiResponse, ERROR_HTTP_STATUS, type ErrorCode } from './types.ts';
 
 /** CORS 头：允许浏览器跨源调用能力面。 */
 export const CORS_HEADERS: Record<string, string> = {

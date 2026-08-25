@@ -66,7 +66,12 @@ export function useToast(): UseToast {
 
   return {
     toast: (message, options) =>
-      push({ message, variant: options?.variant ?? 'info', duration: options?.duration ?? 4000, title: options?.title }),
+      push({
+        message,
+        variant: options?.variant ?? 'info',
+        duration: options?.duration ?? 4000,
+        title: options?.title,
+      }),
     success: (message, title) => push({ message, variant: 'success', duration: 3500, title }),
     error: (message, title) => push({ message, variant: 'error', duration: 6000, title }),
     info: (message, title) => push({ message, variant: 'info', duration: 4000, title }),
@@ -100,7 +105,7 @@ function ToastRow({ toast }: { toast: ToastItem }) {
   return (
     <div
       role="status"
-      className="glass animate-slide-up pointer-events-auto flex w-80 items-start gap-3 rounded-xl px-4 py-3 shadow-float"
+      className="glass pointer-events-auto flex w-80 animate-slide-up items-start gap-3 rounded-xl px-4 py-3 shadow-float"
     >
       <Icon className={cn('mt-0.5 size-5 shrink-0', VARIANT_CLASS[toast.variant])} />
       <div className="min-w-0 flex-1">

@@ -41,8 +41,7 @@ import { candidatePlacementForTarget } from '@/lib/canvas/media-workflow';
 import { composeReferenceImageEditPrompt } from '@/lib/generation/reference-prompt';
 import { getBrowserSupabase } from '@/lib/supabase/client';
 import { useGeneration, buildPlaceholderNode } from '@/lib/hooks/use-generation';
-import { useModelCatalog } from '@/lib/hooks/use-model-catalog';
-import { useProviderCredentials } from '@/lib/hooks/use-provider-credentials';
+import { useWorkbenchModelSource } from '@/lib/hooks/use-workbench-model-source';
 import { customProviderDefinition, PROVIDER_DEFINITIONS } from '@/lib/models/providers';
 import { useCanvasStore } from '@/stores/canvas-store';
 import { idempotencyKey, uuid } from '@/lib/utils/id';
@@ -193,8 +192,11 @@ function MediaPanelNodeComponent({ id, data, selected }: NodeProps<CanvasFlowNod
   const d = data as MediaPanelNodeData;
   const toast = useToast();
   const { submit } = useGeneration();
-  const models = useModelCatalog();
-  const providerCredentials = useProviderCredentials();
+  const {
+    models,
+    credentials: providerCredentialRows,
+    credentialsLoading,
+  } = useWorkbenchModelSource();
 
   const projectId = useCanvasStore((s) => s.projectId);
   const nodes = useCanvasStore((s) => s.nodes);
@@ -223,11 +225,11 @@ function MediaPanelNodeComponent({ id, data, selected }: NodeProps<CanvasFlowNod
   const enabledProviders = useMemo(
     () =>
       new Set(
-        providerCredentials.credentials
+        providerCredentialRows
           .filter((credential) => credential.enabled)
           .map((credential) => credential.provider),
       ),
-    [providerCredentials.credentials],
+    [providerCredentialRows],
   );
   const modelOptions = useMemo(
     () => (mediaTarget ? eligibleModels(mediaTarget.data.type, models, enabledProviders) : []),
@@ -248,7 +250,7 @@ function MediaPanelNodeComponent({ id, data, selected }: NodeProps<CanvasFlowNod
   const modelGroups = useMemo(() => {
     const definitions = [
       ...PROVIDER_DEFINITIONS,
-      ...providerCredentials.credentials
+      ...providerCredentialRows
         .filter((credential) => credential.provider.startsWith('custom:'))
         .map(customProviderDefinition),
     ];
@@ -258,7 +260,7 @@ function MediaPanelNodeComponent({ id, data, selected }: NodeProps<CanvasFlowNod
         models: modelOptions.filter((option) => option.provider === definition.id),
       }))
       .filter((group) => group.models.length > 0);
-  }, [modelOptions, providerCredentials.credentials]);
+  }, [modelOptions, providerCredentialRows]);
   const aspectRatioOptions = model?.capabilities.aspectRatios.length
     ? model.capabilities.aspectRatios
     : ASPECT_RATIOS;
@@ -797,12 +799,12 @@ function MediaPanelNodeComponent({ id, data, selected }: NodeProps<CanvasFlowNod
               <select
                 value={model?.key ?? ''}
                 onChange={(e) => selectModel(e.target.value)}
-                disabled={providerCredentials.loading || modelOptions.length === 0}
+                disabled={credentialsLoading || modelOptions.length === 0}
                 className="h-8 rounded-lg border border-border bg-background px-2 text-xs text-foreground outline-none"
               >
                 {modelOptions.length === 0 ? (
                   <option value="">
-                    {providerCredentials.loading
+                    {credentialsLoading
                       ? '正在加载可用模型…'
                       : `没有可用的${mediaTarget.data.type === 'image' ? '图片' : '视频'}模型`}
                   </option>
@@ -824,7 +826,7 @@ function MediaPanelNodeComponent({ id, data, selected }: NodeProps<CanvasFlowNod
                   </optgroup>
                 ))}
               </select>
-              {!providerCredentials.loading && modelOptions.length === 0 ? (
+              {!credentialsLoading && modelOptions.length === 0 ? (
                 <span className="text-[11px] leading-relaxed text-danger">
                   请先在设置中配置并启用包含该类型模型的提供商
                 </span>

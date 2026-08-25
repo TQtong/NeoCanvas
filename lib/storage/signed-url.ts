@@ -106,6 +106,7 @@ export async function resolveAssetView(
   row: AssetRow,
   expiresIn: number = SIGNED_URL_TTL,
 ): Promise<AssetView> {
+  const signedAt = Date.now();
   const url =
     (await createSignedUrl(supabase, row.storage_bucket, row.storage_path, expiresIn)) ?? '';
 
@@ -137,6 +138,7 @@ export async function resolveAssetView(
     durationMs: row.duration_ms,
     url,
     thumbnailUrl,
+    expiresAt: new Date(signedAt + expiresIn * 1000).toISOString(),
   };
 }
 

@@ -66,7 +66,10 @@ export async function loadHomeData(supabase: TypedSupabaseClient): Promise<HomeD
 
   return {
     profile: (profileResult.data as ProfileRow | null) ?? null,
-    projects: await signProjectThumbnails(supabase, (projectsResult.data ?? []).map(projectRowToSummary)),
+    projects: await signProjectThumbnails(
+      supabase,
+      (projectsResult.data ?? []).map(projectRowToSummary),
+    ),
     models,
   };
 }

@@ -19,9 +19,6 @@ import type {
 } from '@/types';
 import { createServerSupabase } from '@/lib/supabase/server';
 
-/** 默认模型键（与 model_catalog 默认选中一致）。 */
-const DEFAULT_MODEL_KEY = 'siliconflow-kolors';
-
 /** 调用 create-project 并返回新项目标识。 */
 async function invokeCreateProject(payload: CreateProjectRequest): Promise<string> {
   const supabase = await createServerSupabase();
@@ -52,7 +49,7 @@ async function invokeCreateProject(payload: CreateProjectRequest): Promise<strin
  */
 export async function createProjectAction(formData: FormData): Promise<void> {
   const prompt = (formData.get('prompt') as string | null)?.trim() ?? '';
-  const modelKey = (formData.get('modelKey') as string | null) || DEFAULT_MODEL_KEY;
+  const modelKey = (formData.get('modelKey') as string | null)?.trim() || null;
   const clientRequestId = (formData.get('clientRequestId') as string | null) || undefined;
 
   // 客户端已把附件上传为资产并序列化其引用随表单提交
@@ -89,7 +86,7 @@ export async function createProjectAction(formData: FormData): Promise<void> {
 export async function createBlankProjectAction(): Promise<void> {
   const projectId = await invokeCreateProject({
     prompt: '',
-    modelKey: DEFAULT_MODEL_KEY,
+    modelKey: null,
     scene: null,
     generateOnCreate: false,
   });

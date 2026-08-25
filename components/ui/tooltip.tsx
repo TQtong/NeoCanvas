@@ -30,7 +30,13 @@ export interface TooltipProps {
 /**
  * 简易工具提示包装。
  */
-export function Tooltip({ children, content, side = 'top', sideOffset = 8, disabled }: TooltipProps) {
+export function Tooltip({
+  children,
+  content,
+  side = 'top',
+  sideOffset = 8,
+  disabled,
+}: TooltipProps) {
   if (disabled) return <>{children}</>;
   return (
     <TooltipPrimitive.Root>

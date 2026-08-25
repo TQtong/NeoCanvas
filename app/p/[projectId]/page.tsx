@@ -21,11 +21,7 @@ export const dynamic = 'force-dynamic';
  *
  * @param props - 路由参数（projectId）
  */
-export default async function DesignPage({
-  params,
-}: {
-  params: Promise<{ projectId: string }>;
-}) {
+export default async function DesignPage({ params }: { params: Promise<{ projectId: string }> }) {
   const { projectId } = await params;
   const supabase = await createServerSupabase();
   const {

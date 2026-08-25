@@ -9,6 +9,19 @@
 
 import type { CanvasEdgeRow, CanvasNodeRow, GenerationRow, MessageRow } from './database';
 
+/** 工作台向界面暴露的稳定实时连接状态。 */
+export type RealtimeStatus = 'connecting' | 'connected' | 'reconnecting' | 'disconnected' | 'error';
+
+/** 客户端持久化状态；与 Realtime 连接状态相互独立。 */
+export type SyncState =
+  | { status: 'saved'; confirmedAt: string }
+  | { status: 'saving'; pendingCount: number }
+  | { status: 'offline'; pendingCount: number }
+  | { status: 'error'; pendingCount: number; message: string; retryable: boolean };
+
+/** Supabase 项目频道的底层订阅状态。 */
+export type ProjectChannelStatus = 'subscribed' | 'closed' | 'error' | 'timed_out';
+
 /** 实时变更事件类型。 */
 export type RealtimeEventType = 'INSERT' | 'UPDATE' | 'DELETE';
 
@@ -57,5 +70,5 @@ export interface ProjectSubscriptionHandlers {
   /** 消息变更（多设备对话同步，可选）。 */
   onMessageChange?: (change: RealtimeChange<MessageRow>) => void;
   /** 订阅状态变化（用于断线提示与重连）。 */
-  onStatusChange?: (status: 'subscribed' | 'closed' | 'error' | 'timed_out') => void;
+  onStatusChange?: (status: ProjectChannelStatus) => void;
 }

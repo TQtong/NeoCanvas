@@ -30,7 +30,8 @@ function CanvasSkeleton() {
       <div
         className="absolute inset-0 pt-14"
         style={{
-          backgroundImage: 'radial-gradient(hsl(var(--muted-foreground) / 0.18) 1.2px, transparent 1.2px)',
+          backgroundImage:
+            'radial-gradient(hsl(var(--muted-foreground) / 0.18) 1.2px, transparent 1.2px)',
           backgroundSize: '24px 24px',
         }}
       >

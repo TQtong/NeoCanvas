@@ -18,6 +18,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { TransformableNode } from '../TransformableNode';
 import { MediaCandidateToggle } from './MediaCandidateToggle';
 import { NodeConnectHandles } from './NodeConnectHandles';
+import { requestCanvasAssetRefresh } from '@/lib/hooks/use-canvas-media';
 
 /** 把滤镜参数序列化为 CSS filter 函数链。 */
 function filtersToCss(f: ImageFilters): string {
@@ -98,7 +99,10 @@ function ImageNodeComponent({ id, data, selected }: NodeProps<CanvasFlowNode>) {
                 alt={d.alt}
                 draggable={false}
                 onLoad={() => setLoaded(true)}
-                onError={() => setLoaded(false)}
+                onError={() => {
+                  setLoaded(false);
+                  if (d.assetId) requestCanvasAssetRefresh(d.assetId);
+                }}
                 className="absolute inset-0 select-none transition-opacity duration-300"
                 style={{
                   ...cropStyle(d),

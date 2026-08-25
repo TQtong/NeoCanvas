@@ -5,7 +5,7 @@
  *
  * 按以下优先级决定呈现，集中处理「加载失败」与「无头像」的兜底：
  *  1. `avatar_url` 是 `preset:<key>` → 渲染对应内联卡通 SVG（零网络依赖，必显）。
- *  2. `avatar_url` 是普通 http(s) URL → `<img>` 呈现；加载失败（如被墙的谷歌 CDN）
+ *  2. `avatar_url` 是普通 http(s) URL → Next Image 呈现；加载失败（如被墙的谷歌 CDN）
  *     转入第 3 步兜底，而非显示裂图。
  *  3. 提供了 `seed`（一般为 user id）→ 按其稳定挑一个默认卡通形象。
  *  4. 否则回退为展示名首字母。
@@ -14,11 +14,8 @@
  */
 
 import { useEffect, useState } from 'react';
-import {
-  defaultPresetForSeed,
-  getAvatarPreset,
-  presetKeyFromUrl,
-} from '@/lib/avatars';
+import Image from 'next/image';
+import { defaultPresetForSeed, getAvatarPreset, presetKeyFromUrl } from '@/lib/avatars';
 import { cn } from '@/lib/utils/cn';
 
 /** {@link Avatar} 属性。 */
@@ -59,9 +56,12 @@ export function Avatar({ url, name, seed, className }: AvatarProps) {
   // 2. 普通图片 URL（未失败时）
   if (url && !presetKey && !broken) {
     return (
-      <img
+      <Image
         src={url}
         alt={name ?? ''}
+        width={128}
+        height={128}
+        unoptimized
         className={cn('size-full object-cover', className)}
         onError={() => setBroken(true)}
       />

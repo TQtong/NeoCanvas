@@ -20,6 +20,7 @@ export const EDGE_FUNCTIONS = {
   exportCanvas: 'export-canvas',
   processGenerationQueue: 'process-generation-queue',
   pollGenerations: 'poll-generations',
+  cleanupGenerationStaging: 'cleanup-generation-staging',
   generationWebhook: 'generation-webhook',
   regeneratePoster: 'regenerate-poster',
   providerCredentials: 'provider-credentials',
@@ -30,8 +31,8 @@ export const EDGE_FUNCTIONS = {
 export interface CreateProjectRequest {
   /** 初始想法（提示词文本）。 */
   prompt: string;
-  /** 所选模型键。 */
-  modelKey: string;
+  /** 所选模型键；空白项目可为空，进入即生成时必须提供。 */
+  modelKey: string | null;
   /** 所选场景（可空）。 */
   scene: Scene | null;
   /** 可选附件资产引用。 */
@@ -67,6 +68,31 @@ export interface SubmitGenerationResponse {
   placeholderNodeId: string;
   /** 是否为幂等命中（复用既有任务）。 */
   deduplicated: boolean;
+  /** 原子提交涉及的节点（占位及候选面板）标识。 */
+  nodeIds?: string[];
+  /** 原子提交涉及的候选关系边标识。 */
+  edgeIds?: string[];
+  /** 持久队列消息标识（bigint 以字符串跨越 JSON 边界）。 */
+  queueMessageId?: string | null;
+}
+
+/** 数据库原子提交 RPC 的完整返回契约。 */
+export interface GenerationSubmissionResult {
+  generationId: string;
+  placeholderNodeId: string;
+  nodeIds: string[];
+  edgeIds: string[];
+  queueMessageId: string | null;
+  reused: boolean;
+}
+
+/** 单次结果落库 RPC 的返回契约。 */
+export interface LandGenerationResult {
+  landed: boolean;
+  generationId: string;
+  terminalStatus: 'succeeded' | 'failed' | 'cancelled';
+  assetIds: string[];
+  nodeIds: string[];
 }
 
 /** swap-media-candidate 请求。 */

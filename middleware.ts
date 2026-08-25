@@ -21,5 +21,7 @@ export async function middleware(request: NextRequest) {
  * 匹配除静态资源外的全部路径。
  */
 export const config = {
+  // Supabase SSR 会话刷新依赖完整 Node 运行时；Next.js 15.5 已稳定支持 Node Middleware。
+  runtime: 'nodejs',
   matcher: ['/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)'],
 };

@@ -21,7 +21,13 @@
  * - `sequence`：工作流序列（图片有向无环图 → 视频）；
  * - `annotation`：图片描述（文字节点 → 图）。
  */
-export const EDGE_TYPES = ['default', 'lineage', 'media_candidate', 'sequence', 'annotation'] as const;
+export const EDGE_TYPES = [
+  'default',
+  'lineage',
+  'media_candidate',
+  'sequence',
+  'annotation',
+] as const;
 export type EdgeType = (typeof EDGE_TYPES)[number];
 
 /**

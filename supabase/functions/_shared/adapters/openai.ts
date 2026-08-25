@@ -15,7 +15,7 @@ import {
   type UnifiedGenerationRequest,
 } from '../types.ts';
 import { ApiException } from '../response.ts';
-import { resolveSize, type ModelAdapter, type ModelContext } from './base.ts';
+import { type ModelAdapter, type ModelContext, resolveSize } from './base.ts';
 
 const API_BASE = 'https://api.openai.com/v1';
 

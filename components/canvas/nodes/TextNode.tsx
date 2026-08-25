@@ -9,7 +9,7 @@
  * @module components/canvas/nodes/TextNode
  */
 
-import { memo, useEffect, useLayoutEffect, useRef } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 import type { NodeProps } from '@xyflow/react';
 import type { TextNodeData } from '@/types';
 import type { CanvasFlowNode } from '@/lib/canvas/node-mapper';
@@ -25,6 +25,16 @@ function TextNodeComponent({ id, data, selected }: NodeProps<CanvasFlowNode>) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const editing = editingNodeId === id;
 
+  const beginEditing = useCallback(() => {
+    useCanvasStore.getState().beginHistoryTransaction('编辑文本');
+    setEditingNode(id);
+  }, [id, setEditingNode]);
+
+  const endEditing = useCallback(() => {
+    setEditingNode(null);
+    useCanvasStore.getState().endHistoryTransaction('编辑文本');
+  }, [setEditingNode]);
+
   // 进入编辑态时聚焦并将光标置于末尾
   useLayoutEffect(() => {
     if (editing && textareaRef.current) {
@@ -37,11 +47,20 @@ function TextNodeComponent({ id, data, selected }: NodeProps<CanvasFlowNode>) {
   // 空文本节点新建后自动进入编辑（首次挂载且无内容时）
   useEffect(() => {
     if (!d.text && selected && editingNodeId === null) {
-      setEditingNode(id);
+      beginEditing();
     }
     // 仅在挂载时尝试，避免反复触发
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(
+    () => () => {
+      if (useCanvasStore.getState().editingNodeId === id) {
+        useCanvasStore.getState().endHistoryTransaction('编辑文本');
+      }
+    },
+    [id],
+  );
 
   const textStyle: React.CSSProperties = {
     fontFamily: d.fontFamily,
@@ -71,7 +90,7 @@ function TextNodeComponent({ id, data, selected }: NodeProps<CanvasFlowNode>) {
           className="size-full cursor-text overflow-hidden p-1"
           onDoubleClick={(e) => {
             e.stopPropagation();
-            setEditingNode(id);
+            beginEditing();
           }}
         >
           {editing ? (
@@ -79,12 +98,12 @@ function TextNodeComponent({ id, data, selected }: NodeProps<CanvasFlowNode>) {
               ref={textareaRef}
               value={d.text}
               onChange={(e) => updateNodeData(id, { text: e.target.value })}
-              onBlur={() => setEditingNode(null)}
+              onBlur={endEditing}
               onKeyDown={(e) => {
                 e.stopPropagation();
                 if (e.key === 'Escape') {
                   e.preventDefault();
-                  setEditingNode(null);
+                  endEditing();
                 }
               }}
               onPointerDown={(e) => e.stopPropagation()}

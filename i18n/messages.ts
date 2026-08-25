@@ -173,6 +173,16 @@ const zhCN: MessageDictionary = {
   'design.renameProject': '重命名项目',
   'design.backHome': '返回首页',
 
+  'sync.realtime.connecting': '正在连接实时同步',
+  'sync.realtime.connected': '实时同步已连接',
+  'sync.realtime.reconnecting': '正在重新连接实时同步',
+  'sync.realtime.disconnected': '实时同步已断开',
+  'sync.realtime.error': '实时同步连接失败',
+  'sync.saved': '已保存',
+  'sync.saving': '保存中',
+  'sync.offline': '离线，编辑已保存在本机',
+  'sync.error': '保存失败，点击重试',
+
   'tool.select': '选择 / 移动',
   'tool.pan': '抓手 / 定位',
   'tool.uploadMedia': '上传图片 / 视频',
@@ -407,6 +417,16 @@ const en: MessageDictionary = {
   'design.expandPanel': 'Expand panel',
   'design.renameProject': 'Rename project',
   'design.backHome': 'Back to home',
+
+  'sync.realtime.connecting': 'Connecting realtime sync',
+  'sync.realtime.connected': 'Realtime sync connected',
+  'sync.realtime.reconnecting': 'Reconnecting realtime sync',
+  'sync.realtime.disconnected': 'Realtime sync disconnected',
+  'sync.realtime.error': 'Realtime sync connection failed',
+  'sync.saved': 'Saved',
+  'sync.saving': 'Saving',
+  'sync.offline': 'Offline, edits saved on this device',
+  'sync.error': 'Save failed, click to retry',
 
   'tool.select': 'Select / Move',
   'tool.pan': 'Hand / Pan',

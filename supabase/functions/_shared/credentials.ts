@@ -17,6 +17,8 @@
 import { type BuiltInProvider, type Provider, type ProviderTestResult } from './types.ts';
 import { type SupabaseClient } from './supabase.ts';
 import { ApiException } from './response.ts';
+import { requireTestProviderEnabled, TEST_PROVIDER } from './test-provider.ts';
+import type { ResolvedAdapterProvider } from './adapters/registry.ts';
 
 /** 各 provider 的环境变量回退名（无用户凭证时取）。与 docs/SETUP.md 一致。 */
 export const PROVIDER_ENV: Partial<Record<BuiltInProvider, { key: string; baseUrl?: string }>> = {
@@ -40,7 +42,11 @@ export async function resolveProviderAdapter(
   admin: SupabaseClient,
   provider: Provider,
   projectId: string,
-): Promise<BuiltInProvider> {
+): Promise<ResolvedAdapterProvider> {
+  if (provider === TEST_PROVIDER) {
+    requireTestProviderEnabled();
+    return TEST_PROVIDER;
+  }
   if (!provider.startsWith('custom:')) return provider as BuiltInProvider;
   const { data: project } = await admin
     .from('projects')
@@ -77,8 +83,7 @@ function safeBaseUrl(value: string | null): string | undefined {
     throw new ApiException('invalid_params', '供应商 API 端点不是有效 URL');
   }
   const host = url.hostname.toLowerCase();
-  const forbidden =
-    host === 'localhost' ||
+  const forbidden = host === 'localhost' ||
     host.endsWith('.local') ||
     host === '0.0.0.0' ||
     host === '127.0.0.1' ||
@@ -107,6 +112,10 @@ export async function resolveProviderCredential(
   provider: Provider,
   projectId: string,
 ): Promise<ResolvedCredential> {
+  if (provider === TEST_PROVIDER) {
+    requireTestProviderEnabled();
+    return { apiKey: 'deterministic-test-provider' };
+  }
   // 1) 项目 → 归属用户
   const { data: project } = await admin
     .from('projects')
@@ -218,7 +227,9 @@ function buildProbe(
       };
     case 'google':
       return {
-        url: `${trim(baseUrl ?? 'https://generativelanguage.googleapis.com/v1beta')}/models?key=${apiKey}`,
+        url: `${
+          trim(baseUrl ?? 'https://generativelanguage.googleapis.com/v1beta')
+        }/models?key=${apiKey}`,
         method: 'GET',
         headers: {},
       };

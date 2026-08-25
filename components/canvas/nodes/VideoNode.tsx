@@ -18,6 +18,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { TransformableNode } from '../TransformableNode';
 import { MediaCandidateToggle } from './MediaCandidateToggle';
 import { NodeConnectHandles } from './NodeConnectHandles';
+import { requestCanvasAssetRefresh } from '@/lib/hooks/use-canvas-media';
 
 function VideoNodeComponent({ id, data, selected }: NodeProps<CanvasFlowNode>) {
   const d = data as VideoNodeData;
@@ -58,6 +59,9 @@ function VideoNodeComponent({ id, data, selected }: NodeProps<CanvasFlowNode>) {
               controls={Boolean(selected)}
               playsInline
               draggable={false}
+              onError={() => {
+                if (d.assetId) requestCanvasAssetRefresh(d.assetId);
+              }}
               className="size-full select-none object-cover"
             />
           ) : d.assetId ? (
