@@ -132,6 +132,26 @@ function nextCandidateIndex(nodes: CanvasFlowNode[], targetId: string): number {
   }).length;
 }
 
+/**
+ * 构造目标图片的稳定编辑版本签名。
+ *
+ * 签名排除会自然刷新的 Storage URL 与候选折叠 UI 状态，只比较真正影响输入像素或节点几何
+ * 的持久字段；这样 Realtime 更新裁剪、滤镜、资产或尺寸时会提示“继续使用冻结版本”。
+ */
+function imageEditVersion(node: CanvasFlowNode): string | null {
+  if (node.data.type !== 'image') return null;
+  const runtimeFields = new Set(['src', 'thumbnailSrc', 'urlExpiresAt', 'candidatesCollapsed']);
+  const persistentData = Object.fromEntries(
+    Object.entries(node.data).filter(([key]) => !runtimeFields.has(key)),
+  );
+  return JSON.stringify({
+    data: persistentData,
+    box: nodeBox(node),
+    parentId: node.parentId ?? null,
+    zIndex: node.zIndex ?? 0,
+  });
+}
+
 /** 统一的字段容器。 */
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -200,6 +220,9 @@ export function ImageEditOverlay(props: ImageEditOverlayProps) {
   const sourceHeight = state.outputCanvas.sourceHeight;
   const busy = ['preparing', 'uploading', 'submitting'].includes(state.status) || inputPreparing;
   const targetDeleted = !liveTarget || liveTarget.data.type !== 'image';
+  const targetChanged = Boolean(
+    liveTarget && imageEditVersion(liveTarget) !== imageEditVersion(props.targetSnapshot),
+  );
   const promptRequired =
     state.operation === 'semantic_edit' ||
     state.operation === 'inpaint' ||
@@ -769,9 +792,7 @@ export function ImageEditOverlay(props: ImageEditOverlayProps) {
                     {t('imageEdit.targetDeleted')}
                   </div>
                 ) : null}
-                {liveTarget &&
-                liveTarget.data.type === 'image' &&
-                liveTarget.data.src !== props.targetSnapshot.data.src ? (
+                {targetChanged ? (
                   <div className="border-warning/30 bg-warning/10 rounded-xl border p-3 text-xs text-foreground">
                     {t('imageEdit.targetChanged')}
                   </div>
@@ -950,6 +971,8 @@ export function ImageEditOverlay(props: ImageEditOverlayProps) {
                         <button
                           key={factor}
                           type="button"
+                          aria-label={`${factor}×`}
+                          aria-pressed={state.upscaleFactor === factor}
                           className={`h-10 rounded-lg border text-sm ${
                             state.upscaleFactor === factor
                               ? 'border-accent bg-accent/10 text-accent'
