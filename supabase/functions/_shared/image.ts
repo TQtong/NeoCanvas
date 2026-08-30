@@ -483,6 +483,29 @@ export async function applyAlphaMask(
 }
 
 /**
+ * 把 NeoCanvas 标准黑底白区蒙版转换为 OpenAI 图片编辑接口要求的 Alpha 蒙版。
+ *
+ * 标准资产始终以黑色表示保留、白色表示编辑并保持完全不透明，便于审计、重试和跨
+ * Provider 复用；只有发送 OpenAI multipart 前才把亮度反转到 Alpha 通道。
+ */
+export async function convertLuminanceMaskToOpenAiPng(
+  bytes: Uint8Array,
+): Promise<Uint8Array> {
+  const decoded = await decodePng(bytes);
+  for (let offset = 0; offset < decoded.rgba.length; offset += 4) {
+    const red = decoded.rgba[offset]!;
+    const green = decoded.rgba[offset + 1]!;
+    const blue = decoded.rgba[offset + 2]!;
+    const editWeight = Math.round((red * 299 + green * 587 + blue * 114) / 1000);
+    decoded.rgba[offset] = 255;
+    decoded.rgba[offset + 1] = 255;
+    decoded.rgba[offset + 2] = 255;
+    decoded.rgba[offset + 3] = 255 - editWeight;
+  }
+  return encodeRgbaPng(decoded.width, decoded.height, decoded.rgba);
+}
+
+/**
  * 为图片字节生成等比缩略图（PNG）。
  *
  * 解码失败、动图（GIF）或不支持的格式返回 null，由调用方决定是否回退（不阻断主流程）。

@@ -117,11 +117,15 @@ async function rgbaPngBase64(
 Deno.test('OpenAI 局部重绘严格分离 image[] 与 mask，并映射输入保真度', async () => {
   const originalFetch = globalThis.fetch;
   const captured: { providerForm?: FormData } = {};
+  const sourcePng = await rgbaPngBase64(20, 40, 60, 255);
+  const whiteEditMask = await rgbaPngBase64(255, 255, 255, 255);
   globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
     if (url.startsWith('https://assets.test/')) {
+      const encoded = url.endsWith('/mask.png') ? whiteEditMask : sourcePng;
+      const binary = atob(encoded);
       return Promise.resolve(
-        new Response(new Uint8Array([137, 80, 78, 71]), {
+        new Response(Uint8Array.from(binary, (char) => char.charCodeAt(0)), {
           status: 200,
           headers: { 'Content-Type': 'image/png' },
         }),
@@ -170,6 +174,12 @@ Deno.test('OpenAI 局部重绘严格分离 image[] 与 mask，并映射输入保
     assert(providerForm);
     assertEquals(providerForm.getAll('image[]').length, 1);
     assertEquals(providerForm.getAll('mask').length, 1);
+    const maskFile = providerForm.get('mask');
+    assert(maskFile instanceof File);
+    assertEquals(
+      await inspectRasterImage(new Uint8Array(await maskFile.arrayBuffer()), 'image/png'),
+      { width: 1, height: 1, hasTransparency: true },
+    );
     assertEquals(providerForm.get('input_fidelity'), 'low');
     assertEquals(providerForm.get('n'), '2');
   } finally {

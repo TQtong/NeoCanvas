@@ -456,8 +456,7 @@ export function ImageEditOverlay(props: ImageEditOverlayProps) {
           .slice(0, state.maskHistory.cursor)
           .map((command) => (command.type === 'clear' ? command.id : command.stroke.id))
           .join(',');
-        const maskAdapter = adapterForModel(selectedModel, props.credentials);
-        const maskKey = `${maskAdapter}:${state.maskHistory.compactedCommandCount}:${maskVersion}:${prepared.width}x${prepared.height}:${state.maskFeatherPx}`;
+        const maskKey = `luminance:${state.maskHistory.compactedCommandCount}:${maskVersion}:${prepared.width}x${prepared.height}:${state.maskFeatherPx}`;
         let maskAsset = maskAssetCacheRef.current.get(maskKey);
         if (!maskAsset) {
           const scaleX = prepared.width / sourceWidth;
@@ -469,7 +468,7 @@ export function ImageEditOverlay(props: ImageEditOverlayProps) {
             prepared.height,
             Math.round((state.maskFeatherPx * (scaleX + scaleY)) / 2),
             controller.signal,
-            maskAdapter === 'openai' ? 'openai-alpha' : 'luminance',
+            'luminance',
           );
           setStatus('uploading');
           maskAsset = await uploadAsset(getBrowserSupabase(), {

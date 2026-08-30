@@ -16,6 +16,7 @@ import {
   type UnifiedGenerationRequest,
 } from '../types.ts';
 import { ApiException } from '../response.ts';
+import { convertLuminanceMaskToOpenAiPng } from '../image.ts';
 import { type ModelAdapter, type ModelContext, resolveSize } from './base.ts';
 
 const API_BASE = 'https://api.openai.com/v1';
@@ -43,6 +44,28 @@ async function appendRemoteFile(form: FormData, field: string, url: string, mime
   }
   const extension = mimeType.split('/')[1]?.replace('jpeg', 'jpg') ?? 'png';
   form.append(field, await response.blob(), `${field.replaceAll('[]', '')}.${extension}`);
+}
+
+/** 下载标准亮度蒙版，并仅在 Provider 边界转换成 OpenAI Alpha 语义。 */
+async function appendOpenAiMask(form: FormData, url: string): Promise<void> {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new ApiException('provider_error', `OpenAI 蒙版下载失败（${response.status}）`);
+  }
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  try {
+    const converted = await convertLuminanceMaskToOpenAiPng(bytes);
+    form.append(
+      'mask',
+      new Blob([converted.slice().buffer as ArrayBuffer], { type: 'image/png' }),
+      'mask.png',
+    );
+  } catch (error) {
+    throw new ApiException('invalid_params', 'OpenAI 蒙版不是可解码的标准 PNG', {
+      reason: 'invalid_mask_asset',
+      detail: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
 
 export const openaiAdapter: ModelAdapter = {
@@ -91,7 +114,7 @@ export const openaiAdapter: ModelAdapter = {
       const mask = ctx.references.find((reference) => reference.role === 'mask');
       if (operation === 'inpaint') {
         if (!mask) throw new ApiException('invalid_params', 'OpenAI 局部重绘缺少蒙版');
-        await appendRemoteFile(form, 'mask', mask.url, mask.mimeType);
+        await appendOpenAiMask(form, mask.url);
       }
       response = await fetch(`${baseUrl}/images/edits`, {
         method: 'POST',
