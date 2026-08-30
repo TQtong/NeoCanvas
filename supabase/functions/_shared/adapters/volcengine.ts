@@ -140,6 +140,7 @@ async function submitImage(
 
 export const volcengineAdapter: ModelAdapter = {
   provider: 'volcengine' as Provider,
+  supportedOperations: ['generate'],
 
   submit(request: UnifiedGenerationRequest, ctx: ModelContext): Promise<SubmitResult> {
     const apiKey = ctx.credentials.apiKey;

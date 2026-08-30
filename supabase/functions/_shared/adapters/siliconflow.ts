@@ -136,6 +136,7 @@ async function submitVideo(
 
 export const siliconflowAdapter: ModelAdapter = {
   provider: 'siliconflow' as Provider,
+  supportedOperations: ['generate', 'semantic_edit'],
 
   submit(request: UnifiedGenerationRequest, ctx: ModelContext): Promise<SubmitResult> {
     const apiKey = ctx.credentials.apiKey;

@@ -8,12 +8,20 @@
  */
 
 import type { AgentMode, Modality, Provider } from './enums';
-import type { AspectRatio, ImageQuality } from './generation';
+import type {
+  AspectRatio,
+  ImageInputFidelity,
+  ImageOperation,
+  ImageQuality,
+  ImageUpscaleFactor,
+} from './generation';
 
 /**
  * 模型能力画像。声明该模型支持的参数子集与上限。
  */
 export interface ModelCapabilities {
+  /** 图片模型真实支持的生成 / 编辑操作；视频模型为空数组。 */
+  imageOperations: ImageOperation[];
   /** 支持的输出比例集合。 */
   aspectRatios: AspectRatio[];
   /** 支持的显式尺寸（宽×高）枚举；为空表示由比例驱动。 */
@@ -36,6 +44,16 @@ export interface ModelCapabilities {
   isAsync: boolean;
   /** 是否支持提供商回调（用于 generation-webhook 推进）。 */
   supportsWebhook: boolean;
+  /** 图片专属：最多接收多少张非蒙版输入图片。 */
+  maxInputImages?: number;
+  /** 图片专属：支持的输入保真度。缺省表示不接受该参数。 */
+  inputFidelityOptions?: ImageInputFidelity[];
+  /** 图片专属：支持的高清放大倍率。 */
+  upscaleFactors?: ImageUpscaleFactor[];
+  /** 图片专属：是否能产生透明背景。 */
+  supportsTransparentOutput?: boolean;
+  /** 图片专属：提交给 Provider 的单张输入总像素上限。 */
+  maxInputPixels?: number;
   /** 视频专属：支持的分辨率档。 */
   videoResolutions?: string[];
   /** 视频专属：时长区间（秒）。 */
@@ -48,6 +66,19 @@ export interface ModelCapabilities {
    * 解析出的 ≥2 帧关键帧序列。前端据此筛选可用模型、后端 `validateParams` 据此放行。
    */
   supportsKeyframeSequence?: boolean;
+}
+
+/**
+ * 判断模型目录能力是否明确开放某个图片操作。
+ *
+ * 不对缺失字段做乐观推断：数据库迁移前的旧能力对象视为不支持精准编辑，避免前端把
+ * 尚未经过适配器验证的操作暴露给用户。
+ */
+export function modelSupportsImageOperation(
+  capabilities: ModelCapabilities,
+  operation: ImageOperation,
+): boolean {
+  return capabilities.imageOperations?.includes(operation) === true;
 }
 
 /**

@@ -27,6 +27,7 @@ function toOpenAISize(width: number, height: number): string {
 
 export const openaiAdapter: ModelAdapter = {
   provider: 'openai' as Provider,
+  supportedOperations: ['generate', 'semantic_edit'],
 
   async submit(request: UnifiedGenerationRequest, ctx: ModelContext): Promise<SubmitResult> {
     if (request.modality !== 'image') {

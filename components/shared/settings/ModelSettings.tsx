@@ -13,13 +13,22 @@ import { useState } from 'react';
 import { Loader2, Pencil, Plus, Trash2 } from 'lucide-react';
 import type {
   AspectRatio,
+  ImageInputFidelity,
+  ImageOperation,
   ImageQuality,
+  ImageUpscaleFactor,
   ModelCapabilities,
   ModelCatalogEntry,
   ModelDefaultParams,
   Provider,
 } from '@/types';
-import { ASPECT_RATIOS, IMAGE_QUALITIES } from '@/types';
+import {
+  ASPECT_RATIOS,
+  IMAGE_INPUT_FIDELITIES,
+  IMAGE_OPERATIONS,
+  IMAGE_QUALITIES,
+  IMAGE_UPSCALE_FACTORS,
+} from '@/types';
 import { useTranslation } from '@/i18n';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/toast';
@@ -40,6 +49,12 @@ interface FormState {
   providerModel: string;
   aspectRatios: AspectRatio[];
   maxOutputs: number;
+  imageOperations: ImageOperation[];
+  maxInputImages: number;
+  inputFidelityOptions: ImageInputFidelity[];
+  upscaleFactors: ImageUpscaleFactor[];
+  supportsTransparentOutput: boolean;
+  maxInputPixels: number;
   qualities: ImageQuality[];
   videoResolutions: string[];
   durMin: number;
@@ -64,6 +79,12 @@ function emptyForm(provider: Provider | ''): FormState {
     providerModel: '',
     aspectRatios: ['1:1'],
     maxOutputs: 1,
+    imageOperations: ['generate'],
+    maxInputImages: 1,
+    inputFidelityOptions: [],
+    upscaleFactors: [],
+    supportsTransparentOutput: false,
+    maxInputPixels: 16_777_216,
     qualities: [],
     videoResolutions: ['720p'],
     durMin: 3,
@@ -90,6 +111,14 @@ function entryToForm(e: ModelCatalogEntry): FormState {
     providerModel: e.defaultParams.providerModel ?? '',
     aspectRatios: cap.aspectRatios ?? [],
     maxOutputs: cap.maxOutputs ?? 1,
+    imageOperations:
+      cap.imageOperations ??
+      (cap.supportsReferenceImages ? ['generate', 'semantic_edit'] : ['generate']),
+    maxInputImages: cap.maxInputImages ?? 1,
+    inputFidelityOptions: cap.inputFidelityOptions ?? [],
+    upscaleFactors: cap.upscaleFactors ?? [],
+    supportsTransparentOutput: Boolean(cap.supportsTransparentOutput),
+    maxInputPixels: cap.maxInputPixels ?? 16_777_216,
     qualities: cap.qualities ?? [],
     videoResolutions: cap.videoResolutions ?? ['720p'],
     durMin: cap.videoDurationRange?.min ?? 3,
@@ -107,6 +136,7 @@ function entryToForm(e: ModelCatalogEntry): FormState {
 /** 表单态 → 提交输入（构造完整能力画像与默认参数）。 */
 function formToInput(f: FormState): ManagedModelInput {
   const capabilities: ModelCapabilities = {
+    imageOperations: f.modality === 'image' ? f.imageOperations : [],
     aspectRatios: f.aspectRatios,
     sizes: [],
     maxOutputs: Math.max(1, f.maxOutputs),
@@ -118,6 +148,13 @@ function formToInput(f: FormState): ManagedModelInput {
     isAsync: f.isAsync,
     supportsWebhook: false,
   };
+  if (f.modality === 'image') {
+    capabilities.maxInputImages = Math.max(1, f.maxInputImages);
+    capabilities.inputFidelityOptions = f.inputFidelityOptions;
+    capabilities.upscaleFactors = f.upscaleFactors;
+    capabilities.supportsTransparentOutput = f.supportsTransparentOutput;
+    capabilities.maxInputPixels = Math.max(1, f.maxInputPixels);
+  }
   if (f.modality === 'video') {
     capabilities.videoResolutions = f.videoResolutions;
     capabilities.videoDurationRange = { min: f.durMin, max: f.durMax };
@@ -199,6 +236,10 @@ export function ModelSettings({ providerFilter, providerLabel }: ModelSettingsPr
     }
     if (form.aspectRatios.length === 0) {
       toastError(t('models.aspectRequired'));
+      return;
+    }
+    if (form.modality === 'image' && form.imageOperations.length === 0) {
+      toastError(t('models.operationRequired'));
       return;
     }
     setSaving(true);
@@ -411,6 +452,20 @@ function ModelForm({
 
       {form.modality === 'image' ? (
         <>
+          <div className="flex flex-col gap-1.5">
+            <span className="text-sm text-muted-foreground">{t('models.imageOperations')}</span>
+            <div className="flex flex-wrap gap-1.5">
+              {IMAGE_OPERATIONS.map((operation) => (
+                <Chip
+                  key={operation}
+                  active={form.imageOperations.includes(operation)}
+                  onClick={() => set('imageOperations', toggleIn(form.imageOperations, operation))}
+                >
+                  {t(`models.operation.${operation}`)}
+                </Chip>
+              ))}
+            </div>
+          </div>
           <div className="grid grid-cols-2 gap-3">
             <Field label={t('models.maxOutputs')}>
               <NumberInput
@@ -418,6 +473,21 @@ function ModelForm({
                 max={8}
                 value={form.maxOutputs}
                 onChange={(e) => set('maxOutputs', Number(e.target.value) || 1)}
+              />
+            </Field>
+            <Field label={t('models.maxInputImages')}>
+              <NumberInput
+                min={1}
+                max={16}
+                value={form.maxInputImages}
+                onChange={(e) => set('maxInputImages', Number(e.target.value) || 1)}
+              />
+            </Field>
+            <Field label={t('models.maxInputPixels')}>
+              <NumberInput
+                min={1}
+                value={form.maxInputPixels}
+                onChange={(e) => set('maxInputPixels', Number(e.target.value) || 1)}
               />
             </Field>
           </div>
@@ -431,6 +501,36 @@ function ModelForm({
                   onClick={() => set('qualities', toggleIn(form.qualities, q))}
                 >
                   {q}
+                </Chip>
+              ))}
+            </div>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <span className="text-sm text-muted-foreground">{t('models.inputFidelity')}</span>
+            <div className="flex flex-wrap gap-1.5">
+              {IMAGE_INPUT_FIDELITIES.map((fidelity) => (
+                <Chip
+                  key={fidelity}
+                  active={form.inputFidelityOptions.includes(fidelity)}
+                  onClick={() =>
+                    set('inputFidelityOptions', toggleIn(form.inputFidelityOptions, fidelity))
+                  }
+                >
+                  {fidelity}
+                </Chip>
+              ))}
+            </div>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <span className="text-sm text-muted-foreground">{t('models.upscaleFactors')}</span>
+            <div className="flex flex-wrap gap-1.5">
+              {IMAGE_UPSCALE_FACTORS.map((factor) => (
+                <Chip
+                  key={factor}
+                  active={form.upscaleFactors.includes(factor)}
+                  onClick={() => set('upscaleFactors', toggleIn(form.upscaleFactors, factor))}
+                >
+                  {factor}×
                 </Chip>
               ))}
             </div>
@@ -492,6 +592,13 @@ function ModelForm({
           onChange={(v) => set('isAsync', v)}
           label={t('models.capAsync')}
         />
+        {form.modality === 'image' ? (
+          <CheckRow
+            checked={form.supportsTransparentOutput}
+            onChange={(v) => set('supportsTransparentOutput', v)}
+            label={t('models.capTransparent')}
+          />
+        ) : null}
         {form.modality === 'video' ? (
           <>
             <CheckRow

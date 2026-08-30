@@ -52,6 +52,7 @@ Deno.test('20 轮并发 submission 与 landing 都只提交一次业务结果', 
       provider: TEST_PROVIDER,
       modality: 'image',
       capabilities: {
+        imageOperations: ['generate'],
         aspectRatios: ['1:1'],
         sizes: [],
         maxOutputs: 1,

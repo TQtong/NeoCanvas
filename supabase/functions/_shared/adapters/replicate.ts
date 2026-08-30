@@ -26,6 +26,7 @@ function apiBase(ctx: ModelContext): string {
 
 export const replicateAdapter: ModelAdapter = {
   provider: 'replicate' as Provider,
+  supportedOperations: ['generate', 'semantic_edit'],
 
   async submit(request: UnifiedGenerationRequest, ctx: ModelContext): Promise<SubmitResult> {
     const token = ctx.credentials.apiKey;

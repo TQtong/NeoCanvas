@@ -45,6 +45,14 @@ async function taskId(prompt: string): Promise<string> {
 /** 确定性测试适配器。 */
 export const testAdapter: ModelAdapter = {
   provider: TEST_PROVIDER,
+  supportedOperations: [
+    'generate',
+    'semantic_edit',
+    'inpaint',
+    'outpaint',
+    'remove_background',
+    'upscale',
+  ],
 
   async submit(
     request: UnifiedGenerationRequest,

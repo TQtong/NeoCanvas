@@ -23,6 +23,8 @@ import { moderatePromptText } from './moderation.ts';
 import { triggerFunction } from './trigger.ts';
 import { requireAccessibleModel } from './models.ts';
 import { generationRequestHash } from './request-hash.ts';
+import { resolveProviderAdapter } from './credentials.ts';
+import { getAdapter } from './adapters/registry.ts';
 
 /** 单项目在途生成数上限（防单项目刷量）。 */
 const MAX_INFLIGHT = Number(Deno.env.get('MAX_INFLIGHT_GENERATIONS') ?? '8');
@@ -129,8 +131,14 @@ export async function createGeneration(
   // 输入端内容审核（提示词）
   await moderatePromptText(admin, request.prompt);
 
-  // 参数校验 / 降级
-  validateParams(modelRow.capabilities, request);
+  // 参数校验必须同时受模型目录与实际协议适配器约束，防止自定义模型虚报能力。
+  const adapterProvider = await resolveProviderAdapter(
+    admin,
+    modelRow.provider,
+    request.projectId,
+  );
+  const adapter = getAdapter(adapterProvider);
+  validateParams(modelRow.capabilities, request, adapter.supportedOperations);
 
   // 精确幂等重试不重复消耗限流配额：最终是否可复用、摘要是否冲突仍由带项目行锁的
   // create_generation_submission 决定，此处只判断是否需要执行新增请求的滑动窗口检查。

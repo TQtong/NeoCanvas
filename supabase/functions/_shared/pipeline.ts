@@ -11,16 +11,23 @@
 
 import {
   type AssetCandidate,
+  type BaseImageEditParams,
   type GenerationRow,
+  IMAGE_INPUT_MODES,
   type ImageGenerationParams,
+  type ImageOperation,
+  type InpaintImageParams,
   type LandGenerationResult,
   type ModelCapabilities,
   type ModelCatalogRow,
   type ModelDefaultParams,
+  normalizeImageOperation,
+  type OutpaintImageParams,
   type Provider,
   type ReferenceMaterial,
   TERMINAL_STATUSES,
   type UnifiedGenerationRequest,
+  type UpscaleImageParams,
   type VideoGenerationParams,
 } from './types.ts';
 import { ApiException } from './response.ts';
@@ -60,6 +67,7 @@ function extFromMime(mime: string): string {
 export function validateParams(
   capabilities: ModelCapabilities,
   request: UnifiedGenerationRequest,
+  adapterOperations: readonly ImageOperation[],
 ): void {
   const params = request.params;
   if (capabilities.requiresReferenceImages && params.references.length === 0) {
@@ -75,8 +83,157 @@ export function validateParams(
 
   if (params.modality === 'image') {
     const p = params as ImageGenerationParams;
+    const isLegacyRequest = p.operation === undefined;
+    const operation = normalizeImageOperation(p);
+    const modelSupportsOperation = capabilities.imageOperations.includes(operation);
+    const adapterSupportsOperation = adapterOperations.includes(operation);
+    if (!modelSupportsOperation || !adapterSupportsOperation) {
+      throw new ApiException('unsupported_param', '当前模型不支持该图片操作', {
+        reason: 'unsupported_image_operation',
+        operation,
+      });
+    }
+
+    if (
+      isLegacyRequest &&
+      (p.references.some((reference) => reference.role === 'mask') ||
+        'outputCanvas' in p ||
+        'upscaleFactor' in p ||
+        'background' in p)
+    ) {
+      throw new ApiException('invalid_params', '旧版图片请求不能携带精准编辑专属参数', {
+        reason: 'invalid_edit_input_count',
+        operation,
+      });
+    }
+
+    // 规范化发生在幂等哈希之前，使旧请求与等价新请求具有相同语义。
+    (p as ImageGenerationParams & { operation: ImageOperation }).operation = operation;
+    if (isLegacyRequest && operation === 'semantic_edit') {
+      (p as BaseImageEditParams).inputMode = 'original';
+    }
     if (p.count < 1) throw new ApiException('invalid_params', '产出数量至少为 1');
-    p.count = Math.min(p.count, capabilities.maxOutputs);
+    if (operation === 'remove_background' || operation === 'upscale') {
+      if (p.count !== 1) {
+        throw new ApiException('invalid_params', '去背景与高清放大只能产出一个结果', {
+          reason: 'invalid_edit_input_count',
+          operation,
+        });
+      }
+    } else if (operation === 'generate') {
+      // 保持旧生成入口的兼容行为；精准编辑对候选数量使用严格校验。
+      p.count = Math.min(p.count, capabilities.maxOutputs);
+    } else if (p.count > Math.min(4, capabilities.maxOutputs)) {
+      throw new ApiException('invalid_params', '编辑候选数量超出模型上限', {
+        reason: 'invalid_edit_input_count',
+        operation,
+      });
+    }
+
+    const contentReferences = p.references.filter((reference) => reference.role === 'content');
+    const maskReferences = p.references.filter((reference) => reference.role === 'mask');
+    const nonMaskReferences = p.references.length - maskReferences.length;
+    if (
+      capabilities.maxInputImages != null &&
+      nonMaskReferences > capabilities.maxInputImages
+    ) {
+      throw new ApiException('unsupported_param', '输入图片数量超出模型上限', {
+        reason: 'invalid_edit_input_count',
+        operation,
+        maxInputImages: capabilities.maxInputImages,
+      });
+    }
+
+    if (operation !== 'generate' && contentReferences.length !== 1) {
+      throw new ApiException('invalid_params', '图片编辑必须且只能提供一张内容源图', {
+        reason: 'invalid_edit_input_count',
+        operation,
+      });
+    }
+    if (operation !== 'generate') {
+      const editParams = p as BaseImageEditParams;
+      if (!IMAGE_INPUT_MODES.includes(editParams.inputMode)) {
+        throw new ApiException('invalid_params', '图片编辑输入模式无效', {
+          reason: 'invalid_edit_input_count',
+          operation,
+        });
+      }
+    }
+    if (operation === 'inpaint') {
+      const inpaintParams = p as InpaintImageParams;
+      if (maskReferences.length !== 1) {
+        throw new ApiException('invalid_params', '局部重绘必须且只能提供一张蒙版', {
+          reason: 'invalid_edit_input_count',
+          operation,
+        });
+      }
+      if (
+        !Number.isInteger(inpaintParams.maskFeatherPx) ||
+        inpaintParams.maskFeatherPx < 0 ||
+        inpaintParams.maskFeatherPx > 128
+      ) {
+        throw new ApiException('invalid_params', '蒙版羽化必须是 0–128 的整数', {
+          reason: 'invalid_edit_input_count',
+          operation,
+        });
+      }
+    } else if (maskReferences.length > 0) {
+      throw new ApiException('invalid_params', '当前图片操作不接受蒙版', {
+        reason: 'invalid_edit_input_count',
+        operation,
+      });
+    }
+
+    const editParams = operation === 'generate' ? null : (p as BaseImageEditParams);
+    if (editParams?.inputFidelity) {
+      if (!capabilities.inputFidelityOptions?.includes(editParams.inputFidelity)) {
+        throw new ApiException('unsupported_param', '模型不支持请求的输入保真度', {
+          reason: 'unsupported_image_operation',
+          operation,
+        });
+      }
+    }
+    if (editParams?.background === 'transparent' && !capabilities.supportsTransparentOutput) {
+      throw new ApiException('unsupported_param', '模型不支持透明背景输出', {
+        reason: 'transparent_output_unsupported',
+        operation,
+      });
+    }
+    if (operation === 'outpaint') {
+      const canvas = (p as OutpaintImageParams).outputCanvas;
+      const values = [
+        canvas.width,
+        canvas.height,
+        canvas.sourceX,
+        canvas.sourceY,
+        canvas.sourceWidth,
+        canvas.sourceHeight,
+      ];
+      const allIntegers = values.every(Number.isInteger);
+      const sourceFits = canvas.sourceX >= 0 &&
+        canvas.sourceY >= 0 &&
+        canvas.sourceWidth > 0 &&
+        canvas.sourceHeight > 0 &&
+        canvas.width > 0 &&
+        canvas.height > 0 &&
+        canvas.sourceX + canvas.sourceWidth <= canvas.width &&
+        canvas.sourceY + canvas.sourceHeight <= canvas.height;
+      if (!allIntegers || !sourceFits) {
+        throw new ApiException('invalid_params', '扩图画布不能完整容纳源图', {
+          reason: 'output_canvas_invalid',
+          operation,
+        });
+      }
+    }
+    if (operation === 'upscale') {
+      const upscaleParams = p as UpscaleImageParams;
+      if (!capabilities.upscaleFactors?.includes(upscaleParams.upscaleFactor)) {
+        throw new ApiException('unsupported_param', '模型不支持请求的放大倍率', {
+          reason: 'upscale_factor_unsupported',
+          operation,
+        });
+      }
+    }
     if (p.quality && !capabilities.qualities.includes(p.quality)) {
       delete p.quality; // 降级：丢弃不支持的质量档
     }

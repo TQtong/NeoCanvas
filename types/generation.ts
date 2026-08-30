@@ -21,6 +21,33 @@ export type AspectRatio = (typeof ASPECT_RATIOS)[number];
 export const IMAGE_QUALITIES = ['low', 'medium', 'high', 'auto'] as const;
 export type ImageQuality = (typeof IMAGE_QUALITIES)[number];
 
+/** 图片生成与精准编辑的操作字面量。 */
+export const IMAGE_OPERATIONS = [
+  'generate',
+  'semantic_edit',
+  'inpaint',
+  'outpaint',
+  'remove_background',
+  'upscale',
+] as const;
+export type ImageOperation = (typeof IMAGE_OPERATIONS)[number];
+
+/** 图片编辑输入来源。 */
+export const IMAGE_INPUT_MODES = ['original', 'flattened'] as const;
+export type ImageInputMode = (typeof IMAGE_INPUT_MODES)[number];
+
+/** 支持的图片编辑输入保真度。 */
+export const IMAGE_INPUT_FIDELITIES = ['standard', 'high'] as const;
+export type ImageInputFidelity = (typeof IMAGE_INPUT_FIDELITIES)[number];
+
+/** 支持的透明背景策略。 */
+export const IMAGE_BACKGROUNDS = ['transparent', 'opaque', 'auto'] as const;
+export type ImageBackground = (typeof IMAGE_BACKGROUNDS)[number];
+
+/** 精准编辑支持的放大倍率。 */
+export const IMAGE_UPSCALE_FACTORS = [2, 4] as const;
+export type ImageUpscaleFactor = (typeof IMAGE_UPSCALE_FACTORS)[number];
+
 /**
  * 参考素材引用。来自 `@` 提及的画布节点或上传附件，按模型能力作为参考图 / 首帧传入。
  * 节点标识与附件资产标识共用同一套引用语义（第 06 篇第八节）。
@@ -39,10 +66,8 @@ export interface ReferenceMaterial {
   role: 'style' | 'content' | 'first_frame' | 'mask' | 'keyframe';
 }
 
-/**
- * 图像生成参数。
- */
-export interface ImageGenerationParams {
+/** 图像生成与编辑的公共参数。 */
+export interface BaseImageGenerationParams {
   modality: 'image';
   /** 负向提示（按模型支持）。 */
   negativePrompt?: string;
@@ -62,6 +87,100 @@ export interface ImageGenerationParams {
   seed?: number;
   /** 参考素材（图生图 / 编辑 / 风格参考）。 */
   references: ReferenceMaterial[];
+}
+
+/** 旧客户端图片请求；服务端在校验前将其规范化为明确操作。 */
+export interface LegacyImageGenerationParams extends BaseImageGenerationParams {
+  operation?: undefined;
+}
+
+/** 普通图片生成。 */
+export interface GenerateImageParams extends BaseImageGenerationParams {
+  operation: 'generate';
+}
+
+/** 图片编辑公共输入。 */
+export interface BaseImageEditParams extends BaseImageGenerationParams {
+  /** 使用原始资产，或使用合并当前外观生成的辅助资产。 */
+  inputMode: ImageInputMode;
+  /** 提供商支持时控制源图细节保留程度。 */
+  inputFidelity?: ImageInputFidelity;
+  /** 提供商支持时控制输出背景。 */
+  background?: ImageBackground;
+}
+
+/** 通过自然语言修改整张图片。 */
+export interface SemanticEditImageParams extends BaseImageEditParams {
+  operation: 'semantic_edit';
+}
+
+/** 使用精确蒙版修改局部区域。 */
+export interface InpaintImageParams extends BaseImageEditParams {
+  operation: 'inpaint';
+  /** 蒙版羽化半径，单位为编辑输入源像素。 */
+  maskFeatherPx: number;
+}
+
+/** 扩图后源图在新像素画布中的确定性布局。 */
+export interface OutputCanvas {
+  width: number;
+  height: number;
+  sourceX: number;
+  sourceY: number;
+  sourceWidth: number;
+  sourceHeight: number;
+}
+
+/** 向源图四周扩展内容。 */
+export interface OutpaintImageParams extends BaseImageEditParams {
+  operation: 'outpaint';
+  outputCanvas: OutputCanvas;
+}
+
+/** 移除图片背景并输出透明媒体。 */
+export interface RemoveBackgroundImageParams extends BaseImageEditParams {
+  operation: 'remove_background';
+  background: 'transparent';
+  count: 1;
+}
+
+/** 提升图片自然像素尺寸。 */
+export interface UpscaleImageParams extends BaseImageEditParams {
+  operation: 'upscale';
+  upscaleFactor: ImageUpscaleFactor;
+  count: 1;
+}
+
+/** 图片参数判别联合；保留无 operation 的旧请求入口。 */
+export type ImageGenerationParams =
+  | LegacyImageGenerationParams
+  | GenerateImageParams
+  | SemanticEditImageParams
+  | InpaintImageParams
+  | OutpaintImageParams
+  | RemoveBackgroundImageParams
+  | UpscaleImageParams;
+
+/**
+ * 将旧图片参数归一为确定操作，不修改原对象。
+ *
+ * 旧请求带内容或风格参考时视为语义编辑，否则视为普通生成。蒙版与其他编辑专属字段
+ * 必须由运行时校验拒绝，不能借旧请求形状绕过操作能力。
+ */
+export function normalizeImageOperation(params: ImageGenerationParams): ImageOperation {
+  if (params.operation) return params.operation;
+  return params.references.some(
+    (reference) => reference.role === 'content' || reference.role === 'style',
+  )
+    ? 'semantic_edit'
+    : 'generate';
+}
+
+/** 判断操作是否属于需要目标图片的编辑操作。 */
+export function isImageEditOperation(
+  operation: ImageOperation,
+): operation is Exclude<ImageOperation, 'generate'> {
+  return operation !== 'generate';
 }
 
 /**

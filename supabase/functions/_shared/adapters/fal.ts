@@ -26,6 +26,7 @@ function queueBase(ctx: ModelContext): string {
 
 export const falAdapter: ModelAdapter = {
   provider: 'fal' as Provider,
+  supportedOperations: ['generate', 'semantic_edit'],
 
   async submit(request: UnifiedGenerationRequest, ctx: ModelContext): Promise<SubmitResult> {
     const apiKey = ctx.credentials.apiKey;

@@ -23,6 +23,7 @@ function request(prompt: string): UnifiedGenerationRequest {
 const context = {
   modelKey: 'neocanvas-e2e-image',
   capabilities: {
+    imageOperations: ['generate'],
     aspectRatios: ['1:1'],
     sizes: [],
     maxOutputs: 1,

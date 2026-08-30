@@ -26,6 +26,7 @@ interface GeminiPart {
 
 export const googleAdapter: ModelAdapter = {
   provider: 'google' as Provider,
+  supportedOperations: ['generate', 'semantic_edit'],
 
   async submit(request: UnifiedGenerationRequest, ctx: ModelContext): Promise<SubmitResult> {
     if (request.modality !== 'image') {

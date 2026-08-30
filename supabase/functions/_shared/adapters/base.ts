@@ -9,6 +9,7 @@
  */
 
 import {
+  type ImageOperation,
   type ModelCapabilities,
   type PollResult,
   type Provider,
@@ -57,6 +58,8 @@ export interface ModelContext {
 export interface ModelAdapter {
   /** 提供商标识。 */
   readonly provider: Provider;
+  /** 适配器当前具有完整请求映射和响应校验的图片操作。 */
+  readonly supportedOperations: readonly ImageOperation[];
   /** 提交一次生成。 */
   submit(request: UnifiedGenerationRequest, ctx: ModelContext): Promise<SubmitResult>;
   /** 查询一次异步生成的状态与进度。 */

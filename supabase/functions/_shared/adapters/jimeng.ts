@@ -365,6 +365,7 @@ function extractCandidates(data: JimengResponseData): AssetCandidate[] {
 /** 即梦原生图片 / 视频异步模型适配器。 */
 export const jimengAdapter: ModelAdapter = {
   provider: 'jimeng',
+  supportedOperations: ['generate', 'semantic_edit'],
 
   /** 提交图片或视频异步任务并返回即梦任务 ID。 */
   async submit(request: UnifiedGenerationRequest, ctx: ModelContext): Promise<SubmitResult> {

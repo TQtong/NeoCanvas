@@ -43,6 +43,7 @@ export default async function globalSetup(_config: FullConfig): Promise<void> {
       provider: E2E_PROVIDER,
       modality: 'image',
       capabilities: {
+        imageOperations: ['generate'],
         aspectRatios: ['1:1'],
         sizes: [{ width: 320, height: 320, label: '320×320' }],
         maxOutputs: 1,

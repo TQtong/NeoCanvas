@@ -208,6 +208,7 @@ async function retrieveVideo(
 /** MiniMax 原生图片与视频模型适配器。 */
 export const minimaxAdapter: ModelAdapter = {
   provider: 'minimax' as Provider,
+  supportedOperations: ['generate', 'semantic_edit'],
 
   /** 根据请求模态路由到 MiniMax 图片或视频原生接口。 */
   submit(request: UnifiedGenerationRequest, ctx: ModelContext): Promise<SubmitResult> {
