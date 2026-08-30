@@ -53,7 +53,10 @@ describe('图片操作模型三方能力交集', () => {
   it('目录声明不能扩大 Adapter 尚未实现的操作', () => {
     const credentials = [credential('openai')];
     expect(isModelAvailableForImageOperation(baseModel, credentials, 'semantic_edit')).toBe(true);
-    expect(isModelAvailableForImageOperation(baseModel, credentials, 'inpaint')).toBe(false);
+    expect(isModelAvailableForImageOperation(baseModel, credentials, 'inpaint')).toBe(true);
+    expect(isModelAvailableForImageOperation(baseModel, credentials, 'remove_background')).toBe(
+      false,
+    );
   });
 
   it('缺少或停用凭据时模型失败关闭', () => {
@@ -76,6 +79,9 @@ describe('图片操作模型三方能力交集', () => {
     const credentials = [credential('custom:studio', 'volcengine')];
     expect(adapterForModel(customModel, credentials)).toBe('volcengine');
     expect(modelsForImageOperation([customModel], credentials, 'generate')).toEqual([customModel]);
-    expect(modelsForImageOperation([customModel], credentials, 'semantic_edit')).toEqual([]);
+    expect(modelsForImageOperation([customModel], credentials, 'semantic_edit')).toEqual([
+      customModel,
+    ]);
+    expect(modelsForImageOperation([customModel], credentials, 'inpaint')).toEqual([]);
   });
 });

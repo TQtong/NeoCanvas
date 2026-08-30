@@ -53,10 +53,15 @@ import {
   compactMaskHistory,
   constrainImageSize,
   renderMaskFile,
+  renderOutpaintInputFile,
   resampleImageFile,
+  scaleMaskHistoryForRaster,
 } from '@/lib/canvas/image-edit-renderer';
 import { computeFlattenPixelSize, flattenGroupToFile } from '@/lib/canvas/flatten';
-import { modelsForImageOperation } from '@/lib/models/image-operation-capabilities';
+import {
+  adapterForModel,
+  modelsForImageOperation,
+} from '@/lib/models/image-operation-capabilities';
 import { deleteUnreferencedAuxiliaryAsset, uploadAsset } from '@/lib/storage/upload';
 import { getBrowserSupabase } from '@/lib/supabase/client';
 import { buildPlaceholderNode, useGeneration } from '@/lib/hooks/use-generation';
@@ -362,7 +367,13 @@ export function ImageEditOverlay(props: ImageEditOverlayProps) {
       height: Math.max(1, Math.round(sourceHeight * constrained.scale)),
       scale: constrained.scale,
     };
-    const cacheKey = `${state.inputMode}:${model.key}:${target.width}x${target.height}`;
+    const scaledOutputCanvas = scaleOutputCanvas(state.outputCanvas, target.scale);
+    const adapter = adapterForModel(model, props.credentials);
+    const outpaintInputKey =
+      state.operation === 'outpaint' && adapter === 'openai'
+        ? `:${Object.values(scaledOutputCanvas).join('x')}`
+        : '';
+    const cacheKey = `${state.inputMode}:${model.key}:${target.width}x${target.height}${outpaintInputKey}`;
     const cached = sourceAssetCacheRef.current.get(cacheKey);
     if (cached) {
       return {
@@ -374,7 +385,9 @@ export function ImageEditOverlay(props: ImageEditOverlayProps) {
       };
     }
 
+    const needsOpenAIOutpaintCanvas = state.operation === 'outpaint' && adapter === 'openai';
     if (
+      !needsOpenAIOutpaintCanvas &&
       state.inputMode === 'original' &&
       target.scale === 1 &&
       props.targetSnapshot.data.type === 'image' &&
@@ -400,9 +413,13 @@ export function ImageEditOverlay(props: ImageEditOverlayProps) {
       Math.max(target.width, target.height),
       signal,
     );
+    // OpenAI 扩图没有独立的四边参数：把源图放入透明输出画布，透明区由 edits 端点补全。
+    const uploadFile = needsOpenAIOutpaintCanvas
+      ? await renderOutpaintInputFile(sampled.file, scaledOutputCanvas, signal)
+      : sampled.file;
     setStatus('uploading');
     const asset = await uploadAsset(getBrowserSupabase(), {
-      file: sampled.file,
+      file: uploadFile,
       userId: props.userId,
       projectId: props.projectId,
       isAuxiliary: true,
@@ -439,25 +456,21 @@ export function ImageEditOverlay(props: ImageEditOverlayProps) {
           .slice(0, state.maskHistory.cursor)
           .map((command) => (command.type === 'clear' ? command.id : command.stroke.id))
           .join(',');
-        const maskKey = `${state.maskHistory.compactedCommandCount}:${maskVersion}:${prepared.width}x${prepared.height}:${state.maskFeatherPx}`;
+        const maskAdapter = adapterForModel(selectedModel, props.credentials);
+        const maskKey = `${maskAdapter}:${state.maskHistory.compactedCommandCount}:${maskVersion}:${prepared.width}x${prepared.height}:${state.maskFeatherPx}`;
         let maskAsset = maskAssetCacheRef.current.get(maskKey);
         if (!maskAsset) {
-          let maskFile = await renderMaskFile(
-            state.maskHistory,
-            sourceWidth,
-            sourceHeight,
-            state.maskFeatherPx,
+          const scaleX = prepared.width / sourceWidth;
+          const scaleY = prepared.height / sourceHeight;
+          const scaledHistory = scaleMaskHistoryForRaster(state.maskHistory, scaleX, scaleY);
+          const maskFile = await renderMaskFile(
+            scaledHistory,
+            prepared.width,
+            prepared.height,
+            Math.round((state.maskFeatherPx * (scaleX + scaleY)) / 2),
             controller.signal,
+            maskAdapter === 'openai' ? 'openai-alpha' : 'luminance',
           );
-          if (prepared.width !== sourceWidth || prepared.height !== sourceHeight) {
-            const sampledMask = await resampleImageFile(
-              maskFile,
-              prepared.width * prepared.height,
-              Math.max(prepared.width, prepared.height),
-              controller.signal,
-            );
-            maskFile = sampledMask.file;
-          }
           setStatus('uploading');
           maskAsset = await uploadAsset(getBrowserSupabase(), {
             file: maskFile,

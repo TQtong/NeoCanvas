@@ -15,7 +15,7 @@ values
     'openai',
     'image',
     jsonb_build_object(
-      'imageOperations', jsonb_build_array('generate', 'semantic_edit'),
+      'imageOperations', jsonb_build_array('generate', 'semantic_edit', 'inpaint', 'outpaint'),
       'aspectRatios', jsonb_build_array('1:1', '3:2', '2:3'),
       'sizes', jsonb_build_array(
         jsonb_build_object('width', 1024, 'height', 1024, 'label', '1024×1024'),

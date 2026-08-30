@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { constrainImageSize } from '@/lib/canvas/image-edit-renderer';
+import {
+  constrainImageSize,
+  convertLuminanceMaskToOpenAIAlpha,
+  scaleMaskHistoryForRaster,
+} from '@/lib/canvas/image-edit-renderer';
 import { buildFlattenSvg, computeFlattenPixelSize } from '@/lib/canvas/flatten';
 import { createDefaultNodeData } from '@/lib/canvas/constants';
 import type { CanvasFlowNode } from '@/lib/canvas/node-mapper';
@@ -52,6 +56,39 @@ describe('高保真图片输入', () => {
     });
     expect(size.width / size.height).toBeCloseTo(1.5, 3);
     expect(size.width * size.height).toBeLessThanOrEqual(2_005_000);
+  });
+
+  it('把白色编辑区转换为透明 Alpha，并保持黑色区域不透明', () => {
+    const pixels = new Uint8ClampedArray([255, 255, 255, 255, 0, 0, 0, 255, 128, 128, 128, 255]);
+    convertLuminanceMaskToOpenAIAlpha(pixels);
+    expect(Array.from(pixels)).toEqual([255, 255, 255, 0, 255, 255, 255, 255, 255, 255, 255, 127]);
+  });
+
+  it('降采样时在目标像素坐标重放笔画并同步缩放画笔', () => {
+    const scaled = scaleMaskHistoryForRaster(
+      {
+        baseMask: null,
+        compactedCommandCount: 0,
+        cursor: 1,
+        commands: [
+          {
+            type: 'stroke',
+            stroke: {
+              id: 'stroke-1',
+              tool: 'brush',
+              sizePx: 40,
+              points: [{ x: 800, y: 400, pressure: 0.5 }],
+            },
+          },
+        ],
+      },
+      0.5,
+      0.5,
+    );
+    expect(scaled.commands[0]).toMatchObject({
+      type: 'stroke',
+      stroke: { sizePx: 20, points: [{ x: 400, y: 200, pressure: 0.5 }] },
+    });
   });
 
   it('精准编辑 SVG 应用裁剪和滤镜但不烧录底图旋转、透明度与圆角', () => {

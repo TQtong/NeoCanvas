@@ -36,6 +36,9 @@ export interface ResampledImage {
   resized: boolean;
 }
 
+/** 蒙版提交编码；亮度蒙版用于 fal/Jimeng，Alpha 蒙版用于 OpenAI edits。 */
+export type MaskEncoding = 'luminance' | 'openai-alpha';
+
 /** 受像素和单边上限约束的图片尺寸。 */
 export interface ConstrainedImageSize {
   /** 目标像素宽。 */
@@ -181,13 +184,40 @@ async function drawBaseMask(
 ): Promise<void> {
   const decoded = await decodeBlob(baseMask, signal);
   try {
-    if (decoded.width !== width || decoded.height !== height) {
-      throw new RangeError('基础蒙版尺寸与编辑输入不一致');
-    }
+    // 历史压平后的基础蒙版可能来自原始分辨率；目标降采样时在此同步缩放，再重放缩放笔画。
     context.drawImage(decoded.source, 0, 0, width, height);
   } finally {
     decoded.close();
   }
+}
+
+/**
+ * 将蒙版历史映射到新的栅格尺寸。笔画坐标与画笔直径一起缩放，基础蒙版由渲染阶段缩放；
+ * 羽化不在这里处理，调用方必须用目标像素重新计算羽化半径。
+ */
+export function scaleMaskHistoryForRaster(
+  history: MaskHistory,
+  scaleX: number,
+  scaleY: number,
+): MaskHistory {
+  if (!(scaleX > 0) || !(scaleY > 0)) throw new RangeError('蒙版缩放比例必须大于 0');
+  const brushScale = (scaleX + scaleY) / 2;
+  const commands = history.commands.map((command): MaskCommand => {
+    if (command.type === 'clear') return command;
+    return {
+      type: 'stroke',
+      stroke: {
+        ...command.stroke,
+        sizePx: command.stroke.sizePx * brushScale,
+        points: command.stroke.points.map((point) => ({
+          ...point,
+          x: point.x * scaleX,
+          y: point.y * scaleY,
+        })),
+      },
+    };
+  });
+  return { ...history, commands };
 }
 
 /**
@@ -202,6 +232,7 @@ export async function renderMaskBlob(
   height: number,
   featherPx: number,
   signal?: AbortSignal,
+  encoding: MaskEncoding = 'luminance',
 ): Promise<Blob> {
   if (!Number.isInteger(width) || width <= 0 || !Number.isInteger(height) || height <= 0) {
     throw new RangeError('蒙版尺寸必须是正整数');
@@ -221,7 +252,10 @@ export async function renderMaskBlob(
   replayMaskCommands(rawContext, history.commands.slice(0, history.cursor), width, height);
   signal?.throwIfAborted();
 
-  if (featherPx === 0) return await canvasToBlob(raw, 'image/png');
+  if (featherPx === 0) {
+    if (encoding === 'openai-alpha') applyOpenAIAlphaMask(rawContext, width, height);
+    return await canvasToBlob(raw, 'image/png');
+  }
 
   const feathered = createCanvas(width, height);
   const featheredContext = getContext(feathered);
@@ -249,8 +283,39 @@ export async function renderMaskBlob(
     outputPixels.data[index + 3] = 255;
   }
   featheredContext.putImageData(outputPixels, 0, 0);
+  if (encoding === 'openai-alpha') {
+    applyOpenAIAlphaMask(featheredContext, width, height);
+  }
   signal?.throwIfAborted();
   return await canvasToBlob(feathered, 'image/png');
+}
+
+/**
+ * 把「白色编辑、黑色保留」的中性亮度蒙版转换为 OpenAI 所需 Alpha 语义。
+ * OpenAI 在全透明区域执行编辑，因此 Alpha 必须取亮度反值；RGB 固定为白色避免预乘色污染。
+ */
+function applyOpenAIAlphaMask(
+  context: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+): void {
+  const pixels = context.getImageData(0, 0, width, height);
+  convertLuminanceMaskToOpenAIAlpha(pixels.data);
+  context.putImageData(pixels, 0, 0);
+}
+
+/**
+ * 将 RGBA 亮度蒙版原地转换为 OpenAI Alpha 蒙版；导出纯函数供契约测试复用。
+ */
+export function convertLuminanceMaskToOpenAIAlpha(pixels: Uint8ClampedArray): void {
+  if (pixels.length % 4 !== 0) throw new RangeError('蒙版像素数组必须是完整 RGBA 数据');
+  for (let index = 0; index < pixels.length; index += 4) {
+    const editWeight = pixels[index]!;
+    pixels[index] = 255;
+    pixels[index + 1] = 255;
+    pixels[index + 2] = 255;
+    pixels[index + 3] = 255 - editWeight;
+  }
 }
 
 /** 生成可上传的标准蒙版 PNG 文件。 */
@@ -260,9 +325,63 @@ export async function renderMaskFile(
   height: number,
   featherPx: number,
   signal?: AbortSignal,
+  encoding: MaskEncoding = 'luminance',
 ): Promise<File> {
-  const blob = await renderMaskBlob(history, width, height, featherPx, signal);
+  const blob = await renderMaskBlob(history, width, height, featherPx, signal, encoding);
   return new File([blob], `mask-${width}x${height}.png`, { type: 'image/png' });
+}
+
+/**
+ * 构造 OpenAI 扩图输入：输出画布保持透明，只在 outputCanvas 指定区域绘制源图。
+ * 透明边界即模型需要补全的区域，源图像素不做二次拉伸。
+ */
+export async function renderOutpaintInputFile(
+  source: File,
+  outputCanvas: {
+    width: number;
+    height: number;
+    sourceX: number;
+    sourceY: number;
+    sourceWidth: number;
+    sourceHeight: number;
+  },
+  signal?: AbortSignal,
+): Promise<File> {
+  const values = Object.values(outputCanvas);
+  const valid = values.every((value) => Number.isInteger(value) && value >= 0);
+  const sourceFits =
+    outputCanvas.width > 0 &&
+    outputCanvas.height > 0 &&
+    outputCanvas.sourceWidth > 0 &&
+    outputCanvas.sourceHeight > 0 &&
+    outputCanvas.sourceX + outputCanvas.sourceWidth <= outputCanvas.width &&
+    outputCanvas.sourceY + outputCanvas.sourceHeight <= outputCanvas.height;
+  if (!valid || !sourceFits) throw new RangeError('扩图输入画布参数无效');
+
+  const decoded = await decodeBlob(source, signal);
+  try {
+    const canvas = createCanvas(outputCanvas.width, outputCanvas.height);
+    const context = getContext(canvas);
+    context.clearRect(0, 0, outputCanvas.width, outputCanvas.height);
+    context.drawImage(
+      decoded.source,
+      0,
+      0,
+      decoded.width,
+      decoded.height,
+      outputCanvas.sourceX,
+      outputCanvas.sourceY,
+      outputCanvas.sourceWidth,
+      outputCanvas.sourceHeight,
+    );
+    signal?.throwIfAborted();
+    const blob = await canvasToBlob(canvas, 'image/png');
+    return new File([blob], `outpaint-${outputCanvas.width}x${outputCanvas.height}.png`, {
+      type: 'image/png',
+    });
+  } finally {
+    decoded.close();
+  }
 }
 
 /**

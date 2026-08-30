@@ -377,6 +377,8 @@ export function resolveProviderModel(
       return env('ARK_SEEDANCE_MODEL', 'seedance-1-0-pro');
     case 'seedream-3.0':
       return env('ARK_SEEDREAM_MODEL', 'seedream-3-0-t2i');
+    case 'seededit-3.0':
+      return env('ARK_SEEDEDIT_MODEL', 'doubao-seededit-3-0-i2i-250628');
     default:
       throw new ApiException('model_unavailable', `模型 ${modelKey}（${provider}）未配置端点`);
   }

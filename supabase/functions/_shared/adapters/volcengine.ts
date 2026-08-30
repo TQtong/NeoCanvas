@@ -9,6 +9,7 @@
 
 import {
   type ImageGenerationParams,
+  normalizeImageOperation,
   type PollResult,
   type Provider,
   type SubmitResult,
@@ -90,17 +91,26 @@ async function submitImage(
 ): Promise<SubmitResult> {
   const params = request.params as ImageGenerationParams;
   const { width, height } = resolveSize(params);
+  const operation = normalizeImageOperation(params);
+  const source = ctx.references.find((reference) => reference.role === 'content');
+  if (operation === 'semantic_edit' && !source) {
+    throw new ApiException('invalid_params', 'Ark SeedEdit 缺少内容源图');
+  }
+
+  const body: Record<string, unknown> = {
+    model: ctx.providerModel,
+    prompt: request.prompt,
+    size: `${width}x${height}`,
+    response_format: 'url',
+    n: Math.min(params.count || 1, ctx.capabilities.maxOutputs),
+  };
+  if (source) body.image = [source.url];
+  if (params.seed != null) body.seed = params.seed;
 
   const response = await fetch(`${baseUrl}/images/generations`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: ctx.providerModel,
-      prompt: request.prompt,
-      size: `${width}x${height}`,
-      response_format: 'url',
-      n: Math.min(params.count || 1, ctx.capabilities.maxOutputs),
-    }),
+    body: JSON.stringify(body),
   });
 
   if (!response.ok) {
@@ -111,27 +121,32 @@ async function submitImage(
   }
 
   const json = (await response.json()) as {
-    data?: Array<{ url?: string; b64_json?: string }>;
+    data?: Array<{ url?: string; b64_json?: string; size?: string }>;
   };
-  const candidates = (json.data ?? []).map((item) =>
-    item.b64_json
+  const candidates = (json.data ?? []).map((item) => {
+    const [actualWidth, actualHeight] = item.size?.split('x').map(Number) ?? [];
+    const outputWidth = Number.isInteger(actualWidth) && actualWidth! > 0 ? actualWidth : width;
+    const outputHeight = Number.isInteger(actualHeight) && actualHeight! > 0
+      ? actualHeight
+      : height;
+    return item.b64_json
       ? {
         kind: 'image' as const,
         mimeType: 'image/png',
         fetch: { type: 'base64' as const, data: item.b64_json },
-        width,
-        height,
+        width: outputWidth,
+        height: outputHeight,
         isEphemeral: false,
       }
       : {
         kind: 'image' as const,
         mimeType: 'image/png',
         fetch: { type: 'url' as const, url: item.url ?? '' },
-        width,
-        height,
+        width: outputWidth,
+        height: outputHeight,
         isEphemeral: true,
-      }
-  );
+      };
+  });
   if (candidates.length === 0) {
     throw new ApiException('provider_error', 'Ark 未返回图像');
   }
@@ -140,7 +155,7 @@ async function submitImage(
 
 export const volcengineAdapter: ModelAdapter = {
   provider: 'volcengine' as Provider,
-  supportedOperations: ['generate'],
+  supportedOperations: ['generate', 'semantic_edit'],
 
   submit(request: UnifiedGenerationRequest, ctx: ModelContext): Promise<SubmitResult> {
     const apiKey = ctx.credentials.apiKey;

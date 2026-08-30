@@ -20,9 +20,9 @@ import { isCustomProvider, modelSupportsImageOperation } from '@/types';
 export const ADAPTER_IMAGE_OPERATIONS: Readonly<
   Record<BuiltInProvider, readonly ImageOperation[]>
 > = {
-  openai: ['generate', 'semantic_edit'],
+  openai: ['generate', 'semantic_edit', 'inpaint', 'outpaint'],
   google: ['generate', 'semantic_edit'],
-  volcengine: ['generate'],
+  volcengine: ['generate', 'semantic_edit'],
   jimeng: ['generate', 'semantic_edit'],
   minimax: ['generate', 'semantic_edit'],
   fal: ['generate', 'semantic_edit'],
