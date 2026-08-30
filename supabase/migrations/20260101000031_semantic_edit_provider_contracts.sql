@@ -78,4 +78,3 @@ update public.model_catalog
  where key in ('siliconflow-qwen-image-edit', 'siliconflow-qwen-image-edit-2509')
    and provider = 'siliconflow'
    and modality = 'image';
-
