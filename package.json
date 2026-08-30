@@ -1,6 +1,6 @@
 {
   "name": "neocanvas",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "NeoCanvas — 对话驱动 + 无限画布的 AI 设计代理（AI Design Agent）",
   "type": "module",
