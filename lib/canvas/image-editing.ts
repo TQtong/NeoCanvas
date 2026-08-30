@@ -298,6 +298,34 @@ export function outputCanvasToInsets(canvas: OutputCanvas): OutpaintInsets {
 }
 
 /**
+ * 当源输入按 Provider 上限等比降采样时，同步缩放扩图像素画布。
+ */
+export function scaleOutputCanvas(canvas: OutputCanvas, scale: number): OutputCanvas {
+  if (!isValidOutputCanvas(canvas)) throw new RangeError('outputCanvas 无法完整容纳源图');
+  if (!Number.isFinite(scale) || scale <= 0) throw new RangeError('scale 必须是有限正数');
+  const sourceWidth = Math.max(1, Math.round(canvas.sourceWidth * scale));
+  const sourceHeight = Math.max(1, Math.round(canvas.sourceHeight * scale));
+  const sourceX = Math.max(0, Math.round(canvas.sourceX * scale));
+  const sourceY = Math.max(0, Math.round(canvas.sourceY * scale));
+  const right = Math.max(
+    0,
+    Math.round((canvas.width - canvas.sourceX - canvas.sourceWidth) * scale),
+  );
+  const bottom = Math.max(
+    0,
+    Math.round((canvas.height - canvas.sourceY - canvas.sourceHeight) * scale),
+  );
+  return {
+    width: sourceX + sourceWidth + right,
+    height: sourceY + sourceHeight + bottom,
+    sourceX,
+    sourceY,
+    sourceWidth,
+    sourceHeight,
+  };
+}
+
+/**
  * 计算扩图候选的节点几何。
  *
  * 按产品契约保持主节点中心与原面积，以输出像素比例重新分配宽高。这样横竖比例切换不会

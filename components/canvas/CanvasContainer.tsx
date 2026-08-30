@@ -57,6 +57,10 @@ export interface CanvasContainerProps {
   initialViewport: RFViewport;
   /** 在指定画布坐标上传媒体。 */
   onUploadMediaAt?: (position: FlowPoint) => void;
+  /** 精准编辑期间保持画布挂载但锁定全部交互。 */
+  interactionLocked?: boolean;
+  /** 打开指定图片节点的精准编辑器。 */
+  onEditImage?: (nodeId: string) => void;
 }
 
 /** 找出与媒体目标成整体拖拽的媒体对话面板，或面板绑定的目标媒体。 */
@@ -92,7 +96,12 @@ function candidateParentId(node: CanvasFlowNode): string | null {
 /**
  * 画布容器。须置于 ReactFlowProvider 内。
  */
-export function CanvasContainer({ initialViewport, onUploadMediaAt }: CanvasContainerProps) {
+export function CanvasContainer({
+  initialViewport,
+  onUploadMediaAt,
+  interactionLocked = false,
+  onEditImage,
+}: CanvasContainerProps) {
   const wrapperRef = useRef<HTMLDivElement>(null);
   const reactFlow = useReactFlow<CanvasFlowNode, CanvasFlowEdge>();
   // 联动拖拽：记录被拖节点上一帧位置，用于把同组成员或媒体对话面板按相同位移跟随
@@ -446,27 +455,27 @@ export function CanvasContainer({ initialViewport, onUploadMediaAt }: CanvasCont
         connectionLineType={ConnectionLineType.Bezier}
         connectionRadius={28}
         connectionLineStyle={{ stroke: 'hsl(var(--accent))', strokeWidth: 2 }}
-        nodesConnectable={!isCreationTool && !isPanTool}
-        nodesDraggable={!isCreationTool && !isPanTool}
-        elementsSelectable={!isCreationTool}
-        panOnDrag={isPanTool ? true : isCreationTool ? false : [1, 2]}
-        selectionOnDrag={!isCreationTool && !isPanTool}
-        panOnScroll
-        zoomOnScroll
-        zoomOnPinch
+        nodesConnectable={!interactionLocked && !isCreationTool && !isPanTool}
+        nodesDraggable={!interactionLocked && !isCreationTool && !isPanTool}
+        elementsSelectable={!interactionLocked && !isCreationTool}
+        panOnDrag={interactionLocked ? false : isPanTool ? true : isCreationTool ? false : [1, 2]}
+        selectionOnDrag={!interactionLocked && !isCreationTool && !isPanTool}
+        panOnScroll={!interactionLocked}
+        zoomOnScroll={!interactionLocked}
+        zoomOnPinch={!interactionLocked}
         selectNodesOnDrag={false}
         elevateNodesOnSelect={false}
         onlyRenderVisibleElements
         proOptions={{ hideAttribution: true }}
-        deleteKeyCode={['Delete', 'Backspace']}
+        deleteKeyCode={interactionLocked ? null : ['Delete', 'Backspace']}
         multiSelectionKeyCode={['Shift', 'Meta', 'Control']}
         className="bg-background"
       >
         <BackgroundGrid />
         <AlignmentGuides />
-        <SelectionTransformLayer />
-        <NodeFloatingToolbar />
-        <MultiSelectToolbar />
+        {interactionLocked ? null : <SelectionTransformLayer />}
+        {interactionLocked ? null : <NodeFloatingToolbar onEditImage={onEditImage} />}
+        {interactionLocked ? null : <MultiSelectToolbar />}
       </ReactFlow>
 
       {createMenu ? (

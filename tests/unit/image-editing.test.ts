@@ -15,6 +15,7 @@ import {
   planMaskCompaction,
   previewPointToSource,
   redoMaskCommand,
+  scaleOutputCanvas,
   sourcePointToPreview,
   undoMaskCommand,
   type MaskCommand,
@@ -99,6 +100,29 @@ describe('扩图输出与候选几何', () => {
     expect(candidate.y + candidate.height / 2).toBeCloseTo(360);
     expect(candidate.width * candidate.height).toBeCloseTo(480 * 320);
     expect(candidate.width / candidate.height).toBeCloseTo(9 / 16);
+  });
+
+  it('源输入降采样时同步缩放扩图布局且继续完整包含源图', () => {
+    const scaled = scaleOutputCanvas(
+      {
+        width: 1601,
+        height: 1001,
+        sourceX: 201,
+        sourceY: 101,
+        sourceWidth: 1200,
+        sourceHeight: 800,
+      },
+      0.5,
+    );
+    expect(scaled).toEqual({
+      width: 801,
+      height: 501,
+      sourceX: 101,
+      sourceY: 51,
+      sourceWidth: 600,
+      sourceHeight: 400,
+    });
+    expect(isValidOutputCanvas(scaled)).toBe(true);
   });
 });
 

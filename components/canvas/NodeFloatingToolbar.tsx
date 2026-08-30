@@ -27,6 +27,7 @@ import {
   Italic,
   MessageSquare,
   Replace,
+  SlidersHorizontal,
   Sparkles,
   StickyNote,
   Trash2,
@@ -194,7 +195,12 @@ function ShapeProperties({ id, data }: { id: string; data: ShapeNodeData }) {
 /**
  * 节点浮动工具条。须置于 ReactFlowProvider 内。
  */
-export function NodeFloatingToolbar() {
+export interface NodeFloatingToolbarProps {
+  /** 打开图片精准编辑器。 */
+  onEditImage?: (nodeId: string) => void;
+}
+
+export function NodeFloatingToolbar({ onEditImage }: NodeFloatingToolbarProps) {
   const { t } = useTranslation();
   const toast = useToast();
   const fileRef = useRef<HTMLInputElement>(null);
@@ -541,6 +547,18 @@ export function NodeFloatingToolbar() {
                 <Sparkles />
               </IconButton>
             </Tooltip>
+            {node.data.type === 'image' && node.data.assetId && node.data.src && onEditImage ? (
+              <Tooltip content={t('node.precisionEdit')}>
+                <IconButton
+                  size="sm"
+                  label={t('node.precisionEdit')}
+                  className="text-accent"
+                  onClick={() => onEditImage(node.id)}
+                >
+                  <SlidersHorizontal />
+                </IconButton>
+              </Tooltip>
+            ) : null}
             <Tooltip content={t('node.replace')}>
               <IconButton
                 size="sm"

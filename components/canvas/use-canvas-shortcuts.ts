@@ -26,11 +26,13 @@ function isEditableTarget(target: EventTarget | null): boolean {
  * 装配画布快捷键。
  *
  * @param history - 撤销 / 重做动作
+ * @param disabled - 模态编辑器打开时暂停画布级快捷键
  */
-export function useCanvasShortcuts(history: UseCanvasHistory): void {
+export function useCanvasShortcuts(history: UseCanvasHistory, disabled = false): void {
   const reactFlow = useReactFlow();
 
   useEffect(() => {
+    if (disabled) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (isEditableTarget(event.target)) return;
       const store = useCanvasStore.getState();
@@ -131,5 +133,5 @@ export function useCanvasShortcuts(history: UseCanvasHistory): void {
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [history, reactFlow]);
+  }, [disabled, history, reactFlow]);
 }

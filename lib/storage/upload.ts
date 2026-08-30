@@ -165,6 +165,49 @@ export async function uploadAsset(
   return resolveAssetView(supabase, row);
 }
 
+/** 删除尚未被 generation 引用的编辑辅助资产参数。 */
+export interface DeleteAuxiliaryAssetParams {
+  /** 辅助资产标识。 */
+  assetId: string;
+  /** 必须与资产关联项目一致，防止误删其他项目资源。 */
+  projectId: string;
+}
+
+/**
+ * 清理一次被取消编辑会话创建、且尚未进入生成输入血缘的辅助资产。
+ *
+ * 删除前同时验证 `is_auxiliary`、项目归属和不存在 `generation_inputs` 引用；任一条件不满足
+ * 都保持资产不变。先删除 Storage 对象再删除行，避免留下无法定位的对象。
+ */
+export async function deleteUnreferencedAuxiliaryAsset(
+  supabase: TypedSupabaseClient,
+  params: DeleteAuxiliaryAssetParams,
+): Promise<boolean> {
+  const { data: asset, error: assetError } = await supabase
+    .from('assets')
+    .select('id, project_id, storage_bucket, storage_path, is_auxiliary')
+    .eq('id', params.assetId)
+    .maybeSingle();
+  if (assetError) throw new Error(`辅助资产查询失败：${assetError.message}`);
+  if (!asset || !asset.is_auxiliary || asset.project_id !== params.projectId) return false;
+
+  const { count, error: referenceError } = await supabase
+    .from('generation_inputs')
+    .select('generation_id', { count: 'exact', head: true })
+    .eq('asset_id', params.assetId);
+  if (referenceError) throw new Error(`辅助资产引用检查失败：${referenceError.message}`);
+  if ((count ?? 0) > 0) return false;
+
+  const { error: storageError } = await supabase.storage
+    .from(asset.storage_bucket)
+    .remove([asset.storage_path]);
+  if (storageError) throw new Error(`辅助对象清理失败：${storageError.message}`);
+
+  const { error: deleteError } = await supabase.from('assets').delete().eq('id', params.assetId);
+  if (deleteError) throw new Error(`辅助资产清理失败：${deleteError.message}`);
+  return true;
+}
+
 /** {@link uploadAvatar} 的结果：公开 URL 与其在桶内的存储路径（便于后续清理）。 */
 export interface UploadedAvatar {
   /** 可直接用于 `<img src>` 的公开访问地址。 */

@@ -23,6 +23,8 @@ import { useRealtimeProject } from '@/lib/hooks/use-realtime-project';
 import { useCanvasMedia } from '@/lib/hooks/use-canvas-media';
 import { useSequenceVideo } from '@/lib/hooks/use-sequence-video';
 import { resolveSequenceChain } from '@/lib/canvas/sequence';
+import { collectGroupOverlays } from '@/lib/canvas/flatten';
+import type { CanvasFlowNode } from '@/lib/canvas/node-mapper';
 import {
   createCanvasNode,
   createMediaTargetWithPanelNodes,
@@ -31,6 +33,10 @@ import {
 import { CanvasContainer } from '@/components/canvas/CanvasContainer';
 import { CanvasBottomToolbar } from '@/components/canvas/CanvasBottomToolbar';
 import { CanvasCornerControls } from '@/components/canvas/CanvasCornerControls';
+import {
+  IMAGE_EDITING_ENABLED,
+  ImageEditOverlay,
+} from '@/components/canvas/image-editing/ImageEditOverlay';
 import { useCanvasHistory } from '@/components/canvas/use-canvas-history';
 import { useCanvasShortcuts } from '@/components/canvas/use-canvas-shortcuts';
 import { TopBar } from '@/components/shared/TopBar';
@@ -113,7 +119,11 @@ function WorkbenchInner({ bundle }: DesignWorkbenchProps) {
   const pendingUploadPositionRef = useRef<FlowPoint | null>(null);
   const [title, setTitle] = useState(bundle.project.title);
   const [chatOpen, setChatOpen] = useState(true);
-  const { models } = useWorkbenchModelSource();
+  const [imageEditSnapshot, setImageEditSnapshot] = useState<{
+    target: CanvasFlowNode;
+    overlays: CanvasFlowNode[];
+  } | null>(null);
+  const { models, credentials, credentialsLoading } = useWorkbenchModelSource();
 
   const userId = useSessionStore((s) => s.profile?.id ?? bundle.project.owner_id);
   const conversationId = useChatStore((state) => state.conversationId);
@@ -141,7 +151,19 @@ function WorkbenchInner({ bundle }: DesignWorkbenchProps) {
 
   // 撤销 / 重做与快捷键
   const history = useCanvasHistory(bundle.project.id);
-  useCanvasShortcuts(history);
+  useCanvasShortcuts(history, Boolean(imageEditSnapshot));
+
+  /** 冻结打开编辑器瞬间的目标与组内叠加，后续 Realtime 更新只作冲突提示。 */
+  const openImageEditor = useCallback((nodeId: string) => {
+    if (!IMAGE_EDITING_ENABLED) return;
+    const nodes = useCanvasStore.getState().nodes;
+    const target = nodes.find((node) => node.id === nodeId);
+    if (!target || target.data.type !== 'image' || !target.data.assetId || !target.data.src) return;
+    setImageEditSnapshot({
+      target: structuredClone(target),
+      overlays: collectGroupOverlays(nodes, target).map((node) => structuredClone(node)),
+    });
+  }, []);
 
   // 上传媒体工具：选文件 → 上传 → 在视口中心落图片 / 视频节点（按资产种类分支）
   const onUploadMedia = useCallback((position?: FlowPoint) => {
@@ -304,6 +326,8 @@ function WorkbenchInner({ bundle }: DesignWorkbenchProps) {
           <CanvasContainer
             initialViewport={bundle.project.viewport}
             onUploadMediaAt={onUploadMedia}
+            interactionLocked={Boolean(imageEditSnapshot)}
+            onEditImage={IMAGE_EDITING_ENABLED ? openImageEditor : undefined}
           />
         </div>
         <CanvasBottomToolbar onUploadMedia={() => onUploadMedia()} onAiTool={onAiTool} />
@@ -328,6 +352,19 @@ function WorkbenchInner({ bundle }: DesignWorkbenchProps) {
             e.target.value = '';
           }}
         />
+        {imageEditSnapshot ? (
+          <ImageEditOverlay
+            projectId={bundle.project.id}
+            userId={userId}
+            conversationId={conversationId}
+            targetSnapshot={imageEditSnapshot.target}
+            overlaySnapshots={imageEditSnapshot.overlays}
+            models={models}
+            credentials={credentials}
+            credentialsLoading={credentialsLoading}
+            onClose={() => setImageEditSnapshot(null)}
+          />
+        ) : null}
       </div>
 
       <aside
