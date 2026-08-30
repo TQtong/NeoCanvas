@@ -30,6 +30,8 @@ function Write-DockerEnvironment {
   $supabaseAnonKey = (Read-Host 'NEXT_PUBLIC_SUPABASE_ANON_KEY').Trim()
   $siteUrlInput = (Read-Host 'NEXT_PUBLIC_SITE_URL [http://localhost:3100]').Trim()
   $siteUrl = if ($siteUrlInput) { $siteUrlInput } else { 'http://localhost:3100' }
+  $imageEditingInput = (Read-Host 'Enable precision image editing? [y/N]').Trim()
+  $imageEditingEnabled = if ($imageEditingInput -match '^(y|yes)$') { 'true' } else { 'false' }
 
   $parsedSupabaseUrl = $null
   if (-not [Uri]::TryCreate($supabaseUrl, [UriKind]::Absolute, [ref]$parsedSupabaseUrl)) {
@@ -52,6 +54,7 @@ function Write-DockerEnvironment {
     "NEXT_PUBLIC_SUPABASE_URL=$supabaseUrl",
     "NEXT_PUBLIC_SUPABASE_ANON_KEY=$supabaseAnonKey",
     "NEXT_PUBLIC_SITE_URL=$siteUrl",
+    "NEXT_PUBLIC_IMAGE_EDITING_ENABLED=$imageEditingEnabled",
     'NEOCANVAS_PORT=3100'
   )
   if ($parsedSupabaseUrl.Host -in @('localhost', '127.0.0.1')) {
@@ -80,6 +83,11 @@ foreach ($variable in $requiredVariables) {
   if (-not $value -or $value -match '^your-|<.+>$') {
     throw "$variable is missing or still contains a placeholder in $environmentPath."
   }
+}
+
+$imageEditingEnabled = Get-DockerEnvironmentValue -Name 'NEXT_PUBLIC_IMAGE_EDITING_ENABLED'
+if ($imageEditingEnabled -and $imageEditingEnabled -notin @('true', 'false')) {
+  throw 'NEXT_PUBLIC_IMAGE_EDITING_ENABLED must be true or false.'
 }
 
 # 兼容既有 .env.local / .env.docker：本地 Supabase 对浏览器与容器需要不同主机名。

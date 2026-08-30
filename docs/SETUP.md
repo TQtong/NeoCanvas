@@ -78,11 +78,12 @@ deploy-docker.cmd
 .\deploy-docker.ps1
 ```
 
-首次运行会要求输入三个公开变量：
+首次运行会要求输入三个公开连接变量，并询问是否启用精准编辑：
 
 - `NEXT_PUBLIC_SUPABASE_URL`：例如 `https://abcdefgh.supabase.co`。
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY`：Supabase publishable/anon key，不是 `service_role` key。
 - `NEXT_PUBLIC_SITE_URL`：直接回车使用 `http://localhost:3100`。
+- `NEXT_PUBLIC_IMAGE_EDITING_ENABLED`：生产灰度开关；首次部署建议选择 `N`，完成 Provider 冒烟后再改为 `true` 并重建。
 
 脚本会把它们写入被 Git 忽略的 `.env.docker`，随后执行以下完整流程：
 
@@ -102,6 +103,7 @@ deploy-docker.cmd
 NEXT_PUBLIC_SUPABASE_URL=https://<project-ref>.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=<anon-key>
 NEXT_PUBLIC_SITE_URL=http://localhost:3100
+NEXT_PUBLIC_IMAGE_EDITING_ENABLED=false
 NEOCANVAS_PORT=3100
 ```
 
@@ -111,7 +113,7 @@ NEOCANVAS_PORT=3100
 docker compose --env-file .env.docker up -d --build --remove-orphans
 ```
 
-三个 `NEXT_PUBLIC_*` 变量会写入浏览器构建产物。修改 `.env.docker` 后必须重新运行部署命令，单纯
+四个 `NEXT_PUBLIC_*` 变量会写入浏览器构建产物。修改 `.env.docker` 后必须重新运行部署命令，单纯
 重启旧容器不会更新前端变量。
 
 ### 2.4 配置认证回调
@@ -167,8 +169,8 @@ npx supabase link --project-ref <project-ref>
 
 ## 四、应用数据库迁移与模型数据
 
-仓库当前包含 `supabase/migrations/` 下的 **22 个迁移**。它们会依次建立扩展、枚举、表、索引、
-RLS、函数与触发器、三个 Storage 桶、Realtime 发布、`pgmq` 队列、`pg_cron` 任务、BYOK 和媒体工作流。
+仓库当前包含 `supabase/migrations/` 下的 **33 个迁移**。它们会依次建立扩展、枚举、表、索引、
+RLS、函数与触发器、三个 Storage 桶、Realtime 发布、`pgmq` 队列、`pg_cron` 任务、BYOK、媒体工作流、精准编辑输入血缘和候选采用并发约束。
 
 先预览，再执行：
 
@@ -191,7 +193,7 @@ select id, bucket_id, name from storage.buckets order by id;
 select * from cron.job order by jobname;
 ```
 
-应至少看到迁移 `20260101000001` 至 `20260101000022`、模型目录、`avatars` / `uploads` /
+应至少看到迁移 `20260101000001` 至 `20260101000033`、模型目录、`avatars` / `uploads` /
 `generations` 三个桶，以及 NeoCanvas 的队列消费、轮询和清理定时任务。
 
 ## 五、配置数据库回调机密（Vault）
@@ -219,7 +221,7 @@ where name in ('edge_base_url', 'service_role_key', 'generation_timeout_ms');
 
 ## 六、部署全部 Edge Functions
 
-仓库当前有 **10 个**可部署函数：
+仓库当前有 **11 个**可部署函数：
 
 ```text
 create-project
@@ -232,6 +234,7 @@ export-canvas
 regenerate-poster
 provider-credentials
 swap-media-candidate
+cleanup-generation-staging
 ```
 
 部署 `supabase/functions/` 下的全部函数；CLI 会读取 `supabase/config.toml` 中各函数的 JWT 设置：
@@ -368,7 +371,7 @@ Redirect URLs: https://canvas.example.com/auth/callback
 ## 九、备用前端部署方式
 
 以下方式不属于一键 Docker 部署。手工运行需要安装 Node.js 20+ 与 npm 10+，复制
-`.env.example` 为 `.env.local`，并填写三个 `NEXT_PUBLIC_*` 公开变量。
+`.env.example` 为 `.env.local`，并填写四个 `NEXT_PUBLIC_*` 公开变量；精准编辑开关在生产冒烟前保持 `false`。
 
 ### 开发模式
 
@@ -395,7 +398,8 @@ npm run start
 1. 将仓库导入 Vercel，Framework Preset 选择 Next.js。
 2. Build Command 使用 `npm run build`，Install Command 使用 `npm ci`。
 3. 在 Vercel 为目标环境设置：
-   `NEXT_PUBLIC_SUPABASE_URL`、`NEXT_PUBLIC_SUPABASE_ANON_KEY`、`NEXT_PUBLIC_SITE_URL`。
+   `NEXT_PUBLIC_SUPABASE_URL`、`NEXT_PUBLIC_SUPABASE_ANON_KEY`、`NEXT_PUBLIC_SITE_URL`、
+   `NEXT_PUBLIC_IMAGE_EDITING_ENABLED`。
 4. 部署后把 Vercel 正式域名及 `/auth/callback` 加入 Supabase Auth URL Configuration。
 5. Edge Function secrets 仍配置在 Supabase，不配置在 Vercel，也不放进 `.env.local`。
 
@@ -413,6 +417,12 @@ npm run start
 6. 图片或视频结果写入 `generations` Storage，并通过 Realtime 出现在画布。
 7. 上传附件后能读取签名 URL；画布节点移动后刷新页面仍保留位置。
 8. 返回首页能看到项目缩略图和更新时间。
+9. 在 staging 按「数据库迁移 → Edge Functions → 模型目录 → 前端」顺序部署 v0.2.0，先保持
+   `NEXT_PUBLIC_IMAGE_EDITING_ENABLED=false`。
+10. 对每个拟启用模型分别完成其声明 operation 的真实成功请求和错误请求；失败的 operation 从
+    `model_catalog.capabilities.imageOperations` 移除。
+11. 重建前端并打开精准编辑入口，依次验收语义编辑、局部重绘、扩图、去背景、2×/4× 放大、候选采用、
+    失败重试和 Realtime 回流；确认普通生成入口只展示包含 `generate` 的模型。
 
 Supabase 控制台重点查看：
 
@@ -436,7 +446,7 @@ Supabase 控制台重点查看：
 | 上传失败                          | `uploads` / `generations` 桶、Storage policy、文件大小与 MIME 类型                 |
 | Realtime 不更新                   | `supabase_realtime` publication 和浏览器连接日志                                   |
 | `db push` 扩展失败                | 确认目标是 Supabase 托管项目并启用了 `pg_cron`、`pg_net`、`pgmq`、Vault            |
-| Docker 构建提示缺少变量           | `.env.docker` 是否存在且三个 `NEXT_PUBLIC_*` 均已填写                              |
+| Docker 构建提示缺少变量           | `.env.docker` 是否存在、三个连接变量已填写且精准编辑开关为 `true` 或 `false`       |
 | 容器启动后为 `unhealthy`          | 执行 `docker compose --env-file .env.docker logs --tail 100 web`                   |
 | 修改配置但页面仍是旧值            | `NEXT_PUBLIC_*` 是构建时变量，重新运行 `deploy-docker.ps1` 构建镜像                |
 

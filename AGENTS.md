@@ -36,7 +36,7 @@ types/                贯穿前后端的共享类型契约（节点判别联合�
 i18n/                 中英文案与语言切换
 supabase/
   migrations/         数据库迁移（枚举、表、索引、RLS、函数触发器、storage、realtime）
-  functions/          Edge Functions（Deno）：_shared 框架 + 适配器 + 10 个函数
+  functions/          Edge Functions（Deno）：_shared 框架 + 适配器 + 11 个函数
   seed.sql            model_catalog 种子数据
 docs/                 七份设计文档（真相来源）
 ```
@@ -60,7 +60,7 @@ docs/                 七份设计文档（真相来源）
 ## 环境与部署
 
 生产前端优先通过根目录 `deploy-docker.cmd` / `deploy-docker.ps1` 一键构建并运行 Docker Compose；
-首次配置写入 `.env.docker`，只含三个 `NEXT_PUBLIC_*` 公开变量。Supabase 保持托管云架构，数据库迁移、
+首次配置写入 `.env.docker`，只含四个 `NEXT_PUBLIC_*` 公开变量。Supabase 保持托管云架构，数据库迁移、
 Storage 桶、Realtime 发布、pg_cron、Queues 与 Edge Functions 的落地步骤见 `docs/SETUP.md`。
 新电脑必须使用新建的空 Supabase 项目，只通过迁移、种子和函数重建系统结构；禁止迁移测试环境的业务
 数据、Auth 用户、Storage 对象、Docker 卷或原环境配置文件。
