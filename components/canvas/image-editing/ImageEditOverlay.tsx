@@ -536,7 +536,8 @@ export function ImageEditOverlay(props: ImageEditOverlayProps) {
           nodeBox(props.targetSnapshot),
           state.outputCanvas,
         );
-        placement = { ...geometry, parentId: props.targetSnapshot.parentId ?? null };
+        // 候选仍按分支槽位排布，只采用扩图后的宽高；真正采用时由事务以主节点中心重定位。
+        placement = { ...placement, width: geometry.width, height: geometry.height };
       }
       placeholderNodeId = uuid();
       const placeholder = buildPlaceholderNode({

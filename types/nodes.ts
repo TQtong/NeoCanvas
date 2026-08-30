@@ -20,7 +20,7 @@
  */
 
 import type { BackgroundVariant, NodeType, ShapeKind, TextAlign } from './enums';
-import type { AspectRatio, GenerationResultMode, ImageQuality } from './generation';
+import type { AspectRatio, GenerationResultMode, ImageOperation, ImageQuality } from './generation';
 
 /**
  * 裁剪框，单位为原始媒体像素，描述从原图截取的矩形区域。
@@ -133,6 +133,8 @@ export interface MediaWorkflowFields {
   candidateIndex: number | null;
   /** 产生该媒体版本的生成任务 id。 */
   sourceGenerationId: string | null;
+  /** 产生当前内容的图片操作；旧图片与视频为空，用于选择候选采用几何策略。 */
+  sourceOperation: ImageOperation | null;
   /** 是否收起该主媒体的候选历史。候选节点自身忽略该字段。 */
   candidatesCollapsed: boolean;
 }

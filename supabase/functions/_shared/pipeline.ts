@@ -729,6 +729,9 @@ function mediaNodeData(
     candidateOf: options.candidateOf,
     candidateIndex: options.candidateIndex,
     sourceGenerationId: generation.id,
+    sourceOperation: generation.modality === 'image'
+      ? normalizeImageOperation(generation.params as ImageGenerationParams)
+      : null,
     candidatesCollapsed: false,
     ...(options.groupId ? { groupId: options.groupId } : {}),
   };

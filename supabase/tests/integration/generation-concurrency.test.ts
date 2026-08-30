@@ -3,6 +3,7 @@ import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
 
 const SUBMISSION_ROUNDS = 20;
 const LANDING_ROUNDS = 20;
+const ADOPTION_ROUNDS = 20;
 const TEST_PROVIDER = 'custom:neocanvas-concurrency-test';
 const TEST_MODEL_KEY = 'neocanvas-concurrency-image';
 
@@ -52,17 +53,18 @@ Deno.test('20 轮并发 submission 与 landing 都只提交一次业务结果', 
       provider: TEST_PROVIDER,
       modality: 'image',
       capabilities: {
-        imageOperations: ['generate'],
+        imageOperations: ['generate', 'semantic_edit'],
         aspectRatios: ['1:1'],
         sizes: [],
         maxOutputs: 1,
         supportsNegativePrompt: false,
-        supportsReferenceImages: false,
+        supportsReferenceImages: true,
         supportsImageToVideo: false,
         supportsSeed: false,
         qualities: [],
         isAsync: false,
         supportsWebhook: false,
+        maxInputImages: 1,
       },
       default_params: { providerModel: 'never-called', aspectRatio: '1:1', count: 1 },
       sort_order: -9_000,
@@ -80,6 +82,22 @@ Deno.test('20 轮并发 submission 与 landing 都只提交一次业务结果', 
     projectId = project?.id ?? null;
     assertExists(projectId);
 
+    const sourceAssetId = crypto.randomUUID();
+    const { error: sourceAssetError } = await admin.from('assets').insert({
+      id: sourceAssetId,
+      owner_id: userId,
+      project_id: projectId,
+      kind: 'image',
+      source: 'upload',
+      storage_bucket: 'uploads',
+      storage_path: `${userId}/${projectId}/concurrency-source.png`,
+      mime_type: 'image/png',
+      width: 1,
+      height: 1,
+      size_bytes: 68,
+    });
+    assertNoError(sourceAssetError, '创建并发输入源资产失败');
+
     // 同一 owner/project/operation/key 并发提交：每轮两个请求只能得到同一 generation。
     for (let round = 0; round < SUBMISSION_ROUNDS; round += 1) {
       const idempotencyKey = `concurrent-submit-${round}-${crypto.randomUUID()}`;
@@ -94,14 +112,21 @@ Deno.test('20 轮并发 submission 与 landing 都只提交一次业务结果', 
           p_modality: 'image',
           p_model_key: TEST_MODEL_KEY,
           p_prompt: `submission round ${round}`,
-          p_params: { modality: 'image', count: 1, references: [] },
+          p_params: {
+            modality: 'image',
+            operation: 'semantic_edit',
+            inputMode: 'original',
+            count: 1,
+            references: [{ origin: 'attachment', assetId: sourceAssetId, role: 'content' }],
+          },
           p_idempotency_key: idempotencyKey,
           p_request_hash: requestHash,
           p_placeholder_node_id: placeholderId,
           p_placement: { x: round * 10, y: 0, width: 320, height: 320 },
+          p_inputs: [{ assetId: sourceAssetId, role: 'content' }],
           p_target_node_id: null,
           p_result_mode: 'new_primary',
-          p_operation_type: 'generation',
+          p_operation_type: 'image:semantic_edit',
           p_max_inflight: 100,
         });
 
@@ -119,10 +144,23 @@ Deno.test('20 轮并发 submission 与 landing 都只提交一次业务结果', 
         .select('id', { count: 'exact', head: true })
         .eq('requester_id', userId)
         .eq('project_id', projectId)
-        .eq('operation_type', 'generation')
+        .eq('operation_type', 'image:semantic_edit')
         .eq('idempotency_key', idempotencyKey);
       assertNoError(countError, '统计并发 submission 结果失败');
       assertEquals(generationCount, 1);
+      const { count: inputCount, error: inputCountError } = await admin
+        .from('generation_inputs')
+        .select('generation_id', { count: 'exact', head: true })
+        .eq('generation_id', left.data.generationId);
+      assertNoError(inputCountError, '统计并发 generation_inputs 失败');
+      assertEquals(inputCount, 1);
+      const { count: placeholderCount, error: placeholderCountError } = await admin
+        .from('canvas_nodes')
+        .select('id', { count: 'exact', head: true })
+        .eq('generation_id', left.data.generationId)
+        .eq('type', 'generation_placeholder');
+      assertNoError(placeholderCountError, '统计并发首占位失败');
+      assertEquals(placeholderCount, 1);
 
       const { data: submitted } = await admin
         .from('generations')
@@ -252,6 +290,130 @@ Deno.test('20 轮并发 submission 与 landing 都只提交一次业务结果', 
         'committed',
         'discarded',
       ]);
+    }
+
+    // 同一候选的重叠采用必须由事务 advisory lock 立即拒绝一方，不能串行交换两次回到原状。
+    for (let round = 0; round < ADOPTION_ROUNDS; round += 1) {
+      const primaryAssetId = crypto.randomUUID();
+      const candidateAssetId = crypto.randomUUID();
+      const generationId = crypto.randomUUID();
+      const primaryNodeId = crypto.randomUUID();
+      const candidateNodeId = crypto.randomUUID();
+      const { error: assetError } = await admin.from('assets').insert([
+        {
+          id: primaryAssetId,
+          owner_id: userId,
+          project_id: projectId,
+          kind: 'image',
+          source: 'upload',
+          storage_bucket: 'uploads',
+          storage_path: `${userId}/${projectId}/adoption-${round}-primary.png`,
+          mime_type: 'image/png',
+          width: 320,
+          height: 200,
+          size_bytes: 68,
+        },
+        {
+          id: candidateAssetId,
+          owner_id: userId,
+          project_id: projectId,
+          kind: 'image',
+          source: 'generation',
+          storage_bucket: 'generations',
+          storage_path: `staging/${userId}/${generationId}/candidate.png`,
+          mime_type: 'image/png',
+          width: 320,
+          height: 200,
+          size_bytes: 68,
+        },
+      ]);
+      assertNoError(assetError, '创建候选采用并发资产失败');
+      const { error: editGenerationError } = await admin.from('generations').insert({
+        id: generationId,
+        project_id: projectId,
+        modality: 'image',
+        model_key: TEST_MODEL_KEY,
+        provider: TEST_PROVIDER,
+        prompt: `adoption round ${round}`,
+        params: {
+          modality: 'image',
+          operation: 'semantic_edit',
+          inputMode: 'original',
+          count: 1,
+          references: [],
+        },
+        status: 'succeeded',
+        requester_id: userId,
+        operation_type: 'image:semantic_edit',
+        result_mode: 'candidate_for_target',
+      });
+      assertNoError(editGenerationError, '创建候选采用 generation 失败');
+      const { error: adoptionNodesError } = await admin.from('canvas_nodes').insert([
+        {
+          id: primaryNodeId,
+          project_id: projectId,
+          type: 'image',
+          position_x: 0,
+          position_y: round * 220,
+          width: 320,
+          height: 200,
+          data: { assetId: primaryAssetId, mediaRole: 'primary' },
+          asset_id: primaryAssetId,
+          created_by: userId,
+        },
+        {
+          id: candidateNodeId,
+          project_id: projectId,
+          type: 'image',
+          position_x: 700,
+          position_y: round * 220,
+          width: 320,
+          height: 200,
+          data: {
+            assetId: candidateAssetId,
+            mediaRole: 'candidate',
+            candidateOf: primaryNodeId,
+            candidateIndex: 0,
+            sourceOperation: 'semantic_edit',
+          },
+          asset_id: candidateAssetId,
+          generation_id: generationId,
+          created_by: userId,
+        },
+      ]);
+      assertNoError(adoptionNodesError, '创建候选采用并发节点失败');
+      const { error: adoptionEdgeError } = await admin.from('canvas_edges').insert({
+        project_id: projectId,
+        source_node_id: primaryNodeId,
+        target_node_id: candidateNodeId,
+        source_handle: 'media-candidate-out',
+        target_handle: 'media-candidate-in',
+        type: 'media_candidate',
+        data: { label: '候选' },
+      });
+      assertNoError(adoptionEdgeError, '创建候选采用并发边失败');
+
+      const adopt = () =>
+        admin.rpc('swap_media_candidate', {
+          p_project_id: projectId,
+          p_primary_node_id: primaryNodeId,
+          p_candidate_node_id: candidateNodeId,
+          p_geometry_mode: 'preserve_frame',
+        });
+      const attempts = await Promise.all([adopt(), adopt()]);
+      assertEquals(attempts.filter((attempt) => !attempt.error && attempt.data === true).length, 1);
+      assertEquals(
+        attempts.filter((attempt) => attempt.error?.message.includes('CANDIDATE_ADOPTION_CONFLICT'))
+          .length,
+        1,
+      );
+      const { data: primaryAfter, error: primaryAfterError } = await admin
+        .from('canvas_nodes')
+        .select('asset_id')
+        .eq('id', primaryNodeId)
+        .single();
+      assertNoError(primaryAfterError, '读取并发采用后的主节点失败');
+      assertEquals(primaryAfter?.asset_id, candidateAssetId);
     }
   } finally {
     if (projectId) await admin.from('projects').delete().eq('id', projectId);

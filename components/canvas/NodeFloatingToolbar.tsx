@@ -326,11 +326,15 @@ export function NodeFloatingToolbar({ onEditImage }: NodeFloatingToolbarProps) {
     }
     setSwapPending(true);
     try {
+      const geometryMode =
+        candidateBefore.data.sourceOperation === 'outpaint'
+          ? 'adopt_output_geometry'
+          : 'preserve_frame';
       await swap({
         projectId,
         primaryNodeId: primaryCandidateNodeId,
         candidateNodeId: node.id,
-        geometryMode: 'preserve_frame',
+        geometryMode,
       });
       const store = useCanvasStore.getState();
       const latestPrimary = store.nodes.find((n) => n.id === primaryCandidateNodeId);
@@ -357,16 +361,60 @@ export function NodeFloatingToolbar({ onEditImage }: NodeFloatingToolbarProps) {
           candidateIndex,
         } as NodeData;
 
-        store.replaceNode(
-          primaryCandidateNodeId,
-          { ...latestPrimary, type: candidateBefore.type, data: primaryData },
-          { persist: false },
-        );
-        store.replaceNode(
-          node.id,
-          { ...latestCandidate, type: primaryBefore.type, data: candidateData },
-          { persist: false },
-        );
+        if (geometryMode === 'adopt_output_geometry') {
+          const primaryBox = nodeBox(primaryBefore);
+          const candidateBox = nodeBox(candidateBefore);
+          const centerX = primaryBox.x + primaryBox.width / 2;
+          const centerY = primaryBox.y + primaryBox.height / 2;
+          store.replaceNode(
+            primaryCandidateNodeId,
+            {
+              ...latestPrimary,
+              type: candidateBefore.type,
+              position: {
+                x: centerX - candidateBox.width / 2,
+                y: centerY - candidateBox.height / 2,
+              },
+              width: candidateBox.width,
+              height: candidateBox.height,
+              style: {
+                ...latestPrimary.style,
+                width: candidateBox.width,
+                height: candidateBox.height,
+              },
+              data: primaryData,
+            },
+            { persist: false },
+          );
+          store.replaceNode(
+            node.id,
+            {
+              ...latestCandidate,
+              type: primaryBefore.type,
+              position: { x: primaryBox.x, y: primaryBox.y },
+              width: primaryBox.width,
+              height: primaryBox.height,
+              style: {
+                ...latestCandidate.style,
+                width: primaryBox.width,
+                height: primaryBox.height,
+              },
+              data: candidateData,
+            },
+            { persist: false },
+          );
+        } else {
+          store.replaceNode(
+            primaryCandidateNodeId,
+            { ...latestPrimary, type: candidateBefore.type, data: primaryData },
+            { persist: false },
+          );
+          store.replaceNode(
+            node.id,
+            { ...latestCandidate, type: primaryBefore.type, data: candidateData },
+            { persist: false },
+          );
+        }
       }
       toast.success('已替换主媒体');
     } catch (err) {
