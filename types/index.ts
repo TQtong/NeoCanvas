@@ -19,3 +19,4 @@ export * from './providers';
 export * from './edge-functions';
 export * from './realtime';
 export * from './view-models';
+export * from './workflow';

@@ -91,3 +91,15 @@ verify_jwt = true
 
 [functions.swap-media-candidate]
 verify_jwt = true
+
+[functions.workflow-execute]
+verify_jwt = true
+
+[functions.workflow-agent]
+verify_jwt = true
+
+[functions.workflow-publish]
+verify_jwt = true
+
+[functions.process-workflow-queue]
+verify_jwt = false

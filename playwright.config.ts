@@ -48,6 +48,8 @@ export default defineConfig({
         NEXT_PUBLIC_IMAGE_EDITING_ENABLED: 'true',
         // 与 Edge 的 NEOCANVAS_TEST_MODE 双重守卫，允许确定性模型覆盖全部操作。
         NEXT_PUBLIC_NEOCANVAS_TEST_MODE: 'true',
+        // Flow Studio 的前端与 Edge 双开关只在隔离 E2E 进程中开启。
+        NEXT_PUBLIC_FLOW_STUDIO_ENABLED: 'true',
       },
     },
     {

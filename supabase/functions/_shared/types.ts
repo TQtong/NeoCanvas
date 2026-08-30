@@ -66,4 +66,5 @@ export interface GenerationRow {
   moderation_status: string;
   moderation_reason: string | null;
   completed_at: string | null;
+  workflow_run_node_id: string | null;
 }

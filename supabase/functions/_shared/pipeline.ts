@@ -38,6 +38,7 @@ import { resolveProviderCredential } from './credentials.ts';
 import { moderateOutputImages, moderateReferenceImages } from './moderation.ts';
 import { inspectRasterImage, makeImageThumbnail, THUMBNAIL_MIME } from './image.ts';
 import { logGenerationTelemetry } from './telemetry.ts';
+import { triggerFunction } from './trigger.ts';
 
 /** 生成产物存储桶。 */
 const GENERATIONS_BUCKET = 'generations';
@@ -895,6 +896,82 @@ export async function landResult(
     return;
   }
 
+  const toAssetJson = (m: AssetMeta) => ({
+    id: m.id,
+    kind: m.kind,
+    mimeType: m.mimeType,
+    storageBucket: m.storageBucket,
+    storagePath: m.storagePath,
+    thumbnailPath: m.thumbnailPath,
+    width: m.width,
+    height: m.height,
+    durationMs: m.durationMs,
+    sizeBytes: m.sizeBytes,
+  });
+
+  // Flow 生成沿用审核、转存与 exactly-once 资产事务，但结果只进入运行账本。
+  // Canvas 节点必须等用户显式 publish_output 才创建。
+  if (generation.result_mode === 'workflow_output') {
+    if (!generation.workflow_run_node_id) {
+      await cleanupAttemptObjects(admin, attempt);
+      await markFailed(
+        admin,
+        generation,
+        '工作流生成缺少运行节点关联',
+        undefined,
+        'internal_error',
+      );
+      return;
+    }
+    attempt.paths = survivors.flatMap((meta) =>
+      meta.thumbnailPath ? [meta.storagePath, meta.thumbnailPath] : [meta.storagePath]
+    );
+    await recordAttemptPaths(admin, attempt, [], 'staged');
+    const { data, error } = await admin.rpc('land_workflow_generation_result_once', {
+      p_generation_id: generation.id,
+      p_owner_id: ownerId,
+      p_project_id: generation.project_id,
+      p_attempt_id: attempt.id,
+      p_assets: survivors.map(toAssetJson),
+      p_result_asset_id: survivors[0].id,
+      p_provider_output_summary: {
+        attemptId: attempt.id,
+        outputCount: survivors.length,
+        outputs: survivors.map((item) => ({
+          kind: item.kind,
+          mimeType: item.mimeType,
+          width: item.width,
+          height: item.height,
+          durationMs: item.durationMs,
+          sizeBytes: item.sizeBytes,
+        })),
+      },
+    });
+    if (error) {
+      await setAttemptStatus(admin, attempt, 'rpc_failed', error.message);
+      throw new ApiException('internal_error', `工作流结果落库失败：${error.message}`);
+    }
+    const result = data as LandGenerationResult | null;
+    if (!result) {
+      await setAttemptStatus(admin, attempt, 'rpc_failed', 'RPC 未返回结果');
+      throw new ApiException('internal_error', '工作流结果落库 RPC 未返回结果');
+    }
+    if (!result.landed) {
+      await cleanupAttemptObjects(admin, attempt);
+      return;
+    }
+    logGenerationTelemetry(generation, 'generation_succeeded', {
+      outputCount: survivors.length,
+      outputDimensions: survivors.flatMap((item) =>
+        item.width !== null && item.height !== null
+          ? [{ width: item.width, height: item.height, pixels: item.width * item.height }]
+          : []
+      ),
+    });
+    triggerFunction('process-workflow-queue', { runNodeId: generation.workflow_run_node_id });
+    return;
+  }
+
   // 3) 读取占位节点位置 / 尺寸 / 组归属，规划余产出排布
   let placeholderPos = { x: 0, y: 0 };
   let placeholderSize = { width: 320, height: 320 };
@@ -951,19 +1028,6 @@ export async function landResult(
       .eq('data->>candidateOf', targetNodeId);
     existingCandidateCount = count ?? 0;
   }
-
-  const toAssetJson = (m: AssetMeta) => ({
-    id: m.id,
-    kind: m.kind,
-    mimeType: m.mimeType,
-    storageBucket: m.storageBucket,
-    storagePath: m.storagePath,
-    thumbnailPath: m.thumbnailPath,
-    width: m.width,
-    height: m.height,
-    durationMs: m.durationMs,
-    sizeBytes: m.sizeBytes,
-  });
 
   const extraStart = hasPlaceholder ? 1 : 0;
   const firstNode = hasPlaceholder
@@ -1093,5 +1157,8 @@ export async function markFailed(
   // 与成功事件相同，只让第一次终态提交者记录，保证并发统计可加总。
   if (result?.changed) {
     logGenerationTelemetry(generation, 'generation_failed', { errorCode });
+    if (generation.workflow_run_node_id) {
+      triggerFunction('process-workflow-queue', { runNodeId: generation.workflow_run_node_id });
+    }
   }
 }

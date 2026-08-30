@@ -255,7 +255,7 @@ export interface NodePlacement {
 }
 
 /** 生成结果落到画布时的语义。 */
-export type GenerationResultMode = 'new_primary' | 'candidate_for_target';
+export type GenerationResultMode = 'new_primary' | 'candidate_for_target' | 'workflow_output';
 
 /**
  * 统一生成请求：`submit-generation` 接受的请求体（第 06 篇第四节提交生成）。

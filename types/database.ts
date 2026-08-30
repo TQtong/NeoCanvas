@@ -24,6 +24,18 @@ import type { MessageAttachment, MessageMention } from './messages';
 import type { ModelCapabilities, ModelDefaultParams } from './models';
 import type { GenerationParams, ReferenceMaterial } from './generation';
 import type { ProviderCredentialRow } from './providers';
+import type {
+  FlowAppFieldBinding,
+  FlowAppOutputBinding,
+  FlowValueType,
+  WorkflowGraphEdge,
+  WorkflowGraphNode,
+  WorkflowNodeConfig,
+  WorkflowNodeKind,
+  WorkflowPatchOperation,
+  WorkflowRunNodeStatus,
+  WorkflowRunStatus,
+} from './workflow';
 
 /**
  * 画布视口：平移量与缩放比。持久化于 `projects.viewport`。
@@ -143,7 +155,9 @@ export type GenerationRow = {
   result_asset_id: string | null;
   placeholder_node_id: string | null;
   target_node_id: string | null;
-  result_mode: 'new_primary' | 'candidate_for_target';
+  result_mode: 'new_primary' | 'candidate_for_target' | 'workflow_output';
+  /** Flow 生成所属运行节点；普通 Canvas 生成为空。 */
+  workflow_run_node_id: string | null;
   error: string | null;
   idempotency_key: string | null;
   /** 发起生成的业务用户；用于服务角色路径显式归属校验。 */
@@ -169,6 +183,164 @@ export type GenerationRow = {
   created_at: string;
   updated_at: string;
   completed_at: string | null;
+};
+
+/** `workflows` 表行。 */
+export type WorkflowRow = {
+  id: string;
+  project_id: string;
+  owner_id: string;
+  name: string;
+  description: string | null;
+  graph_revision: number;
+  viewport: Viewport;
+  created_at: string;
+  updated_at: string;
+};
+
+/** `workflow_nodes` 表行。 */
+export type WorkflowNodeRow = {
+  id: string;
+  workflow_id: string;
+  kind: WorkflowNodeKind;
+  position_x: number;
+  position_y: number;
+  config: WorkflowNodeConfig;
+  schema_version: number;
+  created_at: string;
+  updated_at: string;
+};
+
+/** `workflow_edges` 表行。 */
+export type WorkflowEdgeRow = {
+  id: string;
+  workflow_id: string;
+  source_node_id: string;
+  source_port: string;
+  target_node_id: string;
+  target_port: string;
+  value_type: FlowValueType;
+  created_at: string;
+};
+
+/** `workflow_revisions` 表行。 */
+export type WorkflowRevisionRow = {
+  id: string;
+  workflow_id: string;
+  revision_no: number;
+  graph_hash: string;
+  created_by: string;
+  created_at: string;
+};
+
+/** `workflow_runs` 表行。 */
+export type WorkflowRunRow = {
+  id: string;
+  workflow_id: string;
+  revision_id: string;
+  project_id: string;
+  requester_id: string;
+  status: WorkflowRunStatus;
+  run_mode: 'node' | 'downstream' | 'all';
+  target_node_id: string | null;
+  force_rerun: boolean;
+  idempotency_key: string;
+  request_hash: string;
+  error: string | null;
+  created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+};
+
+/** `workflow_run_nodes` 表行。 */
+export type WorkflowRunNodeRow = {
+  id: string;
+  run_id: string;
+  workflow_node_id: string;
+  kind: WorkflowNodeKind;
+  status: WorkflowRunNodeStatus;
+  config_snapshot: WorkflowNodeConfig;
+  cache_key: string | null;
+  cache_source_run_node_id: string | null;
+  model_key: string | null;
+  provider: string | null;
+  resolved_provider_model: string | null;
+  executor_version: string;
+  runtime_input: Record<string, unknown>;
+  error: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  created_at: string;
+};
+
+/** `workflow_run_outputs` 表行。 */
+export type WorkflowRunOutputRow = {
+  id: string;
+  run_node_id: string;
+  port_id: string;
+  value_type: FlowValueType;
+  asset_id: string | null;
+  value: string | number | boolean | string[] | null;
+  ordinal: number;
+  canvas_node_id: string | null;
+  created_at: string;
+};
+
+/** `workflow_templates` 表行。 */
+export type WorkflowTemplateRow = {
+  id: string;
+  owner_id: string;
+  name: string;
+  description: string | null;
+  latest_version: number;
+  created_at: string;
+  updated_at: string;
+};
+
+/** `workflow_template_versions` 表行。 */
+export type WorkflowTemplateVersionRow = {
+  id: string;
+  template_id: string;
+  version: number;
+  graph: { nodes: WorkflowGraphNode[]; edges: WorkflowGraphEdge[] };
+  created_at: string;
+};
+
+/** `flow_apps` 表行。 */
+export type FlowAppRow = {
+  id: string;
+  owner_id: string;
+  project_id: string;
+  name: string;
+  description: string | null;
+  latest_version: number;
+  created_at: string;
+  updated_at: string;
+};
+
+/** `flow_app_versions` 表行。 */
+export type FlowAppVersionRow = {
+  id: string;
+  flow_app_id: string;
+  version: number;
+  template_version_id: string;
+  fields: FlowAppFieldBinding[];
+  outputs: FlowAppOutputBinding[];
+  created_at: string;
+};
+
+/** `workflow_patch_proposals` 表行。 */
+export type WorkflowPatchProposalRow = {
+  id: string;
+  workflow_id: string;
+  requested_by: string;
+  base_graph_revision: number;
+  instruction: string;
+  operations: WorkflowPatchOperation[];
+  status: 'pending' | 'applied' | 'rejected' | 'expired';
+  expires_at: string;
+  created_at: string;
+  resolved_at: string | null;
 };
 
 /** `generation_output_attempts` 暂存补偿账本。 */
@@ -373,6 +545,139 @@ export interface Database {
           key_secret_id: string;
         };
         Update: Partial<ProviderCredentialRow>;
+        Relationships: [];
+      };
+      workflows: {
+        Row: WorkflowRow;
+        Insert: Partial<Omit<WorkflowRow, 'id' | 'created_at' | 'updated_at'>> & {
+          project_id: string;
+          owner_id: string;
+          name: string;
+        };
+        Update: Partial<WorkflowRow>;
+        Relationships: [];
+      };
+      workflow_nodes: {
+        Row: WorkflowNodeRow;
+        Insert: Partial<Omit<WorkflowNodeRow, 'created_at' | 'updated_at'>> & {
+          id: string;
+          workflow_id: string;
+          kind: WorkflowNodeKind;
+          position_x: number;
+          position_y: number;
+          config: WorkflowNodeConfig;
+        };
+        Update: Partial<WorkflowNodeRow>;
+        Relationships: [];
+      };
+      workflow_edges: {
+        Row: WorkflowEdgeRow;
+        Insert: Partial<Omit<WorkflowEdgeRow, 'created_at'>> & {
+          id: string;
+          workflow_id: string;
+          source_node_id: string;
+          source_port: string;
+          target_node_id: string;
+          target_port: string;
+          value_type: FlowValueType;
+        };
+        Update: Partial<WorkflowEdgeRow>;
+        Relationships: [];
+      };
+      workflow_revisions: {
+        Row: WorkflowRevisionRow;
+        Insert: Partial<Omit<WorkflowRevisionRow, 'id' | 'created_at'>> & {
+          workflow_id: string;
+          revision_no: number;
+          graph_hash: string;
+          created_by: string;
+        };
+        Update: Partial<WorkflowRevisionRow>;
+        Relationships: [];
+      };
+      workflow_runs: {
+        Row: WorkflowRunRow;
+        Insert: Partial<Omit<WorkflowRunRow, 'id' | 'created_at'>> & {
+          workflow_id: string;
+          revision_id: string;
+          project_id: string;
+          requester_id: string;
+          idempotency_key: string;
+          request_hash: string;
+        };
+        Update: Partial<WorkflowRunRow>;
+        Relationships: [];
+      };
+      workflow_run_nodes: {
+        Row: WorkflowRunNodeRow;
+        Insert: Partial<Omit<WorkflowRunNodeRow, 'id' | 'created_at'>> & {
+          run_id: string;
+          workflow_node_id: string;
+          kind: WorkflowNodeKind;
+          config_snapshot: WorkflowNodeConfig;
+        };
+        Update: Partial<WorkflowRunNodeRow>;
+        Relationships: [];
+      };
+      workflow_run_outputs: {
+        Row: WorkflowRunOutputRow;
+        Insert: Partial<Omit<WorkflowRunOutputRow, 'id' | 'created_at'>> & {
+          run_node_id: string;
+          port_id: string;
+          value_type: FlowValueType;
+          ordinal: number;
+        };
+        Update: Partial<WorkflowRunOutputRow>;
+        Relationships: [];
+      };
+      workflow_templates: {
+        Row: WorkflowTemplateRow;
+        Insert: Partial<Omit<WorkflowTemplateRow, 'id' | 'created_at' | 'updated_at'>> & {
+          owner_id: string;
+          name: string;
+        };
+        Update: Partial<WorkflowTemplateRow>;
+        Relationships: [];
+      };
+      workflow_template_versions: {
+        Row: WorkflowTemplateVersionRow;
+        Insert: Partial<Omit<WorkflowTemplateVersionRow, 'id' | 'created_at'>> & {
+          template_id: string;
+          version: number;
+          graph: { nodes: WorkflowGraphNode[]; edges: WorkflowGraphEdge[] };
+        };
+        Update: Partial<WorkflowTemplateVersionRow>;
+        Relationships: [];
+      };
+      flow_apps: {
+        Row: FlowAppRow;
+        Insert: Partial<Omit<FlowAppRow, 'id' | 'created_at' | 'updated_at'>> & {
+          owner_id: string;
+          project_id: string;
+          name: string;
+        };
+        Update: Partial<FlowAppRow>;
+        Relationships: [];
+      };
+      flow_app_versions: {
+        Row: FlowAppVersionRow;
+        Insert: Partial<Omit<FlowAppVersionRow, 'id' | 'created_at'>> & {
+          flow_app_id: string;
+          version: number;
+          template_version_id: string;
+        };
+        Update: Partial<FlowAppVersionRow>;
+        Relationships: [];
+      };
+      workflow_patch_proposals: {
+        Row: WorkflowPatchProposalRow;
+        Insert: Partial<Omit<WorkflowPatchProposalRow, 'id' | 'created_at'>> & {
+          workflow_id: string;
+          requested_by: string;
+          base_graph_revision: number;
+          instruction: string;
+        };
+        Update: Partial<WorkflowPatchProposalRow>;
         Relationships: [];
       };
     };

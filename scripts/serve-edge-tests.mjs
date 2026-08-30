@@ -16,7 +16,7 @@ const sourceEnvFile = resolve('supabase/functions/.env');
 const sourceEnvironment = existsSync(sourceEnvFile) ? readFileSync(sourceEnvFile, 'utf8') : '';
 writeFileSync(
   temporaryEnvFile,
-  `${sourceEnvironment.replace(/\s*$/, '')}\nAPP_ENV=test\nNEOCANVAS_TEST_MODE=true\n`,
+  `${sourceEnvironment.replace(/\s*$/, '')}\nAPP_ENV=test\nNEOCANVAS_TEST_MODE=true\nFLOW_STUDIO_ENABLED=true\n`,
   { encoding: 'utf8', mode: 0o600 },
 );
 
@@ -36,6 +36,7 @@ const child = spawn(
       ...process.env,
       APP_ENV: 'test',
       NEOCANVAS_TEST_MODE: 'true',
+      FLOW_STUDIO_ENABLED: 'true',
     },
   },
 );

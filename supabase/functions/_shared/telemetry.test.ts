@@ -37,6 +37,7 @@ function generation(overrides: Partial<GenerationRow> = {}): GenerationRow {
     placeholder_node_id: null,
     target_node_id: 'source',
     result_mode: 'candidate_for_target',
+    workflow_run_node_id: null,
     error: null,
     idempotency_key: 'telemetry-test',
     requester_id: '00000000-0000-4000-8000-000000000003',

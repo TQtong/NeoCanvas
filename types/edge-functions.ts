@@ -25,6 +25,10 @@ export const EDGE_FUNCTIONS = {
   regeneratePoster: 'regenerate-poster',
   providerCredentials: 'provider-credentials',
   swapMediaCandidate: 'swap-media-candidate',
+  workflowExecute: 'workflow-execute',
+  workflowAgent: 'workflow-agent',
+  workflowPublish: 'workflow-publish',
+  processWorkflowQueue: 'process-workflow-queue',
 } as const;
 
 /** create-project 请求。 */

@@ -18,6 +18,7 @@ const sources = [
   'types/generation.ts',
   'types/models.ts',
   'types/providers.ts',
+  'types/workflow.ts',
   'types/api.ts',
   'types/edge-functions.ts',
 ];

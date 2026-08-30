@@ -10,6 +10,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { ReactFlowProvider, useReactFlow } from '@xyflow/react';
 import type { AgentMode, ConversationRow, ModelCatalogEntry } from '@/types';
 import type { ProjectBundle } from '@/lib/data/load-project';
@@ -41,6 +42,7 @@ import { useCanvasHistory } from '@/components/canvas/use-canvas-history';
 import { useCanvasShortcuts } from '@/components/canvas/use-canvas-shortcuts';
 import { TopBar } from '@/components/shared/TopBar';
 import { ChatPanel } from '@/components/chat/ChatPanel';
+import { FlowStudio } from '@/components/flow/FlowStudio';
 import { useToast } from '@/components/ui/toast';
 import { Spinner } from '@/components/ui/spinner';
 import { useTranslation } from '@/i18n';
@@ -48,6 +50,7 @@ import {
   useWorkbenchModelSource,
   WorkbenchModelProvider,
 } from '@/lib/hooks/use-workbench-model-source';
+import { FLOW_STUDIO_ENABLED } from '@/lib/workflow/flags';
 
 /** 工作台属性。 */
 export interface DesignWorkbenchProps {
@@ -112,6 +115,9 @@ function resolveInitialAgentMode(bundle: ProjectBundle): AgentMode {
 /** 工作台内层（已处于 ReactFlowProvider 内，可用 useReactFlow）。 */
 function WorkbenchInner({ bundle }: DesignWorkbenchProps) {
   const reactFlow = useReactFlow();
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const toast = useToast();
   const { t } = useTranslation();
   const { generate: generateSequenceVideo } = useSequenceVideo();
@@ -126,6 +132,8 @@ function WorkbenchInner({ bundle }: DesignWorkbenchProps) {
     overlays: CanvasFlowNode[];
   } | null>(null);
   const { models, credentials, credentialsLoading } = useWorkbenchModelSource();
+  const workspaceView =
+    FLOW_STUDIO_ENABLED && searchParams.get('view') === 'flow' ? 'flow' : 'canvas';
 
   const userId = useSessionStore((s) => s.profile?.id ?? bundle.project.owner_id);
   const conversationId = useChatStore((state) => state.conversationId);
@@ -149,7 +157,7 @@ function WorkbenchInner({ bundle }: DesignWorkbenchProps) {
   useEffect(() => {
     const timer = window.setTimeout(() => window.dispatchEvent(new Event('resize')), 220);
     return () => window.clearTimeout(timer);
-  }, [chatOpen]);
+  }, [chatOpen, workspaceView]);
 
   // 撤销 / 重做与快捷键
   const history = useCanvasHistory(bundle.project.id);
@@ -187,6 +195,22 @@ function WorkbenchInner({ bundle }: DesignWorkbenchProps) {
       focusTarget?.focus({ preventScroll: true });
     });
   }, []);
+
+  const changeWorkspaceView = useCallback(
+    (view: 'canvas' | 'flow') => {
+      const params = new URLSearchParams(searchParams.toString());
+      if (view === 'flow') {
+        params.set('view', 'flow');
+        closeImageEditor();
+      } else {
+        params.delete('view');
+        params.delete('workflow');
+      }
+      const query = params.toString();
+      router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
+    },
+    [closeImageEditor, pathname, router, searchParams],
+  );
 
   // 上传媒体工具：选文件 → 上传 → 在视口中心落图片 / 视频节点（按资产种类分支）
   const onUploadMedia = useCallback((position?: FlowPoint) => {
@@ -344,18 +368,29 @@ function WorkbenchInner({ bundle }: DesignWorkbenchProps) {
           onToggleChat={() => setChatOpen((open) => !open)}
           onTitleChange={setTitle}
           onRetrySync={persistence.retryPending}
+          workspaceView={workspaceView}
+          flowEnabled={FLOW_STUDIO_ENABLED}
+          onWorkspaceViewChange={changeWorkspaceView}
         />
         <div className="absolute inset-0 pt-14">
-          <CanvasContainer
-            initialViewport={bundle.project.viewport}
-            onUploadMediaAt={onUploadMedia}
-            interactionLocked={Boolean(imageEditSnapshot)}
-            onEditImage={IMAGE_EDITING_ENABLED ? openImageEditor : undefined}
-          />
+          {workspaceView === 'canvas' ? (
+            <CanvasContainer
+              initialViewport={bundle.project.viewport}
+              onUploadMediaAt={onUploadMedia}
+              interactionLocked={Boolean(imageEditSnapshot)}
+              onEditImage={IMAGE_EDITING_ENABLED ? openImageEditor : undefined}
+            />
+          ) : (
+            <FlowStudio projectId={bundle.project.id} userId={userId} models={models} />
+          )}
         </div>
-        <CanvasBottomToolbar onUploadMedia={() => onUploadMedia()} onAiTool={onAiTool} />
-        <CanvasCornerControls />
-        {!persistence.ready ? (
+        {workspaceView === 'canvas' ? (
+          <>
+            <CanvasBottomToolbar onUploadMedia={() => onUploadMedia()} onAiTool={onAiTool} />
+            <CanvasCornerControls />
+          </>
+        ) : null}
+        {workspaceView === 'canvas' && !persistence.ready ? (
           <div
             className="absolute inset-x-0 bottom-0 top-14 z-30 flex items-center justify-center bg-background/35 backdrop-blur-[1px]"
             role="status"
@@ -375,7 +410,7 @@ function WorkbenchInner({ bundle }: DesignWorkbenchProps) {
             e.target.value = '';
           }}
         />
-        {imageEditSnapshot ? (
+        {workspaceView === 'canvas' && imageEditSnapshot ? (
           <ImageEditOverlay
             projectId={bundle.project.id}
             userId={userId}

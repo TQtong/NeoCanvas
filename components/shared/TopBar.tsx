@@ -29,6 +29,8 @@ import {
   PanelRightOpen,
   Share2,
   TriangleAlert,
+  LayoutGrid,
+  Workflow,
 } from 'lucide-react';
 import type { RealtimeStatus, SyncState } from '@/types';
 import { useTranslation } from '@/i18n';
@@ -65,6 +67,12 @@ export interface TopBarProps {
   onTitleChange: (title: string) => void;
   /** 保存失败后的手动重试。 */
   onRetrySync: () => void;
+  /** 当前项目工作区视图。 */
+  workspaceView: 'canvas' | 'flow';
+  /** Flow Studio 灰度入口是否开放。 */
+  flowEnabled: boolean;
+  /** 切换 Canvas / Flow。 */
+  onWorkspaceViewChange: (view: 'canvas' | 'flow') => void;
 }
 
 /**
@@ -82,6 +90,9 @@ export function TopBar({
   onToggleChat,
   onTitleChange,
   onRetrySync,
+  workspaceView,
+  flowEnabled,
+  onWorkspaceViewChange,
 }: TopBarProps) {
   const { t } = useTranslation();
   const { success, error: toastError } = useToast();
@@ -249,6 +260,39 @@ export function TopBar({
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
+
+      {flowEnabled ? (
+        <div className="absolute left-1/2 flex -translate-x-1/2 items-center rounded-lg border border-border bg-background/80 p-0.5 shadow-soft">
+          <button
+            type="button"
+            onClick={() => onWorkspaceViewChange('canvas')}
+            aria-pressed={workspaceView === 'canvas'}
+            className={cn(
+              'inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium transition-colors',
+              workspaceView === 'canvas'
+                ? 'bg-card text-foreground shadow-sm'
+                : 'text-muted-foreground hover:text-foreground',
+            )}
+          >
+            <LayoutGrid className="size-3.5" />
+            Canvas
+          </button>
+          <button
+            type="button"
+            onClick={() => onWorkspaceViewChange('flow')}
+            aria-pressed={workspaceView === 'flow'}
+            className={cn(
+              'inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium transition-colors',
+              workspaceView === 'flow'
+                ? 'bg-card text-foreground shadow-sm'
+                : 'text-muted-foreground hover:text-foreground',
+            )}
+          >
+            <Workflow className="size-3.5" />
+            Flow
+          </button>
+        </div>
+      ) : null}
 
       {/* 右端：分享、面板控制、头像菜单 */}
       <div className="flex items-center gap-1">

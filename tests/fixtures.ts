@@ -93,6 +93,7 @@ export function generationRow(id: string, overrides: Partial<GenerationRow> = {}
     placeholder_node_id: null,
     target_node_id: null,
     result_mode: 'new_primary',
+    workflow_run_node_id: null,
     error: null,
     idempotency_key: id,
     requester_id: 'user-1',
