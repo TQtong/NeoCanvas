@@ -80,13 +80,11 @@ export function useToast(): UseToast {
     [push],
   );
   const error = useCallback(
-    (message: string, title?: string) =>
-      push({ message, variant: 'error', duration: 6000, title }),
+    (message: string, title?: string) => push({ message, variant: 'error', duration: 6000, title }),
     [push],
   );
   const info = useCallback(
-    (message: string, title?: string) =>
-      push({ message, variant: 'info', duration: 4000, title }),
+    (message: string, title?: string) => push({ message, variant: 'info', duration: 4000, title }),
     [push],
   );
 

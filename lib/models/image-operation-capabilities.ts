@@ -67,10 +67,7 @@ export function isModelAvailableForImageOperation(
   if (!credential) return false;
   // 测试 Provider 在 Edge 侧还会再次检查 NEOCANVAS_TEST_MODE；公开构建未显式开启时
   // 必须继续按自定义 Provider 的真实 adapter 能力收紧，不能形成生产后门。
-  if (
-    model.provider === TEST_PROVIDER &&
-    process.env.NEXT_PUBLIC_NEOCANVAS_TEST_MODE === 'true'
-  ) {
+  if (model.provider === TEST_PROVIDER && process.env.NEXT_PUBLIC_NEOCANVAS_TEST_MODE === 'true') {
     return (
       TEST_PROVIDER_IMAGE_OPERATIONS.includes(operation) &&
       modelSupportsImageOperation(model.capabilities, operation)
