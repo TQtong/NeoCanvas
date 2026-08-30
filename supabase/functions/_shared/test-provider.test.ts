@@ -19,6 +19,68 @@ function request(prompt: string): UnifiedGenerationRequest {
   };
 }
 
+/** 构造测试 Provider 精准编辑请求。 */
+function editRequest(
+  operation: 'semantic_edit' | 'remove_background' | 'upscale',
+): UnifiedGenerationRequest {
+  const common = {
+    projectId: 'project-1',
+    conversationId: null,
+    messageId: null,
+    modality: 'image' as const,
+    modelKey: 'neocanvas-e2e-image',
+    prompt: '精准编辑',
+    idempotencyKey: `edit-${operation}`,
+  };
+  const references = [{
+    origin: 'attachment' as const,
+    assetId: 'source',
+    role: 'content' as const,
+  }];
+  if (operation === 'remove_background') {
+    return {
+      ...common,
+      params: {
+        modality: 'image',
+        operation,
+        inputMode: 'original',
+        width: 2,
+        height: 2,
+        count: 1,
+        background: 'transparent',
+        references,
+      },
+    };
+  }
+  if (operation === 'upscale') {
+    return {
+      ...common,
+      params: {
+        modality: 'image',
+        operation,
+        inputMode: 'original',
+        width: 2,
+        height: 3,
+        count: 1,
+        upscaleFactor: 4,
+        references,
+      },
+    };
+  }
+  return {
+    ...common,
+    params: {
+      modality: 'image',
+      operation,
+      inputMode: 'original',
+      width: 2,
+      height: 2,
+      count: 2,
+      references,
+    },
+  };
+}
+
 /** 适配器不读取这些字段，但仍使用完整上下文验证统一接口没有测试捷径。 */
 const context = {
   modelKey: 'neocanvas-e2e-image',
@@ -102,5 +164,36 @@ Deno.test('确定性适配器覆盖同步、异步、失败与超时分支', asy
     else Deno.env.set('APP_ENV', previousAppEnv);
     if (previousDeployment === undefined) Deno.env.delete('DENO_DEPLOYMENT_ID');
     else Deno.env.set('DENO_DEPLOYMENT_ID', previousDeployment);
+  }
+});
+
+Deno.test('确定性适配器为精准编辑生成真实候选数、透明像素与放大尺寸', async () => {
+  const previousMode = Deno.env.get('NEOCANVAS_TEST_MODE');
+  const previousAppEnv = Deno.env.get('APP_ENV');
+  Deno.env.set('NEOCANVAS_TEST_MODE', 'true');
+  Deno.env.set('APP_ENV', 'test');
+  try {
+    const semantic = await testAdapter.submit(editRequest('semantic_edit'), context);
+    assertEquals(semantic.kind, 'sync');
+    if (semantic.kind === 'sync') assertEquals(semantic.candidates.length, 2);
+
+    const removed = await testAdapter.submit(editRequest('remove_background'), context);
+    assertEquals(removed.kind, 'sync');
+    if (removed.kind === 'sync') {
+      assertEquals(removed.candidates[0]?.width, 2);
+      assertEquals(removed.candidates[0]?.mimeType, 'image/png');
+    }
+
+    const upscaled = await testAdapter.submit(editRequest('upscale'), context);
+    assertEquals(upscaled.kind, 'sync');
+    if (upscaled.kind === 'sync') {
+      assertEquals(upscaled.candidates[0]?.width, 8);
+      assertEquals(upscaled.candidates[0]?.height, 12);
+    }
+  } finally {
+    if (previousMode === undefined) Deno.env.delete('NEOCANVAS_TEST_MODE');
+    else Deno.env.set('NEOCANVAS_TEST_MODE', previousMode);
+    if (previousAppEnv === undefined) Deno.env.delete('APP_ENV');
+    else Deno.env.set('APP_ENV', previousAppEnv);
   }
 });

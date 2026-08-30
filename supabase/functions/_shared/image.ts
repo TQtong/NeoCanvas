@@ -267,7 +267,11 @@ function pngChunk(type: string, data: Uint8Array): Uint8Array {
 }
 
 /** 把 RGBA 像素编码为无交错 8 位 PNG。 */
-async function encodeRgbaPng(width: number, height: number, rgba: Uint8Array): Promise<Uint8Array> {
+export async function encodeRgbaPng(
+  width: number,
+  height: number,
+  rgba: Uint8Array,
+): Promise<Uint8Array> {
   const raw = new Uint8Array(height * (width * 4 + 1));
   for (let y = 0; y < height; y += 1) {
     const rowStart = y * (width * 4 + 1);
