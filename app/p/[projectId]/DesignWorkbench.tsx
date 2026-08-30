@@ -117,6 +117,8 @@ function WorkbenchInner({ bundle }: DesignWorkbenchProps) {
   const { generate: generateSequenceVideo } = useSequenceVideo();
   const fileRef = useRef<HTMLInputElement>(null);
   const pendingUploadPositionRef = useRef<FlowPoint | null>(null);
+  const imageEditOpenerRef = useRef<HTMLButtonElement | null>(null);
+  const imageEditNodeIdRef = useRef<string | null>(null);
   const [title, setTitle] = useState(bundle.project.title);
   const [chatOpen, setChatOpen] = useState(true);
   const [imageEditSnapshot, setImageEditSnapshot] = useState<{
@@ -154,14 +156,35 @@ function WorkbenchInner({ bundle }: DesignWorkbenchProps) {
   useCanvasShortcuts(history, Boolean(imageEditSnapshot));
 
   /** 冻结打开编辑器瞬间的目标与组内叠加，后续 Realtime 更新只作冲突提示。 */
-  const openImageEditor = useCallback((nodeId: string) => {
+  const openImageEditor = useCallback((nodeId: string, opener: HTMLButtonElement) => {
     if (!IMAGE_EDITING_ENABLED) return;
     const nodes = useCanvasStore.getState().nodes;
     const target = nodes.find((node) => node.id === nodeId);
     if (!target || target.data.type !== 'image' || !target.data.assetId || !target.data.src) return;
+    imageEditOpenerRef.current = opener;
+    imageEditNodeIdRef.current = nodeId;
     setImageEditSnapshot({
       target: structuredClone(target),
       overlays: collectGroupOverlays(nodes, target).map((node) => structuredClone(node)),
+    });
+  }, []);
+
+  /** 关闭模态编辑器后把键盘焦点交还给原入口，维持连续的画布操作上下文。 */
+  const closeImageEditor = useCallback(() => {
+    const opener = imageEditOpenerRef.current;
+    const nodeId = imageEditNodeIdRef.current;
+    imageEditOpenerRef.current = null;
+    imageEditNodeIdRef.current = null;
+    setImageEditSnapshot(null);
+    window.requestAnimationFrame(() => {
+      // 锁定画布时浮动工具条会暂时卸载，因此需在解锁后的同节点入口上恢复焦点。
+      const focusTarget =
+        opener?.isConnected || !nodeId
+          ? opener
+          : document.querySelector<HTMLButtonElement>(
+              `[data-image-edit-trigger="${CSS.escape(nodeId)}"]`,
+            );
+      focusTarget?.focus({ preventScroll: true });
     });
   }, []);
 
@@ -362,7 +385,7 @@ function WorkbenchInner({ bundle }: DesignWorkbenchProps) {
             models={models}
             credentials={credentials}
             credentialsLoading={credentialsLoading}
-            onClose={() => setImageEditSnapshot(null)}
+            onClose={closeImageEditor}
           />
         ) : null}
       </div>

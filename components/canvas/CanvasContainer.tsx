@@ -60,7 +60,7 @@ export interface CanvasContainerProps {
   /** 精准编辑期间保持画布挂载但锁定全部交互。 */
   interactionLocked?: boolean;
   /** 打开指定图片节点的精准编辑器。 */
-  onEditImage?: (nodeId: string) => void;
+  onEditImage?: (nodeId: string, opener: HTMLButtonElement) => void;
 }
 
 /** 找出与媒体目标成整体拖拽的媒体对话面板，或面板绑定的目标媒体。 */

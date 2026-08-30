@@ -197,7 +197,7 @@ function ShapeProperties({ id, data }: { id: string; data: ShapeNodeData }) {
  */
 export interface NodeFloatingToolbarProps {
   /** 打开图片精准编辑器。 */
-  onEditImage?: (nodeId: string) => void;
+  onEditImage?: (nodeId: string, opener: HTMLButtonElement) => void;
 }
 
 export function NodeFloatingToolbar({ onEditImage }: NodeFloatingToolbarProps) {
@@ -601,7 +601,8 @@ export function NodeFloatingToolbar({ onEditImage }: NodeFloatingToolbarProps) {
                   size="sm"
                   label={t('node.precisionEdit')}
                   className="text-accent"
-                  onClick={() => onEditImage(node.id)}
+                  data-image-edit-trigger={node.id}
+                  onClick={(event) => onEditImage(node.id, event.currentTarget)}
                 >
                   <SlidersHorizontal />
                 </IconButton>
