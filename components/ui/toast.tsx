@@ -9,7 +9,7 @@
  * @module components/ui/toast
  */
 
-import { useEffect } from 'react';
+import { useCallback, useEffect, useMemo } from 'react';
 import { create } from 'zustand';
 import { CheckCircle2, Info, TriangleAlert, X } from 'lucide-react';
 import { cn } from '@/lib/utils/cn';
@@ -64,19 +64,37 @@ export function useToast(): UseToast {
   const push = useToastStore((s) => s.push);
   const dismiss = useToastStore((s) => s.dismiss);
 
-  return {
-    toast: (message, options) =>
+  const toast = useCallback(
+    (message: string, options?: Partial<Omit<ToastItem, 'id' | 'message'>>) =>
       push({
         message,
         variant: options?.variant ?? 'info',
         duration: options?.duration ?? 4000,
         title: options?.title,
       }),
-    success: (message, title) => push({ message, variant: 'success', duration: 3500, title }),
-    error: (message, title) => push({ message, variant: 'error', duration: 6000, title }),
-    info: (message, title) => push({ message, variant: 'info', duration: 4000, title }),
-    dismiss,
-  };
+    [push],
+  );
+  const success = useCallback(
+    (message: string, title?: string) =>
+      push({ message, variant: 'success', duration: 3500, title }),
+    [push],
+  );
+  const error = useCallback(
+    (message: string, title?: string) =>
+      push({ message, variant: 'error', duration: 6000, title }),
+    [push],
+  );
+  const info = useCallback(
+    (message: string, title?: string) =>
+      push({ message, variant: 'info', duration: 4000, title }),
+    [push],
+  );
+
+  // 动作引用保持稳定，避免把 useToast 返回值放入 effect 依赖时造成重复执行。
+  return useMemo(
+    () => ({ toast, success, error, info, dismiss }),
+    [dismiss, error, info, success, toast],
+  );
 }
 
 const VARIANT_ICON = {
