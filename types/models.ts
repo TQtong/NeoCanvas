@@ -89,6 +89,7 @@ export interface ModelDefaultParams {
   aspectRatio?: AspectRatio;
   width?: number;
   height?: number;
+  sizePreset?: '1k' | '2k' | '4k' | '8k' | 'custom';
   count?: number;
   quality?: ImageQuality;
   resolution?: string;

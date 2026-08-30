@@ -1,5 +1,6 @@
 import { assertEquals, assertThrows } from 'jsr:@std/assert@1';
 import { validateParams } from './pipeline.ts';
+import { buildGenerationParams } from './params.ts';
 import { ApiException } from './response.ts';
 import { type ModelCapabilities, type UnifiedGenerationRequest } from './types.ts';
 
@@ -60,6 +61,33 @@ Deno.test('模型能力校验对可降级参数确定性降级', () => {
   assertEquals(request.params.count, 2);
   assertEquals(request.params.quality, undefined);
   assertEquals(request.params.seed, undefined);
+});
+
+Deno.test('模型默认图片尺寸完整进入首次生成请求', () => {
+  assertEquals(
+    buildGenerationParams(
+      'image',
+      {
+        aspectRatio: '1:1',
+        width: 320,
+        height: 240,
+        sizePreset: 'custom',
+        count: 2,
+        quality: 'high',
+      },
+      [],
+    ),
+    {
+      modality: 'image',
+      aspectRatio: '1:1',
+      width: 320,
+      height: 240,
+      sizePreset: 'custom',
+      count: 2,
+      quality: 'high',
+      references: [],
+    },
+  );
 });
 
 Deno.test('模型能力校验拒绝不支持的比例与参考图', () => {

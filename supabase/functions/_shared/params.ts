@@ -76,6 +76,13 @@ export function buildGenerationParams(
   const params: ImageGenerationParams = {
     modality: 'image',
     aspectRatio: (defaultParams.aspectRatio as ImageGenerationParams['aspectRatio']) ?? '1:1',
+    width: typeof defaultParams.width === 'number' && defaultParams.width > 0
+      ? defaultParams.width
+      : undefined,
+    height: typeof defaultParams.height === 'number' && defaultParams.height > 0
+      ? defaultParams.height
+      : undefined,
+    sizePreset: defaultParams.sizePreset,
     count: Number(defaultParams.count ?? 1),
     quality: (defaultParams.quality as ImageGenerationParams['quality']) ?? undefined,
     references,
