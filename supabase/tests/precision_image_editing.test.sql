@@ -1,7 +1,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(31);
+select plan(33);
 
 select is(
   (select count(*) from public.model_catalog
@@ -19,6 +19,20 @@ select is(
       and not (capabilities -> 'imageOperations' ? 'generate')),
   3::bigint,
   'Replicate 三个工具只能通过受控 Profile 目录登记'
+);
+select is(
+  (select count(*) from public.model_catalog
+    where key in ('jimeng-inpaint','jimeng-outpaint','jimeng-remove-background','jimeng-upscale')
+      and provider = 'jimeng'
+      and not (capabilities -> 'imageOperations' ? 'generate')),
+  4::bigint,
+  '即梦四个专业工具以不含普通生成能力的独立 Profile 登记'
+);
+select is(
+  (select capabilities -> 'imageOperations' from public.model_catalog
+    where key = 'jimeng-image-4.0'),
+  '["generate", "semantic_edit"]'::jsonb,
+  '即梦图片 4.0 只开放已验证的生成与语义编辑能力'
 );
 
 insert into auth.users (

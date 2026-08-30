@@ -1,5 +1,6 @@
 import { assert, assertEquals, assertRejects } from 'jsr:@std/assert@1';
 import type { ModelCapabilities, UnifiedGenerationRequest } from '../types.ts';
+import { inspectRasterImage } from '../image.ts';
 import type { ModelContext } from './base.ts';
 import { openaiAdapter } from './openai.ts';
 import { falAdapter } from './fal.ts';
@@ -9,6 +10,7 @@ import {
   replicateAdapter,
 } from './replicate.ts';
 import { volcengineAdapter } from './volcengine.ts';
+import { jimengAdapter } from './jimeng.ts';
 
 /** 构造适配器契约测试所需的最小完整图片能力。 */
 function capabilities(operations: ModelCapabilities['imageOperations']): ModelCapabilities {
@@ -53,6 +55,60 @@ function request(params: UnifiedGenerationRequest['params']): UnifiedGenerationR
     params,
     idempotencyKey: 'contract-idempotency',
   };
+}
+
+/** 构造使用本地假端点与有效 AK/SK JSON 的即梦上下文。 */
+function jimengContext(providerModel: string): ModelContext {
+  const ctx = context(providerModel);
+  ctx.credentials = {
+    apiKey: JSON.stringify({ accessKeyId: 'AKIDEXAMPLE', secretAccessKey: 'secret-example' }),
+    baseUrl: 'https://jimeng.test',
+  };
+  return ctx;
+}
+
+/** 构造 1×1 RGBA PNG；适配器测试只需标准 chunk 结构，CRC 不参与解码。 */
+async function rgbaPngBase64(
+  red: number,
+  green: number,
+  blue: number,
+  alpha: number,
+): Promise<string> {
+  const chunk = (type: string, data: Uint8Array): Uint8Array => {
+    const output = new Uint8Array(data.length + 12);
+    new DataView(output.buffer).setUint32(0, data.length, false);
+    output.set(new TextEncoder().encode(type), 4);
+    output.set(data, 8);
+    return output;
+  };
+  const header = new Uint8Array(13);
+  const headerView = new DataView(header.buffer);
+  headerView.setUint32(0, 1, false);
+  headerView.setUint32(4, 1, false);
+  header.set([8, 6, 0, 0, 0], 8);
+  const compressed = new Uint8Array(
+    await new Response(
+      new Blob([new Uint8Array([0, red, green, blue, alpha]).buffer])
+        .stream()
+        .pipeThrough(new CompressionStream('deflate')),
+    ).arrayBuffer(),
+  );
+  const bytes = new Uint8Array(8 + 25 + compressed.length + 12 + 12);
+  let offset = 0;
+  for (
+    const part of [
+      new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]),
+      chunk('IHDR', header),
+      chunk('IDAT', compressed),
+      chunk('IEND', new Uint8Array()),
+    ]
+  ) {
+    bytes.set(part, offset);
+    offset += part.length;
+  }
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
 }
 
 Deno.test('OpenAI 局部重绘严格分离 image[] 与 mask，并映射输入保真度', async () => {
@@ -479,5 +535,226 @@ Deno.test('Replicate 拒绝目录伪造 Profile 并归一化受控输出结构',
       ],
     }),
     ['https://result.test/one.png', 'https://result.test/two.png'],
+  );
+});
+
+Deno.test('即梦图片 4.0 与交互重绘使用专用 Action，轮询句柄冻结查询路由', async () => {
+  const originalFetch = globalThis.fetch;
+  const captured: Array<
+    { action: string | null; version: string | null; body: Record<string, unknown> }
+  > = [];
+  globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
+    const url = new URL(String(input));
+    const action = url.searchParams.get('Action');
+    captured.push({
+      action,
+      version: url.searchParams.get('Version'),
+      body: JSON.parse(String(init?.body)) as Record<string, unknown>,
+    });
+    if (action?.endsWith('GetResult')) {
+      return Promise.resolve(
+        Response.json({
+          code: 10000,
+          data: { status: 'done', image_urls: ['https://result.test/jimeng-edit.png'] },
+        }),
+      );
+    }
+    return Promise.resolve(
+      Response.json({ code: 10000, data: { task_id: `job-${captured.length}` } }),
+    );
+  }) as typeof fetch;
+
+  try {
+    const semantic = jimengContext('jimeng_t2i_v40');
+    setToolReferences(semantic);
+    const submitted = await jimengAdapter.submit(
+      request({
+        modality: 'image',
+        operation: 'semantic_edit',
+        inputMode: 'original',
+        inputFidelity: 'high',
+        count: 2,
+        width: 2048,
+        height: 1536,
+        references: [{ origin: 'attachment', assetId: 'source', role: 'content' }],
+      }),
+      semantic,
+    );
+    assertEquals(submitted.kind, 'async');
+    if (submitted.kind !== 'async') throw new Error('即梦语义编辑应返回异步任务');
+    assert(submitted.externalJobId.startsWith('jimeng:v1:'));
+
+    // 目录变更不能改变已经提交任务的查询 Action 与 req_key。
+    semantic.providerModel = 'entity_seg';
+    const polled = await jimengAdapter.poll(submitted.externalJobId, semantic);
+    assertEquals(polled.status, 'succeeded');
+
+    const inpaint = jimengContext('jimeng_image2image_dream_inpaint');
+    setToolReferences(inpaint, true);
+    await jimengAdapter.submit(
+      request({
+        modality: 'image',
+        operation: 'inpaint',
+        inputMode: 'original',
+        maskFeatherPx: 6,
+        count: 1,
+        references: [
+          { origin: 'attachment', assetId: 'source', role: 'content' },
+          { origin: 'attachment', assetId: 'mask', role: 'mask' },
+        ],
+      }),
+      inpaint,
+    );
+
+    assertEquals(captured[0]?.action, 'JimengT2IV40SubmitTask');
+    assertEquals(captured[0]?.version, '2024-06-06');
+    assertEquals(captured[0]?.body.image_urls, ['https://assets.test/source.png']);
+    assertEquals(captured[0]?.body.scale, 0.3);
+    assertEquals(captured[0]?.body.force_single, false);
+    assertEquals(captured[1]?.action, 'JimengT2IV40GetResult');
+    assertEquals(captured[1]?.body.req_key, 'jimeng_t2i_v40');
+    assertEquals(captured[2]?.action, 'JimengImage2ImageDreamInpaintSubmitTask');
+    assertEquals(captured[2]?.body.image_urls, [
+      'https://assets.test/source.png',
+      'https://assets.test/mask.png',
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test('即梦扩图、去背景和 2× 串联超分使用各自官方同步 Action', async () => {
+  const originalFetch = globalThis.fetch;
+  const sourcePng = await rgbaPngBase64(240, 120, 60, 255);
+  const backgroundMask = await rgbaPngBase64(0, 0, 0, 255);
+  const captured: Array<{ action: string | null; body: Record<string, unknown> }> = [];
+  let upscalePass = 0;
+  globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
+    const url = new URL(String(input));
+    const action = url.searchParams.get('Action');
+    const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    captured.push({ action, body });
+    if (action === 'Img2ImgOutpainting') {
+      return Promise.resolve(
+        Response.json({ code: 10000, data: { image_urls: ['https://result.test/outpaint.png'] } }),
+      );
+    }
+    if (action === 'EntitySegment') {
+      return Promise.resolve(
+        Response.json({
+          code: 10000,
+          data: { binary_data_base64: [sourcePng, backgroundMask] },
+        }),
+      );
+    }
+    upscalePass += 1;
+    return Promise.resolve(
+      Response.json({
+        code: 10000,
+        data: { image_urls: [`https://result.test/upscale-${upscalePass}.png`] },
+      }),
+    );
+  }) as typeof fetch;
+
+  try {
+    const outpaint = jimengContext('i2i_outpainting');
+    setToolReferences(outpaint);
+    await jimengAdapter.submit(
+      request({
+        modality: 'image',
+        operation: 'outpaint',
+        inputMode: 'original',
+        count: 1,
+        references: [{ origin: 'attachment', assetId: 'source', role: 'content' }],
+        outputCanvas: {
+          width: 1500,
+          height: 1000,
+          sourceX: 250,
+          sourceY: 100,
+          sourceWidth: 1000,
+          sourceHeight: 800,
+        },
+      }),
+      outpaint,
+    );
+
+    const remove = jimengContext('entity_seg');
+    setToolReferences(remove);
+    const removed = await jimengAdapter.submit(
+      request({
+        modality: 'image',
+        operation: 'remove_background',
+        inputMode: 'original',
+        background: 'transparent',
+        count: 1,
+        references: [{ origin: 'attachment', assetId: 'source', role: 'content' }],
+      }),
+      remove,
+    );
+
+    const upscale = jimengContext('lens_nnsr2_pic_common');
+    setToolReferences(upscale);
+    await jimengAdapter.submit(
+      request({
+        modality: 'image',
+        operation: 'upscale',
+        inputMode: 'original',
+        upscaleFactor: 4,
+        quality: 'high',
+        count: 1,
+        references: [{ origin: 'attachment', assetId: 'source', role: 'content' }],
+      }),
+      upscale,
+    );
+
+    assertEquals(captured[0]?.action, 'Img2ImgOutpainting');
+    assertEquals(captured[0]?.body.custom_prompt, '把杯子改成蓝色');
+    assertEquals(captured[0]?.body.left, 0.25);
+    assertEquals(captured[0]?.body.top, 0.125);
+    assertEquals(captured[1]?.action, 'EntitySegment');
+    assertEquals(captured[1]?.body.return_format, 3);
+    assertEquals(captured[1]?.body.refine_mask, 1);
+    assertEquals(captured[2]?.action, 'CVProcess');
+    assertEquals(captured[2]?.body.image_urls, ['https://assets.test/source.png']);
+    assertEquals(captured[3]?.action, 'CVProcess');
+    assertEquals(captured[3]?.body.image_urls, ['https://result.test/upscale-1.png']);
+
+    assertEquals(removed.kind, 'sync');
+    if (removed.kind === 'sync') {
+      const candidate = removed.candidates[0];
+      assertEquals(candidate?.fetch.type, 'base64');
+      if (candidate?.fetch.type === 'base64') {
+        const binary = atob(candidate.fetch.data);
+        const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+        assertEquals(await inspectRasterImage(bytes, 'image/png'), {
+          width: 1,
+          height: 1,
+          hasTransparency: true,
+        });
+      }
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test('即梦目录不能用任意 providerModel 扩大专业操作能力', async () => {
+  const ctx = jimengContext('arbitrary-jimeng-action');
+  setToolReferences(ctx, true);
+  await assertRejects(() =>
+    jimengAdapter.submit(
+      request({
+        modality: 'image',
+        operation: 'inpaint',
+        inputMode: 'original',
+        maskFeatherPx: 0,
+        count: 1,
+        references: [
+          { origin: 'attachment', assetId: 'source', role: 'content' },
+          { origin: 'attachment', assetId: 'mask', role: 'mask' },
+        ],
+      }),
+      ctx,
+    )
   );
 });

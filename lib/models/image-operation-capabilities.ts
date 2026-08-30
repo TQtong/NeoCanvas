@@ -23,7 +23,7 @@ export const ADAPTER_IMAGE_OPERATIONS: Readonly<
   openai: ['generate', 'semantic_edit', 'inpaint', 'outpaint'],
   google: ['generate', 'semantic_edit'],
   volcengine: ['generate', 'semantic_edit'],
-  jimeng: ['generate', 'semantic_edit'],
+  jimeng: ['generate', 'semantic_edit', 'inpaint', 'outpaint', 'remove_background', 'upscale'],
   minimax: ['generate', 'semantic_edit'],
   fal: ['inpaint', 'remove_background', 'upscale'],
   replicate: ['inpaint', 'remove_background', 'upscale'],
