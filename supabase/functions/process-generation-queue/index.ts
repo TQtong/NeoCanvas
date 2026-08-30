@@ -8,12 +8,7 @@
  * @module functions/process-generation-queue
  */
 
-import {
-  ERROR_CODES,
-  type ErrorCode,
-  type GenerationRow,
-  type ModelCatalogRow,
-} from '../_shared/types.ts';
+import { type GenerationRow, type ModelCatalogRow } from '../_shared/types.ts';
 import { exceptionToResponse, fail, ok } from '../_shared/response.ts';
 import { createAdminClient, type SupabaseClient } from '../_shared/supabase.ts';
 import { getAdapter } from '../_shared/adapters/registry.ts';
@@ -21,6 +16,7 @@ import { resolveProviderAdapter } from '../_shared/credentials.ts';
 import { buildModelContext, landResult, markFailed } from '../_shared/pipeline.ts';
 import { requireInternalServiceRole } from '../_shared/internal-auth.ts';
 import { requireAccessibleModel } from '../_shared/models.ts';
+import { normalizeProviderError } from '../_shared/provider-errors.ts';
 
 /** 单次消费的最大任务数。 */
 const BATCH = 5;
@@ -163,11 +159,13 @@ async function processJob(
       }
     }
   } catch (error) {
-    const code = error instanceof Error && 'code' in error
-      ? (error as { code: string }).code
-      : 'internal_error';
-    const message = error instanceof Error ? error.message : '执行失败';
-    if (TRANSIENT_CODES.has(code) && readCount <= MAX_RETRIES) {
+    const normalized = normalizeProviderError(error, generation.provider);
+    if (normalized.retryable) {
+      console.warn(
+        `Provider 瞬时错误 generation=${generation.id} provider=${generation.provider} attempt=${readCount}: ${normalized.diagnostic}`,
+      );
+    }
+    if (TRANSIENT_CODES.has(normalized.code) && readCount <= MAX_RETRIES) {
       // 瞬时错误：回退为 pending，并对该消息设置指数退避的可见性超时后留待重试
       await admin
         .from('generations')
@@ -180,10 +178,13 @@ async function processJob(
       });
       throw error; // 不删除消息，留待退避后重试
     }
-    const stableCode: ErrorCode = ERROR_CODES.includes(code as ErrorCode)
-      ? (code as ErrorCode)
-      : 'internal_error';
-    await markFailed(admin, { ...generation, status: 'running' }, message, undefined, stableCode);
+    await markFailed(
+      admin,
+      { ...generation, status: 'running' },
+      normalized.message,
+      undefined,
+      normalized.code,
+    );
   }
 }
 
