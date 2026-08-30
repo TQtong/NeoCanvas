@@ -1,7 +1,13 @@
-import { assert, assertEquals } from 'jsr:@std/assert@1';
+import { assert, assertEquals, assertRejects } from 'jsr:@std/assert@1';
 import type { ModelCapabilities, UnifiedGenerationRequest } from '../types.ts';
 import type { ModelContext } from './base.ts';
 import { openaiAdapter } from './openai.ts';
+import { falAdapter } from './fal.ts';
+import {
+  extractReplicateOutputUrls,
+  REPLICATE_PROFILE_IDS,
+  replicateAdapter,
+} from './replicate.ts';
 import { volcengineAdapter } from './volcengine.ts';
 
 /** 构造适配器契约测试所需的最小完整图片能力。 */
@@ -208,4 +214,270 @@ Deno.test('Ark SeedEdit 在官方 images/generations 请求中传入 image 数�
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+/** 为工具型适配器设置标准源图与可选蒙版。 */
+function setToolReferences(ctx: ModelContext, withMask = false): void {
+  ctx.references = [
+    {
+      assetId: 'source',
+      role: 'content',
+      url: 'https://assets.test/source.png',
+      mimeType: 'image/png',
+    },
+    ...(withMask
+      ? [
+        {
+          assetId: 'mask',
+          role: 'mask' as const,
+          url: 'https://assets.test/mask.png',
+          mimeType: 'image/png',
+        },
+      ]
+      : []),
+  ];
+}
+
+Deno.test('fal 三个工具 Profile 使用独立 endpoint 与固定输入字段', async () => {
+  const originalFetch = globalThis.fetch;
+  const captured: Array<{ url: string; body: Record<string, unknown> }> = [];
+  globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
+    captured.push({
+      url: String(input),
+      body: JSON.parse(String(init?.body)) as Record<string, unknown>,
+    });
+    return Promise.resolve(Response.json({ request_id: `fal-request-${captured.length}` }));
+  }) as typeof fetch;
+
+  try {
+    const inpaint = context('fal-ai/inpaint');
+    setToolReferences(inpaint, true);
+    await falAdapter.submit(
+      request({
+        modality: 'image',
+        operation: 'inpaint',
+        inputMode: 'original',
+        maskFeatherPx: 8,
+        count: 1,
+        references: [
+          { origin: 'attachment', assetId: 'source', role: 'content' },
+          { origin: 'attachment', assetId: 'mask', role: 'mask' },
+        ],
+      }),
+      inpaint,
+    );
+
+    const remove = context('fal-ai/birefnet');
+    setToolReferences(remove);
+    await falAdapter.submit(
+      request({
+        modality: 'image',
+        operation: 'remove_background',
+        inputMode: 'original',
+        background: 'transparent',
+        count: 1,
+        references: [{ origin: 'attachment', assetId: 'source', role: 'content' }],
+      }),
+      remove,
+    );
+
+    const upscale = context('fal-ai/topaz/upscale/image');
+    setToolReferences(upscale);
+    await falAdapter.submit(
+      request({
+        modality: 'image',
+        operation: 'upscale',
+        inputMode: 'original',
+        upscaleFactor: 4,
+        count: 1,
+        references: [{ origin: 'attachment', assetId: 'source', role: 'content' }],
+      }),
+      upscale,
+    );
+
+    assertEquals(captured[0]?.url, 'https://queue.fal.run/fal-ai/inpaint');
+    assertEquals(captured[0]?.body.image_url, 'https://assets.test/source.png');
+    assertEquals(captured[0]?.body.mask_url, 'https://assets.test/mask.png');
+    assertEquals(
+      captured[0]?.body.model_name,
+      'diffusers/stable-diffusion-xl-1.0-inpainting-0.1',
+    );
+    assertEquals(captured[1]?.url, 'https://queue.fal.run/fal-ai/birefnet');
+    assertEquals(captured[1]?.body.output_format, 'png');
+    assertEquals(captured[1]?.body.refine_foreground, true);
+    assertEquals(captured[2]?.url, 'https://queue.fal.run/fal-ai/topaz/upscale/image');
+    assertEquals(captured[2]?.body.upscale_factor, 4);
+    assertEquals(captured[2]?.body.face_enhancement, false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test('fal 轮询句柄冻结提交 endpoint 并解析单图结果', async () => {
+  const originalFetch = globalThis.fetch;
+  let externalJobId = '';
+  globalThis.fetch = ((input: string | URL | Request) => {
+    const url = String(input);
+    if (url.endsWith('/status')) return Promise.resolve(Response.json({ status: 'COMPLETED' }));
+    if (url.includes('/requests/')) {
+      return Promise.resolve(
+        Response.json({
+          image: {
+            url: 'https://result.test/inpaint.png',
+            content_type: 'image/png',
+            width: 768,
+            height: 512,
+          },
+        }),
+      );
+    }
+    return Promise.resolve(Response.json({ request_id: 'frozen-endpoint-job' }));
+  }) as typeof fetch;
+
+  try {
+    const ctx = context('fal-ai/inpaint');
+    setToolReferences(ctx, true);
+    const submitted = await falAdapter.submit(
+      request({
+        modality: 'image',
+        operation: 'inpaint',
+        inputMode: 'original',
+        maskFeatherPx: 0,
+        count: 1,
+        references: [
+          { origin: 'attachment', assetId: 'source', role: 'content' },
+          { origin: 'attachment', assetId: 'mask', role: 'mask' },
+        ],
+      }),
+      ctx,
+    );
+    assertEquals(submitted.kind, 'async');
+    if (submitted.kind === 'async') externalJobId = submitted.externalJobId;
+    assert(externalJobId.startsWith('fal:v1:'));
+
+    // 即使模型目录后来变为另一工具，句柄仍必须查询最初的 inpaint endpoint。
+    ctx.providerModel = 'fal-ai/birefnet';
+    const polled = await falAdapter.poll(externalJobId, ctx);
+    assertEquals(polled.status, 'succeeded');
+    if (polled.status === 'succeeded') {
+      assertEquals(polled.candidates[0]?.fetch, {
+        type: 'url',
+        url: 'https://result.test/inpaint.png',
+      });
+      assertEquals(polled.candidates[0]?.width, 768);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test('Replicate 受控 Profile 固定版本并映射重绘、去背景和放大输入', async () => {
+  const originalFetch = globalThis.fetch;
+  const bodies: Array<{ version: string; input: Record<string, unknown> }> = [];
+  globalThis.fetch = ((_input: string | URL | Request, init?: RequestInit) => {
+    bodies.push(JSON.parse(String(init?.body)) as (typeof bodies)[number]);
+    return Promise.resolve(Response.json({ id: `prediction-${bodies.length}` }));
+  }) as typeof fetch;
+
+  try {
+    const inpaint = context(REPLICATE_PROFILE_IDS.inpaint);
+    setToolReferences(inpaint, true);
+    await replicateAdapter.submit(
+      request({
+        modality: 'image',
+        operation: 'inpaint',
+        inputMode: 'original',
+        maskFeatherPx: 16,
+        width: 1001,
+        height: 701,
+        count: 3,
+        references: [
+          { origin: 'attachment', assetId: 'source', role: 'content' },
+          { origin: 'attachment', assetId: 'mask', role: 'mask' },
+        ],
+      }),
+      inpaint,
+    );
+
+    const remove = context(REPLICATE_PROFILE_IDS.removeBackground);
+    setToolReferences(remove);
+    await replicateAdapter.submit(
+      request({
+        modality: 'image',
+        operation: 'remove_background',
+        inputMode: 'original',
+        background: 'transparent',
+        count: 1,
+        references: [{ origin: 'attachment', assetId: 'source', role: 'content' }],
+      }),
+      remove,
+    );
+
+    const upscale = context(REPLICATE_PROFILE_IDS.upscale);
+    setToolReferences(upscale);
+    await replicateAdapter.submit(
+      request({
+        modality: 'image',
+        operation: 'upscale',
+        inputMode: 'original',
+        upscaleFactor: 2,
+        count: 1,
+        references: [{ origin: 'attachment', assetId: 'source', role: 'content' }],
+      }),
+      upscale,
+    );
+
+    assertEquals(
+      bodies[0]?.version,
+      '95b7223104132402a9ae91cc677285bc5eb997834bd2349fa486f53910fd68b3',
+    );
+    assertEquals(bodies[0]?.input.mask, 'https://assets.test/mask.png');
+    assertEquals(bodies[0]?.input.width, 1024);
+    assertEquals(bodies[0]?.input.height, 704);
+    assertEquals(bodies[0]?.input.num_outputs, 3);
+    assertEquals(
+      bodies[1]?.version,
+      'a029dff38972b5fda4ec5d75d7d1cd25aeff621d2cf4946a41055d7db66b80bc',
+    );
+    assertEquals(bodies[1]?.input.background_type, 'rgba');
+    assertEquals(
+      bodies[2]?.version,
+      'b3ef194191d13140337468c916c2c5b96dd0cb06dffc032a022a31807f6a5ea8',
+    );
+    assertEquals(bodies[2]?.input.scale, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test('Replicate 拒绝目录伪造 Profile 并归一化受控输出结构', async () => {
+  const ctx = context('arbitrary-version-hash');
+  setToolReferences(ctx, true);
+  await assertRejects(() =>
+    replicateAdapter.submit(
+      request({
+        modality: 'image',
+        operation: 'inpaint',
+        inputMode: 'original',
+        maskFeatherPx: 0,
+        count: 1,
+        references: [
+          { origin: 'attachment', assetId: 'source', role: 'content' },
+          { origin: 'attachment', assetId: 'mask', role: 'mask' },
+        ],
+      }),
+      ctx,
+    )
+  );
+
+  assertEquals(
+    extractReplicateOutputUrls({
+      output: [
+        'https://result.test/one.png',
+        { image: { url: 'https://result.test/two.png' } },
+        'not-a-url',
+      ],
+    }),
+    ['https://result.test/one.png', 'https://result.test/two.png'],
+  );
 });

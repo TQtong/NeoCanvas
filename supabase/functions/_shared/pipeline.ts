@@ -35,7 +35,7 @@ import { type SupabaseClient } from './supabase.ts';
 import { type ModelContext, type ResolvedReference } from './adapters/base.ts';
 import { resolveProviderCredential } from './credentials.ts';
 import { moderateOutputImages, moderateReferenceImages } from './moderation.ts';
-import { makeImageThumbnail, THUMBNAIL_MIME } from './image.ts';
+import { inspectRasterImage, makeImageThumbnail, THUMBNAIL_MIME } from './image.ts';
 
 /** 生成产物存储桶。 */
 const GENERATIONS_BUCKET = 'generations';
@@ -440,6 +440,59 @@ interface AssetMeta {
   sizeBytes: number;
 }
 
+/** 精准图片操作落库前的最小媒体检查输入。 */
+interface PrecisionOutputMetadata {
+  mimeType: string;
+  width: number | null;
+  height: number | null;
+  hasTransparency: boolean | null;
+}
+
+/**
+ * 验证工具型操作没有返回伪结果：去背景必须含真实透明像素，放大尺寸必须接近请求倍率。
+ */
+export function validatePrecisionImageOutput(
+  params: ImageGenerationParams,
+  metadata: PrecisionOutputMetadata,
+): void {
+  const operation = normalizeImageOperation(params);
+  if (operation === 'remove_background') {
+    if (metadata.mimeType !== 'image/png' || metadata.hasTransparency !== true) {
+      throw new ApiException('provider_error', '去背景结果不是含透明像素的 PNG', {
+        reason: 'invalid_transparent_output',
+      });
+    }
+    return;
+  }
+  if (operation !== 'upscale') return;
+  if (!('upscaleFactor' in params)) {
+    throw new ApiException('provider_error', '高清放大结果缺少倍率契约', {
+      reason: 'invalid_upscale_output',
+    });
+  }
+  if (metadata.width == null || metadata.height == null) {
+    throw new ApiException('provider_error', '无法验证高清放大结果尺寸', {
+      reason: 'invalid_upscale_output',
+    });
+  }
+  if (!params.width || !params.height) return; // 兼容 v0.1 已在途且未记录源像素的请求。
+  const expectedWidth = params.width * params.upscaleFactor;
+  const expectedHeight = params.height * params.upscaleFactor;
+  const tolerance = (expected: number) => Math.max(2, Math.round(expected * 0.02));
+  if (
+    Math.abs(metadata.width - expectedWidth) > tolerance(expectedWidth) ||
+    Math.abs(metadata.height - expectedHeight) > tolerance(expectedHeight)
+  ) {
+    throw new ApiException('provider_error', '高清放大结果尺寸与请求倍率不一致', {
+      reason: 'invalid_upscale_output',
+      expectedWidth,
+      expectedHeight,
+      actualWidth: metadata.width,
+      actualHeight: metadata.height,
+    });
+  }
+}
+
 /** 一次结果转存尝试的持久化上下文。 */
 interface OutputAttempt {
   id: string;
@@ -527,11 +580,23 @@ async function uploadAsset(
   admin: SupabaseClient,
   candidate: AssetCandidate,
   attempt: OutputAttempt,
+  generation: GenerationRow,
 ): Promise<AssetMeta> {
   const assetId = crypto.randomUUID();
   const { bytes, contentType } = await fetchCandidate(candidate);
   // 实际 Content-Type 优先于候选自报 MIME（修正回调端硬编码 image/png 等）
   const mimeType = contentType ?? candidate.mimeType;
+  const inspected = candidate.kind === 'image'
+    ? await inspectRasterImage(bytes, mimeType)
+    : { width: null, height: null, hasTransparency: null };
+  if (generation.params.modality === 'image') {
+    validatePrecisionImageOutput(generation.params, {
+      mimeType,
+      width: inspected.width ?? candidate.width ?? null,
+      height: inspected.height ?? candidate.height ?? null,
+      hasTransparency: inspected.hasTransparency,
+    });
+  }
   const ext = extFromMime(mimeType);
   const path = `${attempt.prefix}${assetId}.${ext}`;
 
@@ -565,8 +630,8 @@ async function uploadAsset(
     storageBucket: GENERATIONS_BUCKET,
     storagePath: path,
     thumbnailPath,
-    width: candidate.width ?? null,
-    height: candidate.height ?? null,
+    width: inspected.width ?? candidate.width ?? null,
+    height: inspected.height ?? candidate.height ?? null,
     durationMs: candidate.durationMs ?? null,
     sizeBytes: bytes.byteLength,
   };
@@ -751,6 +816,11 @@ export async function landResult(
     await markFailed(admin, generation, '提供商未返回任何产出');
     return;
   }
+  const requestedCount = generation.params.modality === 'image'
+    ? Math.max(1, generation.params.count || 1)
+    : candidates.length;
+  // Provider 超额输出不能进入项目；候选短缺会按实际有效数量落库并记录 outputCount。
+  const acceptedCandidates = candidates.slice(0, requestedCount);
 
   // 取项目归属
   const { data: project } = await admin
@@ -768,8 +838,8 @@ export async function landResult(
   const attempt = await beginOutputAttempt(admin, generation, ownerId);
   const uploaded: AssetMeta[] = [];
   try {
-    for (const candidate of candidates) {
-      uploaded.push(await uploadAsset(admin, candidate, attempt));
+    for (const candidate of acceptedCandidates) {
+      uploaded.push(await uploadAsset(admin, candidate, attempt, generation));
     }
     await recordAttemptPaths(admin, attempt, [], 'staged');
   } catch (error) {

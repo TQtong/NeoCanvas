@@ -1,7 +1,25 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(29);
+select plan(31);
+
+select is(
+  (select count(*) from public.model_catalog
+    where key in ('fal-inpaint-sdxl','fal-remove-background-birefnet','fal-upscale-topaz')
+      and provider = 'fal'
+      and not (capabilities -> 'imageOperations' ? 'generate')),
+  3::bigint,
+  'fal 三个工具以不含普通生成能力的独立目录项登记'
+);
+select is(
+  (select count(*) from public.model_catalog
+    where key in ('replicate-inpaint-sd2','replicate-remove-background','replicate-upscale-real-esrgan')
+      and provider = 'replicate'
+      and (default_params ->> 'providerModel') like 'neocanvas:replicate:%'
+      and not (capabilities -> 'imageOperations' ? 'generate')),
+  3::bigint,
+  'Replicate 三个工具只能通过受控 Profile 目录登记'
+);
 
 insert into auth.users (
   instance_id, id, aud, role, email, encrypted_password,

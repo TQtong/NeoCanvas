@@ -490,6 +490,9 @@ export function ImageEditOverlay(props: ImageEditOverlayProps) {
         inputFidelity: state.inputFidelity,
         references,
         count: state.count,
+        // 编辑模型若依赖显式输出尺寸，应以实际上传源图为准；扩图会在下方用 outputCanvas 覆盖。
+        width: prepared.width,
+        height: prepared.height,
       };
       let params: ImageGenerationParams;
       if (state.operation === 'inpaint') {

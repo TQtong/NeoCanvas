@@ -25,8 +25,8 @@ export const ADAPTER_IMAGE_OPERATIONS: Readonly<
   volcengine: ['generate', 'semantic_edit'],
   jimeng: ['generate', 'semantic_edit'],
   minimax: ['generate', 'semantic_edit'],
-  fal: ['generate', 'semantic_edit'],
-  replicate: ['generate', 'semantic_edit'],
+  fal: ['inpaint', 'remove_background', 'upscale'],
+  replicate: ['inpaint', 'remove_background', 'upscale'],
   siliconflow: ['generate', 'semantic_edit'],
 };
 

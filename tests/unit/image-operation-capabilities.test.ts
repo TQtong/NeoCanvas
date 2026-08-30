@@ -84,4 +84,30 @@ describe('图片操作模型三方能力交集', () => {
     ]);
     expect(modelsForImageOperation([customModel], credentials, 'inpaint')).toEqual([]);
   });
+
+  it('fal 与 Replicate 工具模型只开放已实现的操作集合', () => {
+    const falModel: ModelCatalogEntry = {
+      ...baseModel,
+      provider: 'fal',
+      capabilities: {
+        ...baseModel.capabilities,
+        imageOperations: ['remove_background', 'outpaint'],
+      },
+    };
+    expect(
+      isModelAvailableForImageOperation(falModel, [credential('fal', 'fal')], 'remove_background'),
+    ).toBe(true);
+    expect(
+      isModelAvailableForImageOperation(falModel, [credential('fal', 'fal')], 'outpaint'),
+    ).toBe(false);
+
+    const replicateModel: ModelCatalogEntry = {
+      ...baseModel,
+      provider: 'replicate',
+      capabilities: { ...baseModel.capabilities, imageOperations: ['generate', 'upscale'] },
+    };
+    const credentials = [credential('replicate', 'replicate')];
+    expect(isModelAvailableForImageOperation(replicateModel, credentials, 'generate')).toBe(false);
+    expect(isModelAvailableForImageOperation(replicateModel, credentials, 'upscale')).toBe(true);
+  });
 });
