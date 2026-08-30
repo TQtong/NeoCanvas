@@ -9,6 +9,7 @@
 
 import {
   type ImageGenerationParams,
+  normalizeImageOperation,
   type PollResult,
   type Provider,
   type SubmitResult,
@@ -20,6 +21,9 @@ import { fetchReferenceBase64, type ModelAdapter, type ModelContext, resolveSize
 
 const DEFAULT_BASE = 'https://api.siliconflow.cn/v1';
 const DEFAULT_STEPS = 20;
+const QWEN_IMAGE_EDIT = 'Qwen/Qwen-Image-Edit';
+const QWEN_IMAGE_EDIT_2509 = 'Qwen/Qwen-Image-Edit-2509';
+const VERIFIED_EDIT_MODELS = new Set([QWEN_IMAGE_EDIT, QWEN_IMAGE_EDIT_2509]);
 
 /** 解析 API 根地址：优先使用用户自定义端点。 */
 function siliconflowBase(ctx: ModelContext): string {
@@ -27,8 +31,17 @@ function siliconflowBase(ctx: ModelContext): string {
 }
 
 /** 将画布尺寸映射到 SiliconFlow 图片接口的稳定尺寸。 */
-function toImageSize(width: number, height: number): string {
-  if (height > width) return '768x1024';
+function toImageSize(providerModel: string, width: number, height: number): string {
+  const ratio = width / height;
+  if (providerModel === 'Qwen/Qwen-Image') {
+    if (ratio > 1.55) return '1664x928';
+    if (ratio > 1.18) return '1472x1140';
+    if (ratio < 0.65) return '928x1664';
+    if (ratio < 0.85) return '1140x1472';
+    return '1328x1328';
+  }
+  if (ratio > 1.1) return '1024x768';
+  if (ratio < 0.9) return '768x1024';
   return '1024x1024';
 }
 
@@ -39,12 +52,18 @@ function toVideoSize(aspectRatio?: string): string {
   return '1280x720';
 }
 
-/** 把首张参考图编码为 SiliconFlow 接受的 data URI。 */
-async function firstReferenceDataUri(ctx: ModelContext): Promise<string | null> {
-  const reference = ctx.references[0];
-  if (!reference) return null;
+/** 把参考图编码为 SiliconFlow 接受的 data URI。 */
+async function referenceDataUri(
+  reference: ModelContext['references'][number],
+): Promise<string> {
   const { base64, mimeType } = await fetchReferenceBase64(reference);
   return `data:${mimeType};base64,${base64}`;
+}
+
+/** 把首张参考图编码为 SiliconFlow 接受的 data URI。 */
+function firstReferenceDataUri(ctx: ModelContext): Promise<string | null> {
+  const reference = ctx.references[0];
+  return reference ? referenceDataUri(reference) : Promise.resolve(null);
 }
 
 /** 提交同步图片生成 / 编辑请求。 */
@@ -55,19 +74,59 @@ async function submitImage(
   baseUrl: string,
 ): Promise<SubmitResult> {
   const params = request.params as ImageGenerationParams;
+  const operation = normalizeImageOperation(params);
   const { width, height } = resolveSize(params);
   const count = Math.min(params.count || 1, ctx.capabilities.maxOutputs);
   const body: Record<string, unknown> = {
     model: ctx.providerModel,
     prompt: request.prompt,
-    image_size: toImageSize(width, height),
-    batch_size: count,
     num_inference_steps: DEFAULT_STEPS,
   };
   if (params.negativePrompt) body.negative_prompt = params.negativePrompt;
   if (params.seed != null) body.seed = params.seed;
-  const reference = await firstReferenceDataUri(ctx);
-  if (reference) body.image = reference;
+
+  if (operation === 'semantic_edit') {
+    if (!VERIFIED_EDIT_MODELS.has(ctx.providerModel)) {
+      throw new ApiException(
+        'unsupported_param',
+        'SiliconFlow 只有已验证的 Qwen Image Edit 模型支持语义编辑',
+      );
+    }
+    const contentReferences = ctx.references.filter((reference) => reference.role === 'content');
+    const styleReferences = ctx.references.filter((reference) => reference.role === 'style');
+    const hasUnsupportedRole = ctx.references.some(
+      (reference) => reference.role !== 'content' && reference.role !== 'style',
+    );
+    const maxStyles = ctx.providerModel === QWEN_IMAGE_EDIT_2509 ? 2 : 0;
+    if (
+      contentReferences.length !== 1 ||
+      hasUnsupportedRole ||
+      styleReferences.length > maxStyles ||
+      ctx.references.length !== contentReferences.length + styleReferences.length
+    ) {
+      throw new ApiException(
+        'unsupported_param',
+        ctx.providerModel === QWEN_IMAGE_EDIT_2509
+          ? 'Qwen Image Edit 2509 必须包含一个内容源图，且最多追加两个风格参考图'
+          : 'Qwen Image Edit 必须包含且仅包含一个内容源图',
+      );
+    }
+    body.image = await referenceDataUri(contentReferences[0]!);
+    if (styleReferences[0]) body.image2 = await referenceDataUri(styleReferences[0]);
+    if (styleReferences[1]) body.image3 = await referenceDataUri(styleReferences[1]);
+  } else if (operation === 'generate') {
+    if (VERIFIED_EDIT_MODELS.has(ctx.providerModel)) {
+      throw new ApiException('unsupported_param', 'Qwen Image Edit 模型不能用于普通文生图入口');
+    }
+    if (ctx.references.length > 0) {
+      throw new ApiException('unsupported_param', 'SiliconFlow 普通生成模型不能携带编辑源图');
+    }
+    body.image_size = toImageSize(ctx.providerModel, width, height);
+    // 官方 batch_size 仅适用于 Kolors；其他模型单次固定返回一张。
+    if (ctx.providerModel === 'Kwai-Kolors/Kolors') body.batch_size = count;
+  } else {
+    throw new ApiException('unsupported_param', `SiliconFlow 不支持图片操作 ${operation}`);
+  }
 
   const response = await fetch(`${baseUrl}/images/generations`, {
     method: 'POST',

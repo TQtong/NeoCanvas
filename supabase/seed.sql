@@ -75,9 +75,13 @@ values
     'image',
     jsonb_build_object(
       'imageOperations', jsonb_build_array('generate', 'semantic_edit'),
-      'aspectRatios', jsonb_build_array('1:1', '4:3', '3:4', '16:9', '9:16'),
-      'sizes', jsonb_build_array(),
-      'maxOutputs', 4,
+      'aspectRatios', jsonb_build_array('1:1', '4:3', '3:4', '16:9', '9:16', '3:2', '2:3'),
+      'sizes', jsonb_build_array(
+        jsonb_build_object('width', 1024, 'height', 1024, 'label', '1K'),
+        jsonb_build_object('width', 2048, 'height', 2048, 'label', '2K'),
+        jsonb_build_object('width', 4096, 'height', 4096, 'label', '4K')
+      ),
+      'maxOutputs', 1,
       'supportsNegativePrompt', false,
       'supportsReferenceImages', true,
       'supportsImageToVideo', false,
@@ -85,13 +89,16 @@ values
       'qualities', jsonb_build_array('high'),
       'isAsync', false,
       'supportsWebhook', false,
-      'maxInputImages', 4,
+      'maxInputImages', 14,
       'inputFidelityOptions', jsonb_build_array(),
       'upscaleFactors', jsonb_build_array(),
       'supportsTransparentOutput', false,
       'maxInputPixels', 16777216
     ),
-    jsonb_build_object('aspectRatio', '1:1', 'count', 1),
+    jsonb_build_object(
+      'aspectRatio', '1:1', 'sizePreset', '2k', 'count', 1,
+      'providerModel', 'gemini-3-pro-image'
+    ),
     30,
     true
   ),

@@ -11,6 +11,9 @@ import {
 } from './replicate.ts';
 import { volcengineAdapter } from './volcengine.ts';
 import { jimengAdapter } from './jimeng.ts';
+import { googleAdapter } from './google.ts';
+import { minimaxAdapter } from './minimax.ts';
+import { siliconflowAdapter } from './siliconflow.ts';
 
 /** 构造适配器契约测试所需的最小完整图片能力。 */
 function capabilities(operations: ModelCapabilities['imageOperations']): ModelCapabilities {
@@ -757,4 +760,387 @@ Deno.test('即梦目录不能用任意 providerModel 扩大专业操作能力', 
       ctx,
     )
   );
+});
+
+Deno.test('Google 语义编辑按文本、源图、风格图排序并忽略思考阶段图片', async () => {
+  const originalFetch = globalThis.fetch;
+  const captured: {
+    url?: string;
+    headers?: Headers;
+    body?: Record<string, unknown>;
+  } = {};
+  globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input);
+    if (url.startsWith('https://assets.test/')) {
+      return Promise.resolve(
+        new Response(new Uint8Array([1, 2, 3]), {
+          headers: { 'Content-Type': url.endsWith('.webp') ? 'image/webp' : 'image/png' },
+        }),
+      );
+    }
+    captured.url = url;
+    captured.headers = new Headers(init?.headers);
+    captured.body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    return Promise.resolve(
+      Response.json({
+        candidates: [{
+          content: {
+            parts: [
+              { inlineData: { mimeType: 'image/png', data: 'dGhvdWdodA==' }, thought: true },
+              { text: '完成编辑' },
+              { inlineData: { mimeType: 'image/png', data: 'ZmluYWw=' } },
+            ],
+          },
+        }],
+      }),
+    );
+  }) as typeof fetch;
+
+  try {
+    const ctx = context('gemini-3-pro-image');
+    ctx.capabilities.maxOutputs = 1;
+    ctx.references = [
+      {
+        assetId: 'source',
+        role: 'content',
+        url: 'https://assets.test/source.png',
+        mimeType: 'image/png',
+      },
+      {
+        assetId: 'style',
+        role: 'style',
+        url: 'https://assets.test/style.webp',
+        mimeType: 'image/webp',
+      },
+    ];
+    const result = await googleAdapter.submit(
+      request({
+        modality: 'image',
+        operation: 'semantic_edit',
+        inputMode: 'original',
+        count: 1,
+        aspectRatio: '16:9',
+        sizePreset: '2k',
+        references: [
+          { origin: 'attachment', assetId: 'source', role: 'content' },
+          { origin: 'attachment', assetId: 'style', role: 'style' },
+        ],
+      }),
+      ctx,
+    );
+
+    assertEquals(
+      captured.url,
+      'https://generativelanguage.googleapis.com/v1/models/gemini-3-pro-image:generateContent',
+    );
+    assertEquals(captured.headers?.get('x-goog-api-key'), 'test-key');
+    assertEquals(new URL(captured.url!).search, '');
+    const contents = captured.body?.contents as Array<{ parts: Array<Record<string, unknown>> }>;
+    assertEquals(contents[0]?.parts[0], { text: '把杯子改成蓝色' });
+    assertEquals(
+      contents[0]?.parts.slice(1).map((part) => (part.inlineData as { mimeType: string }).mimeType),
+      ['image/png', 'image/webp'],
+    );
+    assertEquals(captured.body?.generationConfig, {
+      responseModalities: ['IMAGE'],
+      responseFormat: { image: { aspectRatio: '16:9', imageSize: '2K' } },
+    });
+    assertEquals(result.kind, 'sync');
+    if (result.kind === 'sync') {
+      assertEquals(result.candidates.length, 1);
+      assertEquals(result.candidates[0]?.fetch, { type: 'base64', data: 'ZmluYWw=' });
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test('Google 对无最终图片和像素级蒙版操作显式失败', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = ((input: string | URL | Request) => {
+    if (String(input).startsWith('https://assets.test/')) {
+      return Promise.resolve(
+        new Response(new Uint8Array([1]), { headers: { 'Content-Type': 'image/png' } }),
+      );
+    }
+    return Promise.resolve(
+      Response.json({ candidates: [{ content: { parts: [{ text: '拒绝' }] } }] }),
+    );
+  }) as typeof fetch;
+
+  try {
+    const semantic = context('gemini-3-pro-image');
+    setToolReferences(semantic);
+    await assertRejects(() =>
+      googleAdapter.submit(
+        request({
+          modality: 'image',
+          operation: 'semantic_edit',
+          inputMode: 'original',
+          count: 1,
+          references: [{ origin: 'attachment', assetId: 'source', role: 'content' }],
+        }),
+        semantic,
+      )
+    );
+
+    const inpaint = context('gemini-3-pro-image');
+    setToolReferences(inpaint, true);
+    await assertRejects(() =>
+      googleAdapter.submit(
+        request({
+          modality: 'image',
+          operation: 'inpaint',
+          inputMode: 'original',
+          maskFeatherPx: 4,
+          count: 1,
+          references: [
+            { origin: 'attachment', assetId: 'source', role: 'content' },
+            { origin: 'attachment', assetId: 'mask', role: 'mask' },
+          ],
+        }),
+        inpaint,
+      )
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test('MiniMax 只把单个人物内容源图映射为 character 主体参考', async () => {
+  const originalFetch = globalThis.fetch;
+  const captured: { body?: Record<string, unknown> } = {};
+  globalThis.fetch = ((_input: string | URL | Request, init?: RequestInit) => {
+    captured.body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    return Promise.resolve(
+      Response.json({
+        data: { image_urls: ['https://result.test/minimax.jpeg'] },
+        base_resp: { status_code: 0 },
+      }),
+    );
+  }) as typeof fetch;
+
+  try {
+    const ctx = context('image-01');
+    setToolReferences(ctx);
+    await minimaxAdapter.submit(
+      request({
+        modality: 'image',
+        operation: 'semantic_edit',
+        inputMode: 'original',
+        count: 2,
+        seed: 88,
+        aspectRatio: '3:2',
+        references: [{ origin: 'attachment', assetId: 'source', role: 'content' }],
+      }),
+      ctx,
+    );
+
+    assertEquals(captured.body?.subject_reference, [{
+      type: 'character',
+      image_file: 'https://assets.test/source.png',
+    }]);
+    assertEquals(captured.body?.seed, 88);
+    assertEquals(captured.body?.n, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test('MiniMax 拒绝蒙版、扩图、放大与非受控图片模型', async () => {
+  const ctx = context('image-01');
+  setToolReferences(ctx, true);
+  for (
+    const params of [
+      {
+        modality: 'image' as const,
+        operation: 'inpaint' as const,
+        inputMode: 'original' as const,
+        maskFeatherPx: 0,
+        count: 1,
+        references: [
+          { origin: 'attachment' as const, assetId: 'source', role: 'content' as const },
+          { origin: 'attachment' as const, assetId: 'mask', role: 'mask' as const },
+        ],
+      },
+      {
+        modality: 'image' as const,
+        operation: 'outpaint' as const,
+        inputMode: 'original' as const,
+        count: 1,
+        outputCanvas: {
+          width: 1200,
+          height: 1000,
+          sourceX: 100,
+          sourceY: 0,
+          sourceWidth: 1000,
+          sourceHeight: 1000,
+        },
+        references: [{
+          origin: 'attachment' as const,
+          assetId: 'source',
+          role: 'content' as const,
+        }],
+      },
+      {
+        modality: 'image' as const,
+        operation: 'upscale' as const,
+        inputMode: 'original' as const,
+        upscaleFactor: 2 as const,
+        count: 1 as const,
+        references: [{
+          origin: 'attachment' as const,
+          assetId: 'source',
+          role: 'content' as const,
+        }],
+      },
+    ]
+  ) {
+    await assertRejects(() => minimaxAdapter.submit(request(params), ctx));
+  }
+
+  const arbitraryModel = context('arbitrary-minimax-model');
+  setToolReferences(arbitraryModel);
+  await assertRejects(() =>
+    minimaxAdapter.submit(
+      request({
+        modality: 'image',
+        operation: 'semantic_edit',
+        inputMode: 'original',
+        count: 1,
+        references: [{ origin: 'attachment', assetId: 'source', role: 'content' }],
+      }),
+      arbitraryModel,
+    )
+  );
+});
+
+Deno.test('SiliconFlow Qwen Edit 2509 映射三张有序输入且不发送生成专属字段', async () => {
+  const originalFetch = globalThis.fetch;
+  const captured: { body?: Record<string, unknown> } = {};
+  globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input);
+    if (url.startsWith('https://assets.test/')) {
+      const marker = url.includes('source') ? 1 : url.includes('style-1') ? 2 : 3;
+      return Promise.resolve(
+        new Response(new Uint8Array([marker]), { headers: { 'Content-Type': 'image/png' } }),
+      );
+    }
+    captured.body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    return Promise.resolve(Response.json({ images: [{ url: 'https://result.test/qwen.png' }] }));
+  }) as typeof fetch;
+
+  try {
+    const ctx = context('Qwen/Qwen-Image-Edit-2509');
+    ctx.references = [
+      {
+        assetId: 'source',
+        role: 'content',
+        url: 'https://assets.test/source.png',
+        mimeType: 'image/png',
+      },
+      {
+        assetId: 'style-1',
+        role: 'style',
+        url: 'https://assets.test/style-1.png',
+        mimeType: 'image/png',
+      },
+      {
+        assetId: 'style-2',
+        role: 'style',
+        url: 'https://assets.test/style-2.png',
+        mimeType: 'image/png',
+      },
+    ];
+    await siliconflowAdapter.submit(
+      request({
+        modality: 'image',
+        operation: 'semantic_edit',
+        inputMode: 'original',
+        count: 1,
+        references: [
+          { origin: 'attachment', assetId: 'source', role: 'content' },
+          { origin: 'attachment', assetId: 'style-1', role: 'style' },
+          { origin: 'attachment', assetId: 'style-2', role: 'style' },
+        ],
+      }),
+      ctx,
+    );
+
+    assertEquals(captured.body?.image, 'data:image/png;base64,AQ==');
+    assertEquals(captured.body?.image2, 'data:image/png;base64,Ag==');
+    assertEquals(captured.body?.image3, 'data:image/png;base64,Aw==');
+    assertEquals('image_size' in captured.body!, false);
+    assertEquals('batch_size' in captured.body!, false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test('SiliconFlow 普通模型与编辑模型入口严格隔离', async () => {
+  const originalFetch = globalThis.fetch;
+  const captured: { body?: Record<string, unknown> } = {};
+  globalThis.fetch = ((_input: string | URL | Request, init?: RequestInit) => {
+    captured.body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    return Promise.resolve(Response.json({ images: [{ url: 'https://result.test/kolors.png' }] }));
+  }) as typeof fetch;
+
+  try {
+    const kolors = context('Kwai-Kolors/Kolors');
+    await siliconflowAdapter.submit(
+      request({
+        modality: 'image',
+        operation: 'generate',
+        count: 3,
+        aspectRatio: '3:2',
+        references: [],
+      }),
+      kolors,
+    );
+    assertEquals(captured.body?.image_size, '1024x768');
+    assertEquals(captured.body?.batch_size, 3);
+
+    const ordinary = context('Qwen/Qwen-Image');
+    setToolReferences(ordinary);
+    await assertRejects(() =>
+      siliconflowAdapter.submit(
+        request({
+          modality: 'image',
+          operation: 'semantic_edit',
+          inputMode: 'original',
+          count: 1,
+          references: [{ origin: 'attachment', assetId: 'source', role: 'content' }],
+        }),
+        ordinary,
+      )
+    );
+
+    const edit = context('Qwen/Qwen-Image-Edit');
+    await assertRejects(() =>
+      siliconflowAdapter.submit(
+        request({ modality: 'image', operation: 'generate', count: 1, references: [] }),
+        edit,
+      )
+    );
+
+    setToolReferences(edit, true);
+    await assertRejects(() =>
+      siliconflowAdapter.submit(
+        request({
+          modality: 'image',
+          operation: 'inpaint',
+          inputMode: 'original',
+          maskFeatherPx: 0,
+          count: 1,
+          references: [
+            { origin: 'attachment', assetId: 'source', role: 'content' },
+            { origin: 'attachment', assetId: 'mask', role: 'mask' },
+          ],
+        }),
+        edit,
+      )
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });

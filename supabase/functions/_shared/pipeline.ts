@@ -372,7 +372,7 @@ export function resolveProviderModel(
     case 'gpt-image-2':
       return env('OPENAI_IMAGE_MODEL', 'gpt-image-1');
     case 'nano-banana-pro':
-      return env('GOOGLE_IMAGE_MODEL', 'gemini-2.5-flash-image-preview');
+      return env('GOOGLE_IMAGE_MODEL', 'gemini-3-pro-image');
     case 'seedance-2.0':
       return env('ARK_SEEDANCE_MODEL', 'seedance-1-0-pro');
     case 'seedream-3.0':

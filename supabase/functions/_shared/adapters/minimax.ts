@@ -10,6 +10,7 @@
 
 import {
   type ImageGenerationParams,
+  normalizeImageOperation,
   type PollResult,
   type Provider,
   type SubmitResult,
@@ -20,6 +21,7 @@ import { ApiException } from '../response.ts';
 import { type ModelAdapter, type ModelContext, resolveSize } from './base.ts';
 
 const DEFAULT_BASE = 'https://api.minimaxi.com/v1';
+const MINIMAX_IMAGE_MODELS = new Set(['image-01', 'image-01-live']);
 
 /** MiniMax 响应中所有接口共享的业务状态。 */
 interface MiniMaxBaseResponse {
@@ -86,6 +88,28 @@ async function submitImage(
   baseUrl: string,
 ): Promise<SubmitResult> {
   const params = request.params as ImageGenerationParams;
+  const operation = normalizeImageOperation(params);
+  if (operation !== 'generate' && operation !== 'semantic_edit') {
+    throw new ApiException('unsupported_param', `MiniMax 不支持图片操作 ${operation}`);
+  }
+  if (!MINIMAX_IMAGE_MODELS.has(ctx.providerModel)) {
+    throw new ApiException('unsupported_param', 'MiniMax 图片请求必须使用受支持的 Image 01 模型');
+  }
+
+  const contentReferences = ctx.references.filter((reference) => reference.role === 'content');
+  if (operation === 'generate' && ctx.references.length > 0) {
+    throw new ApiException('unsupported_param', 'MiniMax 普通生成请求不能携带人物主体参考');
+  }
+  if (
+    operation === 'semantic_edit' &&
+    (contentReferences.length !== 1 || ctx.references.length !== 1)
+  ) {
+    throw new ApiException(
+      'unsupported_param',
+      'MiniMax 语义编辑仅接受一个清晰的人物内容源图',
+    );
+  }
+
   const { width, height } = resolveSize(params);
   const body: Record<string, unknown> = {
     model: ctx.providerModel,
@@ -94,9 +118,10 @@ async function submitImage(
     response_format: 'url',
     n: Math.min(params.count || 1, ctx.capabilities.maxOutputs),
   };
+  if (params.seed != null) body.seed = params.seed;
 
-  if (ctx.references.length > 0) {
-    body.subject_reference = ctx.references.map((reference) => ({
+  if (operation === 'semantic_edit') {
+    body.subject_reference = contentReferences.map((reference) => ({
       type: 'character',
       image_file: reference.url,
     }));

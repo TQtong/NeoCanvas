@@ -1,7 +1,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(33);
+select plan(41);
 
 select is(
   (select count(*) from public.model_catalog
@@ -33,6 +33,61 @@ select is(
     where key = 'jimeng-image-4.0'),
   '["generate", "semantic_edit"]'::jsonb,
   '即梦图片 4.0 只开放已验证的生成与语义编辑能力'
+);
+select is(
+  (select capabilities -> 'imageOperations' from public.model_catalog
+    where key = 'nano-banana-pro'),
+  '["generate", "semantic_edit"]'::jsonb,
+  'Google 只开放普通生成与语义编辑'
+);
+select is(
+  (select default_params ->> 'providerModel' from public.model_catalog
+    where key = 'nano-banana-pro'),
+  'gemini-3-pro-image',
+  'Nano Banana Pro 绑定当前稳定版 Gemini 3 Pro Image'
+);
+select ok(
+  (select (capabilities ->> 'maxOutputs')::integer = 1
+       and (capabilities ->> 'maxInputImages')::integer = 14
+     from public.model_catalog where key = 'nano-banana-pro'),
+  'Google 同步接口固定单候选并登记完整参考图上限'
+);
+select is(
+  (select count(*) from public.model_catalog
+    where key in ('minimax-image-01', 'minimax-image-01-live')
+      and capabilities -> 'imageOperations' = '["generate", "semantic_edit"]'::jsonb
+      and (capabilities ->> 'maxInputImages')::integer = 1),
+  2::bigint,
+  'MiniMax 两个图片模型仅支持单人物源图语义编辑'
+);
+select is(
+  (select count(*) from public.model_catalog
+    where key in ('siliconflow-qwen-image-edit', 'siliconflow-qwen-image-edit-2509')
+      and capabilities -> 'imageOperations' = '["semantic_edit"]'::jsonb
+      and not (capabilities -> 'imageOperations' ? 'generate')),
+  2::bigint,
+  'SiliconFlow 只有两个已验证 Qwen 编辑模型进入语义编辑入口'
+);
+select is(
+  (select count(*) from public.model_catalog
+    where provider = 'siliconflow'
+      and modality = 'image'
+      and key not in ('siliconflow-qwen-image-edit', 'siliconflow-qwen-image-edit-2509')
+      and capabilities -> 'imageOperations' = '["generate"]'::jsonb),
+  5::bigint,
+  'SiliconFlow 普通图片模型只开放 generate'
+);
+select is(
+  (select (capabilities ->> 'maxInputImages')::integer from public.model_catalog
+    where key = 'siliconflow-qwen-image-edit'),
+  1,
+  '旧版 Qwen Image Edit 只接受一个内容源图'
+);
+select is(
+  (select (capabilities ->> 'maxInputImages')::integer from public.model_catalog
+    where key = 'siliconflow-qwen-image-edit-2509'),
+  3,
+  'Qwen Image Edit 2509 接受一个内容源图和两个辅助参考图'
 );
 
 insert into auth.users (
