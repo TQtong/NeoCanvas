@@ -77,9 +77,11 @@ import { SettingsDialog } from '@/components/shared/SettingsDialog';
 import { ImageEditStage } from './ImageEditStage';
 import { useImageEditSession } from './use-image-edit-session';
 
-/** 精准编辑入口特性开关；生产可通过公开环境变量即时隐藏入口。 */
+/** 精准编辑入口特性开关；开发环境默认启用，生产构建必须显式开启。 */
+const imageEditingFlag = process.env.NEXT_PUBLIC_IMAGE_EDITING_ENABLED;
 export const IMAGE_EDITING_ENABLED =
-  process.env.NEXT_PUBLIC_IMAGE_EDITING_ENABLED?.toLowerCase() !== 'false';
+  imageEditingFlag === 'true' ||
+  (imageEditingFlag !== 'false' && process.env.NODE_ENV === 'development');
 
 type EditOperation = Exclude<ImageOperation, 'generate'>;
 
