@@ -8,7 +8,12 @@
  * @module functions/process-generation-queue
  */
 
-import { type GenerationRow, type ModelCatalogRow } from '../_shared/types.ts';
+import {
+  ERROR_CODES,
+  type ErrorCode,
+  type GenerationRow,
+  type ModelCatalogRow,
+} from '../_shared/types.ts';
 import { exceptionToResponse, fail, ok } from '../_shared/response.ts';
 import { createAdminClient, type SupabaseClient } from '../_shared/supabase.ts';
 import { getAdapter } from '../_shared/adapters/registry.ts';
@@ -175,7 +180,10 @@ async function processJob(
       });
       throw error; // 不删除消息，留待退避后重试
     }
-    await markFailed(admin, { ...generation, status: 'running' }, message);
+    const stableCode: ErrorCode = ERROR_CODES.includes(code as ErrorCode)
+      ? (code as ErrorCode)
+      : 'internal_error';
+    await markFailed(admin, { ...generation, status: 'running' }, message, undefined, stableCode);
   }
 }
 

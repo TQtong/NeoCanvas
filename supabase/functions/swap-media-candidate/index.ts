@@ -7,6 +7,7 @@
  */
 
 import {
+  type GenerationRow,
   type SwapMediaCandidateRequest,
   type SwapMediaCandidateResponse,
 } from '../_shared/types.ts';
@@ -18,6 +19,7 @@ import {
   ok,
 } from '../_shared/response.ts';
 import { assertProjectOwner, createAdminClient, requireUser } from '../_shared/supabase.ts';
+import { logGenerationTelemetry } from '../_shared/telemetry.ts';
 
 Deno.serve(async (request) => {
   const preflight = handleCorsPreflight(request);
@@ -34,6 +36,25 @@ Deno.serve(async (request) => {
     }
     await assertProjectOwner(admin, body.projectId, userId);
 
+    // RPC 会交换节点绑定，先读取候选来源任务；遥测查询失败不能阻断用户采用候选。
+    let telemetryGeneration: GenerationRow | null = null;
+    const { data: candidateContext } = await admin
+      .from('canvas_nodes')
+      .select('generation_id')
+      .eq('project_id', body.projectId)
+      .eq('id', body.candidateNodeId)
+      .maybeSingle();
+    const generationId = candidateContext?.generation_id as string | null | undefined;
+    if (generationId) {
+      const { data: generationContext } = await admin
+        .from('generations')
+        .select('*')
+        .eq('project_id', body.projectId)
+        .eq('id', generationId)
+        .maybeSingle();
+      telemetryGeneration = (generationContext as GenerationRow | null) ?? null;
+    }
+
     const { data, error } = await admin.rpc('swap_media_candidate', {
       p_project_id: body.projectId,
       p_primary_node_id: body.primaryNodeId,
@@ -42,7 +63,16 @@ Deno.serve(async (request) => {
     });
     if (error) throw new ApiException('conflict', error.message);
 
-    return ok<SwapMediaCandidateResponse>({ swapped: Boolean(data) });
+    const swapped = Boolean(data);
+    if (swapped && telemetryGeneration) {
+      logGenerationTelemetry(telemetryGeneration, 'candidate_adopted', {
+        primaryNodeId: body.primaryNodeId,
+        candidateNodeId: body.candidateNodeId,
+        geometryMode: body.geometryMode,
+      });
+    }
+
+    return ok<SwapMediaCandidateResponse>({ swapped });
   } catch (error) {
     return exceptionToResponse(error);
   }

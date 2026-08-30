@@ -12,6 +12,7 @@
 import {
   type AssetCandidate,
   type BaseImageEditParams,
+  type ErrorCode,
   type GenerationRow,
   IMAGE_INPUT_MODES,
   type ImageGenerationParams,
@@ -36,6 +37,7 @@ import { type ModelContext, type ResolvedReference } from './adapters/base.ts';
 import { resolveProviderCredential } from './credentials.ts';
 import { moderateOutputImages, moderateReferenceImages } from './moderation.ts';
 import { inspectRasterImage, makeImageThumbnail, THUMBNAIL_MIME } from './image.ts';
+import { logGenerationTelemetry } from './telemetry.ts';
 
 /** 生成产物存储桶。 */
 const GENERATIONS_BUCKET = 'generations';
@@ -833,7 +835,7 @@ export async function landResult(
     .single();
   const ownerId = project?.owner_id as string | undefined;
   if (!ownerId) {
-    await markFailed(admin, generation, '项目归属缺失');
+    await markFailed(admin, generation, '项目归属缺失', undefined, 'internal_error');
     return;
   }
 
@@ -888,6 +890,7 @@ export async function landResult(
       generation,
       `产出触发内容安全审核：${blockedReason ?? '违规'}`,
       blockedReason ?? '产出违规',
+      'content_blocked',
     );
     return;
   }
@@ -1046,7 +1049,19 @@ export async function landResult(
   if (!result.landed) {
     // 并发输家只删除自己的任务级暂存前缀，不影响获胜事务登记的资产。
     await cleanupAttemptObjects(admin, attempt);
+    return;
   }
+
+  // 仅并发落库胜者记录成功，避免 webhook、轮询与队列重复抬高完成量。
+  const outputDimensions = survivors.flatMap((item) =>
+    item.width !== null && item.height !== null
+      ? [{ width: item.width, height: item.height, pixels: item.width * item.height }]
+      : []
+  );
+  logGenerationTelemetry(generation, 'generation_succeeded', {
+    outputCount: survivors.length,
+    outputDimensions,
+  });
 }
 
 /**
@@ -1056,20 +1071,27 @@ export async function landResult(
  * @param generation - 生成任务行
  * @param error - 失败原因
  * @param moderationReason - 若因内容安全失败，记录拦截原因并置 moderation_status=blocked
+ * @param errorCode - 稳定错误码，仅用于结构化遥测，不写入用户可见错误文案
  */
 export async function markFailed(
   admin: SupabaseClient,
   generation: GenerationRow,
   error: string,
   moderationReason?: string,
+  errorCode: ErrorCode = 'provider_error',
 ): Promise<void> {
   if (TERMINAL_STATUSES.has(generation.status)) return;
-  const { error: rpcError } = await admin.rpc('fail_generation_once', {
+  const { data, error: rpcError } = await admin.rpc('fail_generation_once', {
     p_generation_id: generation.id,
     p_error: error,
     p_moderation_reason: moderationReason ?? null,
   });
   if (rpcError) {
     throw new ApiException('internal_error', `提交生成失败终态失败：${rpcError.message}`);
+  }
+  const result = data as { changed?: boolean } | null;
+  // 与成功事件相同，只让第一次终态提交者记录，保证并发统计可加总。
+  if (result?.changed) {
+    logGenerationTelemetry(generation, 'generation_failed', { errorCode });
   }
 }

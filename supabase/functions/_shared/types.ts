@@ -36,6 +36,7 @@ export interface ModelCatalogRow {
 /** 数据库 `generations` 行（Edge 流水线读取字段）。 */
 export interface GenerationRow {
   id: string;
+  created_at: string;
   project_id: string;
   conversation_id: string | null;
   message_id: string | null;
