@@ -43,6 +43,12 @@ export default defineConfig({
       url: 'http://127.0.0.1:3100/api/health',
       reuseExistingServer: !process.env.CI,
       timeout: 120_000,
+      env: {
+        // 精准编辑用例不能依赖开发者机器上的本地开关状态。
+        NEXT_PUBLIC_IMAGE_EDITING_ENABLED: 'true',
+        // 与 Edge 的 NEOCANVAS_TEST_MODE 双重守卫，允许确定性模型覆盖全部操作。
+        NEXT_PUBLIC_NEOCANVAS_TEST_MODE: 'true',
+      },
     },
     {
       command: 'node scripts/serve-edge-tests.mjs',
