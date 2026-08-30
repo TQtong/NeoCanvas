@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ModelCatalogEntry, ProviderCredential } from '@/types';
 import {
   adapterForModel,
@@ -50,6 +50,8 @@ function credential(
 }
 
 describe('图片操作模型三方能力交集', () => {
+  afterEach(() => vi.unstubAllEnvs());
+
   it('目录声明不能扩大 Adapter 尚未实现的操作', () => {
     const credentials = [credential('openai')];
     expect(isModelAvailableForImageOperation(baseModel, credentials, 'semantic_edit')).toBe(true);
@@ -109,5 +111,26 @@ describe('图片操作模型三方能力交集', () => {
     const credentials = [credential('replicate', 'replicate')];
     expect(isModelAvailableForImageOperation(replicateModel, credentials, 'generate')).toBe(false);
     expect(isModelAvailableForImageOperation(replicateModel, credentials, 'upscale')).toBe(true);
+  });
+
+  it('确定性 Provider 只有在公开测试守卫开启时才覆盖全部操作', () => {
+    const testModel: ModelCatalogEntry = {
+      ...baseModel,
+      provider: 'custom:neocanvas-test',
+      capabilities: {
+        ...baseModel.capabilities,
+        imageOperations: ['generate', 'remove_background', 'upscale'],
+      },
+    };
+    const credentials = [credential('custom:neocanvas-test', 'openai')];
+
+    expect(isModelAvailableForImageOperation(testModel, credentials, 'remove_background')).toBe(
+      false,
+    );
+    vi.stubEnv('NEXT_PUBLIC_NEOCANVAS_TEST_MODE', 'true');
+    expect(isModelAvailableForImageOperation(testModel, credentials, 'remove_background')).toBe(
+      true,
+    );
+    expect(isModelAvailableForImageOperation(testModel, credentials, 'upscale')).toBe(true);
   });
 });

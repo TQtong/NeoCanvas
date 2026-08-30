@@ -16,6 +16,18 @@ import type {
 } from '@/types';
 import { isCustomProvider, modelSupportsImageOperation } from '@/types';
 
+/** 只在受控本地 E2E 环境启用的确定性 Provider，与 Edge 守卫逐字一致。 */
+const TEST_PROVIDER = 'custom:neocanvas-test';
+/** 确定性 Provider 覆盖全部图片操作，用于验证正式 UI 与事务链路。 */
+const TEST_PROVIDER_IMAGE_OPERATIONS: readonly ImageOperation[] = [
+  'generate',
+  'semantic_edit',
+  'inpaint',
+  'outpaint',
+  'remove_background',
+  'upscale',
+];
+
 /** 与当前已实现 Adapter 一致的保守协议能力。 */
 export const ADAPTER_IMAGE_OPERATIONS: Readonly<
   Record<BuiltInProvider, readonly ImageOperation[]>
@@ -53,6 +65,17 @@ export function isModelAvailableForImageOperation(
     (candidate) => candidate.provider === model.provider && candidate.enabled,
   );
   if (!credential) return false;
+  // 测试 Provider 在 Edge 侧还会再次检查 NEOCANVAS_TEST_MODE；公开构建未显式开启时
+  // 必须继续按自定义 Provider 的真实 adapter 能力收紧，不能形成生产后门。
+  if (
+    model.provider === TEST_PROVIDER &&
+    process.env.NEXT_PUBLIC_NEOCANVAS_TEST_MODE === 'true'
+  ) {
+    return (
+      TEST_PROVIDER_IMAGE_OPERATIONS.includes(operation) &&
+      modelSupportsImageOperation(model.capabilities, operation)
+    );
+  }
   const adapter = adapterForModel(model, credentials);
   return Boolean(
     adapter &&
