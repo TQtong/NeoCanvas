@@ -1,7 +1,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select plan(41);
+select plan(43);
 
 select is(
   (select count(*) from public.model_catalog
@@ -209,6 +209,32 @@ select set_config('request.jwt.claim.sub', '11000000-0000-0000-0000-000000000001
 select is((select count(*)::integer from public.generation_inputs), 2, '项目所有者可以读取自己的输入血缘');
 select set_config('request.jwt.claim.sub', '11000000-0000-0000-0000-000000000002', true);
 select is((select count(*)::integer from public.generation_inputs), 0, '其他用户不能读取输入血缘');
+reset role;
+
+insert into storage.objects (bucket_id, name, owner, owner_id, metadata)
+values
+  ('generations',
+   'staging/11000000-0000-0000-0000-000000000001/generation/attempt/result.png',
+   '11000000-0000-0000-0000-000000000001',
+   '11000000-0000-0000-0000-000000000001', '{}'),
+  ('generations',
+   'staging/11000000-0000-0000-0000-000000000002/generation/attempt/result.png',
+   '11000000-0000-0000-0000-000000000002',
+   '11000000-0000-0000-0000-000000000002', '{}');
+
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '11000000-0000-0000-0000-000000000001', true);
+select is(
+  (select count(*)::integer from storage.objects where bucket_id = 'generations' and name like 'staging/%'),
+  1,
+  '资产所有者可以读取自己已提交的 staging 生成对象'
+);
+select set_config('request.jwt.claim.sub', '11000000-0000-0000-0000-000000000002', true);
+select is(
+  (select count(*)::integer from storage.objects where bucket_id = 'generations' and name like 'staging/%'),
+  1,
+  'staging 路径仍隔离其他用户的生成对象'
+);
 reset role;
 
 select ok(not has_table_privilege('authenticated', 'public.generation_inputs', 'INSERT'),
