@@ -36,8 +36,28 @@ const OVERLAY_TYPES = new Set<string>(['text', 'shape', 'drawing']);
 /** 文本节点内边距（与 {@link components/canvas/nodes/TextNode} 的 `p-1` 一致，4px）。 */
 const TEXT_PADDING = 4;
 
-/** 合成图最大像素宽（避免超大 canvas 占用内存）。 */
-const MAX_PIXEL_WIDTH = 2048;
+/** 视频关键帧合成默认最大边长，精准编辑会通过能力画像传入更高的明确上限。 */
+const DEFAULT_MAX_PIXEL_EDGE = 2048;
+
+/** 高保真合成选项。 */
+export interface FlattenRenderOptions {
+  /** 输出总像素上限；超过时按比例缩小。 */
+  maxInputPixels?: number;
+  /** 输出单边上限；视频关键帧默认 2048，精准编辑可按模型上限覆盖。 */
+  maxPixelEdge?: number;
+  /** 是否把底图节点的旋转、透明度和圆角烧录；精准编辑必须为 false。 */
+  includeBaseFrameAppearance?: boolean;
+  /** 取消输入准备。 */
+  signal?: AbortSignal;
+}
+
+/** 合成输出尺寸。 */
+export interface FlattenPixelSize {
+  /** 输出像素宽。 */
+  width: number;
+  /** 输出像素高。 */
+  height: number;
+}
 
 /** XML 属性 / 文本转义。 */
 function esc(text: string): string {
@@ -67,7 +87,7 @@ export function collectGroupOverlays(
   const base = nodeBox(member);
   return nodes
     .filter((n) => {
-      if (n.id === member.id) return false;
+      if (n.id === member.id || n.hidden) return false;
       if (n.data.groupId !== groupId) return false;
       if (!OVERLAY_TYPES.has(n.data.type)) return false;
       if (excludeIds?.has(n.id)) return false;
@@ -86,8 +106,8 @@ export function collectGroupOverlays(
 }
 
 /** 把存储签名 URL 取回并转为 data URL（内联进 SVG，绘到 canvas 不污染、可正常导出）。 */
-async function urlToDataUrl(url: string): Promise<string> {
-  const resp = await fetch(url);
+async function urlToDataUrl(url: string, signal?: AbortSignal): Promise<string> {
+  const resp = await fetch(url, { signal });
   if (!resp.ok) throw new Error(`底图拉取失败（${resp.status}）`);
   const blob = await resp.blob();
   return await new Promise<string>((resolve, reject) => {
@@ -155,24 +175,37 @@ function imageFragment(
   box: { x: number; y: number; width: number; height: number },
   dataUrl: string,
   d: ImageNodeData,
+  includeBaseFrameAppearance: boolean,
 ): string {
-  const par =
-    d.objectFit === 'contain'
+  const hasCrop = Boolean(d.crop && d.naturalWidth && d.naturalHeight);
+  const crop = d.crop;
+  const imageBox =
+    hasCrop && crop && d.naturalWidth && d.naturalHeight
+      ? {
+          x: box.x - (crop.x / crop.width) * box.width,
+          y: box.y - (crop.y / crop.height) * box.height,
+          width: (d.naturalWidth / crop.width) * box.width,
+          height: (d.naturalHeight / crop.height) * box.height,
+        }
+      : box;
+  const par = hasCrop
+    ? 'none'
+    : d.objectFit === 'contain'
       ? 'xMidYMid meet'
       : d.objectFit === 'fill'
         ? 'none'
         : 'xMidYMid slice';
-  const radius = d.cornerRadius ?? 0;
+  const radius = includeBaseFrameAppearance ? (d.cornerRadius ?? 0) : 0;
   const clip =
-    radius > 0
-      ? `<clipPath id="clip-bg"><rect x="${box.x}" y="${box.y}" width="${box.width}" height="${box.height}" rx="${radius}"/></clipPath>`
-      : '';
-  const clipAttr = radius > 0 ? ' clip-path="url(#clip-bg)"' : '';
+    `<clipPath id="clip-bg"><rect x="${box.x}" y="${box.y}" width="${box.width}" height="${box.height}"` +
+    (radius > 0 ? ` rx="${radius}"` : '') +
+    '/></clipPath>';
   const filterAttr = isIdentityFilters(d.filters)
     ? ''
     : ` style="filter:${filtersToCss(d.filters)}"`;
-  const image = `<image href="${dataUrl}" x="${box.x}" y="${box.y}" width="${box.width}" height="${box.height}" preserveAspectRatio="${par}"${clipAttr}${filterAttr} opacity="${d.opacity}"/>`;
-  return clip + wrapRotation(image, box, d.rotation);
+  const opacity = includeBaseFrameAppearance ? ` opacity="${d.opacity}"` : '';
+  const image = `<image href="${dataUrl}" x="${imageBox.x}" y="${imageBox.y}" width="${imageBox.width}" height="${imageBox.height}" preserveAspectRatio="${par}" clip-path="url(#clip-bg)"${filterAttr}${opacity}/>`;
+  return clip + (includeBaseFrameAppearance ? wrapRotation(image, box, d.rotation) : image);
 }
 
 /** 文字片段：忠实复刻 {@link components/canvas/nodes/TextNode} 的排版（内边距 / 对齐 / 行高 / 字重等）。 */
@@ -301,13 +334,20 @@ function overlayFragment(node: CanvasFlowNode): string {
 }
 
 /** SVG 字符串 → PNG Blob（经 `<img>` 解码后绘到离屏 canvas）。 */
-async function svgToPngBlob(svg: string, pixelW: number, pixelH: number): Promise<Blob> {
+async function svgToPngBlob(
+  svg: string,
+  pixelW: number,
+  pixelH: number,
+  signal?: AbortSignal,
+): Promise<Blob> {
+  signal?.throwIfAborted();
   const url = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml;charset=utf-8' }));
   try {
     const img = new Image();
     img.decoding = 'async';
     img.src = url;
     await img.decode();
+    signal?.throwIfAborted();
 
     const canvas = document.createElement('canvas');
     canvas.width = pixelW;
@@ -328,6 +368,85 @@ async function svgToPngBlob(svg: string, pixelW: number, pixelH: number): Promis
 }
 
 /**
+ * 计算高保真合成图尺寸。
+ *
+ * 优先保留裁剪区域或原始资产的像素密度，再同时满足总像素与单边限制。所有缩放都保持
+ * 节点外框比例，防止合并外观后叠加层错位。
+ */
+export function computeFlattenPixelSize(
+  member: CanvasFlowNode,
+  options: FlattenRenderOptions = {},
+): FlattenPixelSize {
+  const d = member.data as ImageNodeData;
+  const box = nodeBox(member);
+  if (!(box.width > 0) || !(box.height > 0)) throw new RangeError('底图节点尺寸无效');
+
+  const inputWidth = d.crop?.width ?? d.naturalWidth ?? box.width * 2;
+  const inputHeight = d.crop?.height ?? d.naturalHeight ?? box.height * 2;
+  const targetRatio = box.width / box.height;
+  const inputPixels = Math.max(1, inputWidth * inputHeight);
+  let width = Math.sqrt(inputPixels * targetRatio);
+  let height = width / targetRatio;
+
+  const maxPixelEdge = options.maxPixelEdge ?? DEFAULT_MAX_PIXEL_EDGE;
+  if (Number.isFinite(maxPixelEdge) && maxPixelEdge > 0) {
+    const edgeScale = Math.min(1, maxPixelEdge / Math.max(width, height));
+    width *= edgeScale;
+    height *= edgeScale;
+  }
+  const maxInputPixels = options.maxInputPixels;
+  if (maxInputPixels !== undefined) {
+    if (!Number.isFinite(maxInputPixels) || maxInputPixels <= 0) {
+      throw new RangeError('maxInputPixels 必须是有限正数');
+    }
+    const pixelScale = Math.min(1, Math.sqrt(maxInputPixels / (width * height)));
+    width *= pixelScale;
+    height *= pixelScale;
+  }
+
+  return { width: Math.max(1, Math.round(width)), height: Math.max(1, Math.round(height)) };
+}
+
+/**
+ * 构造可复现的合成 SVG。导出此函数用于快照测试，生产调用方通常使用
+ * {@link flattenGroupToFile}。
+ */
+export function buildFlattenSvg(
+  member: CanvasFlowNode,
+  overlays: CanvasFlowNode[],
+  backgroundDataUrl: string,
+  pixelSize: FlattenPixelSize,
+  options: FlattenRenderOptions = {},
+): string {
+  const d = member.data as ImageNodeData;
+  const box = nodeBox(member);
+  const includeBaseFrameAppearance = options.includeBaseFrameAppearance ?? true;
+  const fragments = [
+    imageFragment(box, backgroundDataUrl, d, includeBaseFrameAppearance),
+    ...overlays.map(overlayFragment),
+  ];
+  return (
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${box.x} ${box.y} ${box.width} ${box.height}" width="${pixelSize.width}" height="${pixelSize.height}">` +
+    fragments.join('') +
+    `</svg>`
+  );
+}
+
+/** 确保合成所需字体已经加载；失败时阻止产生字体漂移的辅助资产。 */
+async function ensureOverlayFonts(overlays: CanvasFlowNode[]): Promise<void> {
+  const textNodes = overlays.filter((node) => node.data.type === 'text');
+  if (textNodes.length === 0 || !document.fonts) return;
+  await document.fonts.ready;
+  for (const node of textNodes) {
+    const data = node.data as TextNodeData;
+    const family = sanitizeFontFamily(data.fontFamily);
+    if (!document.fonts.check(`${data.fontSize}px ${family}`, data.text)) {
+      throw new Error(`字体尚未加载：${family}`);
+    }
+  }
+}
+
+/**
  * 把「媒体成员（底图）+ 其同组叠层」拍平成一张 PNG `File`。
  *
  * @param member - 作底图的图片 / 视频成员节点（需含运行时 `data.src` 签名 URL）
@@ -338,26 +457,17 @@ async function svgToPngBlob(svg: string, pixelW: number, pixelH: number): Promis
 export async function flattenGroupToFile(
   member: CanvasFlowNode,
   overlays: CanvasFlowNode[],
+  options: FlattenRenderOptions = {},
 ): Promise<File> {
   const d = member.data as ImageNodeData;
   const src = d.src;
   if (!src) throw new Error('成员图片尚无可用媒体源');
 
-  const box = nodeBox(member);
-  const bgDataUrl = await urlToDataUrl(src);
-
-  // 输出分辨率：底图原生像素更大时按其等比放大，否则 2 倍，封顶 MAX_PIXEL_WIDTH 防爆内存
-  const natW = d.naturalWidth ?? 0;
-  const dpr = natW > box.width ? Math.min(4, natW / box.width) : 2;
-  const pixelW = Math.min(MAX_PIXEL_WIDTH, Math.max(1, Math.round(box.width * dpr)));
-  const pixelH = Math.max(1, Math.round(pixelW * (box.height / box.width)));
-
-  const fragments = [imageFragment(box, bgDataUrl, d), ...overlays.map(overlayFragment)];
-  const svg =
-    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${box.x} ${box.y} ${box.width} ${box.height}" width="${pixelW}" height="${pixelH}">` +
-    fragments.join('') +
-    `</svg>`;
-
-  const blob = await svgToPngBlob(svg, pixelW, pixelH);
+  options.signal?.throwIfAborted();
+  await ensureOverlayFonts(overlays);
+  const bgDataUrl = await urlToDataUrl(src, options.signal);
+  const pixelSize = computeFlattenPixelSize(member, options);
+  const svg = buildFlattenSvg(member, overlays, bgDataUrl, pixelSize, options);
+  const blob = await svgToPngBlob(svg, pixelSize.width, pixelSize.height, options.signal);
   return new File([blob], `frame-${member.id}.png`, { type: 'image/png' });
 }

@@ -362,8 +362,7 @@ export function activeMaskCommands(history: MaskHistory): MaskCommand[] {
 
 /** 历史是否包含会改变蒙版像素的有效命令或已压平前缀。 */
 export function hasMaskContent(history: MaskHistory): boolean {
-  if (history.baseMask) return true;
-  let hasStroke = false;
+  let hasStroke = Boolean(history.baseMask);
   for (const command of activeMaskCommands(history)) {
     if (command.type === 'clear') hasStroke = false;
     else hasStroke = true;
