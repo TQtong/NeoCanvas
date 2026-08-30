@@ -1,5 +1,5 @@
 import { assertEquals, assertThrows } from 'jsr:@std/assert@1';
-import { inspectRasterImage } from './image.ts';
+import { applyAlphaMask, inspectRasterImage } from './image.ts';
 import { validatePrecisionImageOutput } from './pipeline.ts';
 import { ApiException } from './response.ts';
 import type { ImageGenerationParams } from './types.ts';
@@ -57,6 +57,19 @@ Deno.test('PNG 检查器读取真实尺寸并区分透明像素与空 Alpha 通�
     width: 1,
     height: 1,
     hasTransparency: false,
+  });
+});
+
+Deno.test('主体蒙版按灰度写入源图 Alpha 并保留自然尺寸', async () => {
+  const source = await rgbaPng(255);
+  const transparentMask = await rgbaPng(0);
+  const result = await applyAlphaMask(source, transparentMask);
+
+  assertEquals({ width: result.width, height: result.height }, { width: 1, height: 1 });
+  assertEquals(await inspectRasterImage(result.bytes, 'image/png'), {
+    width: 1,
+    height: 1,
+    hasTransparency: true,
   });
 });
 
