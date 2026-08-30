@@ -257,6 +257,7 @@ const zhCN: MessageDictionary = {
   'imageEdit.model': '模型',
   'imageEdit.noModel':
     '当前操作没有同时满足 Provider 协议、模型目录和启用凭据的模型。请在设置中配置能力后重试。',
+  'imageEdit.configureProviders': '配置模型提供商',
   'imageEdit.fidelity': '输入保真度',
   'imageEdit.fidelityHigh': '高保真',
   'imageEdit.fidelityStandard': '标准',
@@ -288,6 +289,7 @@ const zhCN: MessageDictionary = {
   'imageEdit.maskClear': '清空',
   'imageEdit.stageAlt': '图片编辑输入',
   'imageEdit.maskArea': '蒙版绘制区域',
+  'imageEdit.maskKeyboardHint': '按空格在图片中心绘制当前工具，使用 Ctrl+Z 撤销',
   'imageEdit.drag.top': '拖动扩展上边界',
   'imageEdit.drag.right': '拖动扩展右边界',
   'imageEdit.drag.bottom': '拖动扩展下边界',
@@ -581,6 +583,7 @@ const en: MessageDictionary = {
   'imageEdit.model': 'Model',
   'imageEdit.noModel':
     'No model satisfies the provider protocol, model catalog, and enabled credential for this operation. Configure one in Settings and try again.',
+  'imageEdit.configureProviders': 'Configure model providers',
   'imageEdit.fidelity': 'Input fidelity',
   'imageEdit.fidelityHigh': 'High',
   'imageEdit.fidelityStandard': 'Standard',
@@ -613,6 +616,8 @@ const en: MessageDictionary = {
   'imageEdit.maskClear': 'Clear',
   'imageEdit.stageAlt': 'Image editing input',
   'imageEdit.maskArea': 'Mask painting area',
+  'imageEdit.maskKeyboardHint':
+    'Press Space to paint with the current tool at image center; use Ctrl+Z to undo',
   'imageEdit.drag.top': 'Drag to extend the top edge',
   'imageEdit.drag.right': 'Drag to extend the right edge',
   'imageEdit.drag.bottom': 'Drag to extend the bottom edge',

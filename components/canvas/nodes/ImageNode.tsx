@@ -64,8 +64,16 @@ function ImageNodeComponent({ id, data, selected }: NodeProps<CanvasFlowNode>) {
     <>
       <TransformableNode id={id} selected={Boolean(selected)} rotation={d.rotation} keepAspectRatio>
         <div
+          data-testid="image-transparency-grid"
           className="relative size-full overflow-hidden bg-muted/40"
-          style={{ borderRadius: d.cornerRadius, opacity: d.opacity }}
+          style={{
+            borderRadius: d.cornerRadius,
+            opacity: d.opacity,
+            backgroundImage:
+              'linear-gradient(45deg,hsl(var(--border)/.65) 25%,transparent 25%),linear-gradient(-45deg,hsl(var(--border)/.65) 25%,transparent 25%),linear-gradient(45deg,transparent 75%,hsl(var(--border)/.65) 75%),linear-gradient(-45deg,transparent 75%,hsl(var(--border)/.65) 75%)',
+            backgroundPosition: '0 0,0 8px,8px -8px,-8px 0',
+            backgroundSize: '16px 16px',
+          }}
         >
           {d.mediaRole === 'candidate' ? (
             <div className="absolute left-2 top-2 z-10 rounded-md bg-background/85 px-2 py-1 text-[11px] font-medium text-foreground shadow-soft backdrop-blur">

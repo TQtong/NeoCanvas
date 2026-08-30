@@ -23,6 +23,8 @@ export interface SettingsDialogProps {
   open: boolean;
   /** 开关回调。 */
   onOpenChange: (open: boolean) => void;
+  /** 从业务恢复入口打开时可以直接定位到对应标签。 */
+  initialTab?: SettingsTab;
 }
 
 /** 设置标签。 */
@@ -31,9 +33,13 @@ type SettingsTab = 'general' | 'providers';
 /**
  * 设置对话框组件。
  */
-export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
+export function SettingsDialog({
+  open,
+  onOpenChange,
+  initialTab = 'general',
+}: SettingsDialogProps) {
   const { t } = useTranslation();
-  const [tab, setTab] = useState<SettingsTab>('general');
+  const [tab, setTab] = useState<SettingsTab>(initialTab);
 
   const tabs: ReadonlyArray<{ id: SettingsTab; label: string }> = [
     { id: 'general', label: t('settings.tabGeneral') },

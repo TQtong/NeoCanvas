@@ -9,7 +9,15 @@
  * @module components/canvas/image-editing/ImageEditStage
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type PointerEvent,
+} from 'react';
 import type { OutputCanvas } from '@/types';
 import {
   computeImagePreviewTransform,
@@ -335,6 +343,19 @@ export function ImageEditStage(props: ImageEditStageProps) {
     props.onStroke(stroke);
   };
 
+  /** 键盘用户按空格在源图中心落一个当前工具笔触，再由 Ctrl/Cmd+Z 撤销。 */
+  const paintFromKeyboard = (event: KeyboardEvent<HTMLCanvasElement>) => {
+    if (props.disabled || props.operation !== 'inpaint' || event.key !== ' ') return;
+    event.preventDefault();
+    event.stopPropagation();
+    props.onStroke({
+      id: uuid(),
+      tool: props.maskTool,
+      sizePx: props.brushSizePx,
+      points: [{ x: props.sourceWidth / 2, y: props.sourceHeight / 2, pressure: 1 }],
+    });
+  };
+
   const sourceLeft =
     transform.offsetX + (isOutpaint ? props.outputCanvas.sourceX * transform.scale : 0);
   const sourceTop =
@@ -389,6 +410,8 @@ export function ImageEditStage(props: ImageEditStageProps) {
         <canvas
           ref={maskCanvasRef}
           aria-label={t('imageEdit.maskArea')}
+          aria-description={t('imageEdit.maskKeyboardHint')}
+          tabIndex={0}
           className="absolute touch-none"
           style={{
             left: sourceLeft,
@@ -402,6 +425,7 @@ export function ImageEditStage(props: ImageEditStageProps) {
           onPointerMove={onPointerMove}
           onPointerUp={finishStroke}
           onPointerCancel={finishStroke}
+          onKeyDown={paintFromKeyboard}
         />
       ) : null}
     </div>

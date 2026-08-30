@@ -73,6 +73,7 @@ import { IconButton } from '@/components/ui/icon-button';
 import { Spinner } from '@/components/ui/spinner';
 import { useToast } from '@/components/ui/toast';
 import { useTranslation } from '@/i18n';
+import { SettingsDialog } from '@/components/shared/SettingsDialog';
 import { ImageEditStage } from './ImageEditStage';
 import { useImageEditSession } from './use-image-edit-session';
 
@@ -158,6 +159,7 @@ export function ImageEditOverlay(props: ImageEditOverlayProps) {
   const [flattenedFile, setFlattenedFile] = useState<File | null>(null);
   const [previewSrc, setPreviewSrc] = useState(props.targetSnapshot.data.src as string);
   const [inputPreparing, setInputPreparing] = useState(false);
+  const [providerSettingsOpen, setProviderSettingsOpen] = useState(false);
   const sourceAssetCacheRef = useRef(new Map<string, AssetView>());
   const maskAssetCacheRef = useRef(new Map<string, AssetView>());
 
@@ -613,383 +615,406 @@ export function ImageEditOverlay(props: ImageEditOverlayProps) {
   };
 
   return (
-    <Dialog open onOpenChange={(open) => !open && requestClose()}>
-      <DialogContent
-        showClose={false}
-        className="flex h-[min(94vh,900px)] w-[min(96vw,1480px)] max-w-none flex-col gap-0 overflow-hidden rounded-2xl p-0"
-        onEscapeKeyDown={(event) => {
-          event.preventDefault();
-          requestClose();
-        }}
-        onOpenAutoFocus={(event) => {
-          event.preventDefault();
-          window.setTimeout(() => promptRef.current?.focus(), 0);
-        }}
-        onKeyDown={onKeyDown}
-      >
-        <header className="flex h-16 shrink-0 items-center justify-between border-b border-border px-5">
-          <div>
-            <DialogTitle className="text-base font-semibold">{t('imageEdit.title')}</DialogTitle>
-            <DialogDescription className="text-xs text-muted-foreground">
-              {t('imageEdit.description')}
-            </DialogDescription>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button variant="ghost" onClick={requestClose} disabled={state.status === 'submitting'}>
-              {t('common.cancel')}
-            </Button>
-            <Button loading={busy} disabled={!canSubmit} onClick={() => void submitEdit()}>
-              {t('imageEdit.submit')}
-            </Button>
-          </div>
-        </header>
-
-        <div className="flex min-h-0 flex-1">
-          <main className="flex min-w-0 flex-1 flex-col gap-3 p-4">
-            <div className="flex flex-wrap gap-1 rounded-xl bg-muted p-1" role="tablist">
-              {OPERATIONS.map(({ operation, icon: Icon }) => {
-                const count = modelsForImageOperation(
-                  props.models,
-                  props.credentials,
-                  operation,
-                ).length;
-                return (
-                  <button
-                    key={operation}
-                    type="button"
-                    role="tab"
-                    aria-selected={state.operation === operation}
-                    className={`flex h-9 items-center gap-1.5 rounded-lg px-3 text-sm transition-colors ${
-                      state.operation === operation
-                        ? 'bg-background font-medium text-foreground shadow-soft'
-                        : 'text-muted-foreground hover:text-foreground'
-                    }`}
-                    onClick={() => changeOperation(operation)}
-                  >
-                    <Icon className="size-4" />
-                    {t(`imageEdit.operation.${operation}`)}
-                    <span className="text-[10px] text-muted-foreground">{count}</span>
-                  </button>
-                );
-              })}
+    <>
+      <Dialog open onOpenChange={(open) => !open && requestClose()}>
+        <DialogContent
+          showClose={false}
+          className="flex h-[min(94vh,900px)] w-[min(96vw,1480px)] max-w-none flex-col gap-0 overflow-hidden rounded-2xl p-0"
+          onEscapeKeyDown={(event) => {
+            event.preventDefault();
+            requestClose();
+          }}
+          onOpenAutoFocus={(event) => {
+            event.preventDefault();
+            window.setTimeout(() => promptRef.current?.focus(), 0);
+          }}
+          onKeyDown={onKeyDown}
+        >
+          <header className="flex h-16 shrink-0 items-center justify-between border-b border-border px-5">
+            <div>
+              <DialogTitle className="text-base font-semibold">{t('imageEdit.title')}</DialogTitle>
+              <DialogDescription className="text-xs text-muted-foreground">
+                {t('imageEdit.description')}
+              </DialogDescription>
             </div>
-
-            <div className="relative min-h-0 flex-1">
-              {inputPreparing ? (
-                <div className="absolute inset-0 z-20 flex items-center justify-center rounded-xl bg-background/70 backdrop-blur-sm">
-                  <Spinner label={t('imageEdit.flattening')} />
-                </div>
-              ) : null}
-              <ImageEditStage
-                src={previewSrc}
-                sourceWidth={sourceWidth}
-                sourceHeight={sourceHeight}
-                operation={state.operation}
-                maskHistory={state.maskHistory}
-                maskTool={state.maskTool}
-                brushSizePx={state.brushSizePx}
-                maskVisible={state.maskVisible}
-                outputCanvas={state.outputCanvas}
-                disabled={busy || targetDeleted}
-                onStroke={(stroke: MaskStroke) => dispatch({ type: 'mask-stroke', stroke })}
-                onOutpaintInsetsChange={(value) => dispatch({ type: 'outpaint-insets', value })}
-              />
+            <div className="flex items-center gap-2">
+              <Button
+                variant="ghost"
+                onClick={requestClose}
+                disabled={state.status === 'submitting'}
+              >
+                {t('common.cancel')}
+              </Button>
+              <Button loading={busy} disabled={!canSubmit} onClick={() => void submitEdit()}>
+                {t('imageEdit.submit')}
+              </Button>
             </div>
+          </header>
 
-            {state.operation === 'inpaint' ? (
-              <div className="flex items-center gap-1 rounded-xl border border-border bg-card p-2">
-                <IconButton
-                  label={t('imageEdit.maskBrush')}
-                  active={state.maskTool === 'brush'}
-                  onClick={() => dispatch({ type: 'mask-tool', value: 'brush' })}
-                >
-                  <Brush />
-                </IconButton>
-                <IconButton
-                  label={t('imageEdit.maskEraser')}
-                  active={state.maskTool === 'eraser'}
-                  onClick={() => dispatch({ type: 'mask-tool', value: 'eraser' })}
-                >
-                  <Eraser />
-                </IconButton>
-                <input
-                  aria-label={t('imageEdit.maskSize')}
-                  type="range"
-                  min={1}
-                  max={Math.min(1024, Math.round(Math.min(sourceWidth, sourceHeight) / 2))}
-                  value={state.brushSizePx}
-                  onChange={(event) =>
-                    dispatch({ type: 'brush-size', value: Number(event.target.value) })
-                  }
-                  className="mx-2 w-36 accent-[hsl(var(--accent))]"
-                />
-                <span className="w-16 text-xs text-muted-foreground">{state.brushSizePx}px</span>
-                <IconButton
-                  label={t('imageEdit.maskUndo')}
-                  disabled={!session.canUndoMask}
-                  onClick={() => dispatch({ type: 'mask-undo' })}
-                >
-                  <Undo2 />
-                </IconButton>
-                <IconButton
-                  label={t('imageEdit.maskRedo')}
-                  disabled={!session.canRedoMask}
-                  onClick={() => dispatch({ type: 'mask-redo' })}
-                >
-                  <Redo2 />
-                </IconButton>
-                <IconButton
-                  label={state.maskVisible ? t('imageEdit.maskHide') : t('imageEdit.maskShow')}
-                  onClick={() => dispatch({ type: 'mask-visible', value: !state.maskVisible })}
-                >
-                  {state.maskVisible ? <Eye /> : <EyeOff />}
-                </IconButton>
-                <Button size="sm" variant="ghost" onClick={() => dispatch({ type: 'mask-clear' })}>
-                  {t('imageEdit.maskClear')}
-                </Button>
+          <div className="flex min-h-0 flex-1">
+            <main className="flex min-w-0 flex-1 flex-col gap-3 p-4">
+              <div className="flex flex-wrap gap-1 rounded-xl bg-muted p-1" role="tablist">
+                {OPERATIONS.map(({ operation, icon: Icon }) => {
+                  const count = modelsForImageOperation(
+                    props.models,
+                    props.credentials,
+                    operation,
+                  ).length;
+                  return (
+                    <button
+                      key={operation}
+                      type="button"
+                      role="tab"
+                      aria-selected={state.operation === operation}
+                      className={`flex h-9 items-center gap-1.5 rounded-lg px-3 text-sm transition-colors ${
+                        state.operation === operation
+                          ? 'bg-background font-medium text-foreground shadow-soft'
+                          : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                      onClick={() => changeOperation(operation)}
+                    >
+                      <Icon className="size-4" />
+                      {t(`imageEdit.operation.${operation}`)}
+                      <span className="text-[10px] text-muted-foreground">{count}</span>
+                    </button>
+                  );
+                })}
               </div>
-            ) : null}
-          </main>
 
-          <aside className="w-[340px] shrink-0 overflow-y-auto border-l border-border bg-card p-4">
-            <div className="flex flex-col gap-4">
-              {targetDeleted ? (
-                <div className="rounded-xl border border-danger/30 bg-danger/10 p-3 text-sm text-danger">
-                  {t('imageEdit.targetDeleted')}
-                </div>
-              ) : null}
-              {liveTarget &&
-              liveTarget.data.type === 'image' &&
-              liveTarget.data.src !== props.targetSnapshot.data.src ? (
-                <div className="border-warning/30 bg-warning/10 rounded-xl border p-3 text-xs text-foreground">
-                  {t('imageEdit.targetChanged')}
-                </div>
-              ) : null}
-
-              <Field label={t('imageEdit.inputSource')}>
-                <select
-                  value={state.inputMode}
-                  disabled={busy}
-                  onChange={(event) =>
-                    dispatch({
-                      type: 'input-mode',
-                      value: event.target.value as 'original' | 'flattened',
-                    })
-                  }
-                  className="h-10 rounded-lg border border-border bg-background px-3 text-sm text-foreground"
-                >
-                  <option value="original">{t('imageEdit.inputOriginal')}</option>
-                  <option value="flattened">{t('imageEdit.inputFlattened')}</option>
-                </select>
-              </Field>
-
-              <Field label={t('imageEdit.model')}>
-                <select
-                  value={selectedModel?.key ?? ''}
-                  disabled={busy || props.credentialsLoading || operationModels.length === 0}
-                  onChange={(event) =>
-                    dispatch({
-                      type: 'model',
-                      model:
-                        operationModels.find((model) => model.key === event.target.value) ?? null,
-                    })
-                  }
-                  className="h-10 rounded-lg border border-border bg-background px-3 text-sm text-foreground"
-                >
-                  {operationModels.map((model) => (
-                    <option key={model.key} value={model.key}>
-                      {model.displayName}
-                    </option>
-                  ))}
-                </select>
-                {!props.credentialsLoading && operationModels.length === 0 ? (
-                  <span className="rounded-lg bg-muted p-2 text-xs font-normal leading-relaxed text-muted-foreground">
-                    {t('imageEdit.noModel')}
-                  </span>
+              <div className="relative min-h-0 flex-1">
+                {inputPreparing ? (
+                  <div className="absolute inset-0 z-20 flex items-center justify-center rounded-xl bg-background/70 backdrop-blur-sm">
+                    <Spinner label={t('imageEdit.flattening')} />
+                  </div>
                 ) : null}
-              </Field>
+                <ImageEditStage
+                  src={previewSrc}
+                  sourceWidth={sourceWidth}
+                  sourceHeight={sourceHeight}
+                  operation={state.operation}
+                  maskHistory={state.maskHistory}
+                  maskTool={state.maskTool}
+                  brushSizePx={state.brushSizePx}
+                  maskVisible={state.maskVisible}
+                  outputCanvas={state.outputCanvas}
+                  disabled={busy || targetDeleted}
+                  onStroke={(stroke: MaskStroke) => dispatch({ type: 'mask-stroke', stroke })}
+                  onOutpaintInsetsChange={(value) => dispatch({ type: 'outpaint-insets', value })}
+                />
+              </div>
 
-              {selectedModel?.capabilities.inputFidelityOptions?.length ? (
-                <Field label={t('imageEdit.fidelity')}>
+              {state.operation === 'inpaint' ? (
+                <div className="flex items-center gap-1 rounded-xl border border-border bg-card p-2">
+                  <IconButton
+                    label={t('imageEdit.maskBrush')}
+                    active={state.maskTool === 'brush'}
+                    onClick={() => dispatch({ type: 'mask-tool', value: 'brush' })}
+                  >
+                    <Brush />
+                  </IconButton>
+                  <IconButton
+                    label={t('imageEdit.maskEraser')}
+                    active={state.maskTool === 'eraser'}
+                    onClick={() => dispatch({ type: 'mask-tool', value: 'eraser' })}
+                  >
+                    <Eraser />
+                  </IconButton>
+                  <input
+                    aria-label={t('imageEdit.maskSize')}
+                    type="range"
+                    min={1}
+                    max={Math.min(1024, Math.round(Math.min(sourceWidth, sourceHeight) / 2))}
+                    value={state.brushSizePx}
+                    onChange={(event) =>
+                      dispatch({ type: 'brush-size', value: Number(event.target.value) })
+                    }
+                    className="mx-2 w-36 accent-[hsl(var(--accent))]"
+                  />
+                  <span className="w-16 text-xs text-muted-foreground">{state.brushSizePx}px</span>
+                  <IconButton
+                    label={t('imageEdit.maskUndo')}
+                    disabled={!session.canUndoMask}
+                    onClick={() => dispatch({ type: 'mask-undo' })}
+                  >
+                    <Undo2 />
+                  </IconButton>
+                  <IconButton
+                    label={t('imageEdit.maskRedo')}
+                    disabled={!session.canRedoMask}
+                    onClick={() => dispatch({ type: 'mask-redo' })}
+                  >
+                    <Redo2 />
+                  </IconButton>
+                  <IconButton
+                    label={state.maskVisible ? t('imageEdit.maskHide') : t('imageEdit.maskShow')}
+                    onClick={() => dispatch({ type: 'mask-visible', value: !state.maskVisible })}
+                  >
+                    {state.maskVisible ? <Eye /> : <EyeOff />}
+                  </IconButton>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => dispatch({ type: 'mask-clear' })}
+                  >
+                    {t('imageEdit.maskClear')}
+                  </Button>
+                </div>
+              ) : null}
+            </main>
+
+            <aside className="w-[340px] shrink-0 overflow-y-auto border-l border-border bg-card p-4">
+              <div className="flex flex-col gap-4">
+                {targetDeleted ? (
+                  <div className="rounded-xl border border-danger/30 bg-danger/10 p-3 text-sm text-danger">
+                    {t('imageEdit.targetDeleted')}
+                  </div>
+                ) : null}
+                {liveTarget &&
+                liveTarget.data.type === 'image' &&
+                liveTarget.data.src !== props.targetSnapshot.data.src ? (
+                  <div className="border-warning/30 bg-warning/10 rounded-xl border p-3 text-xs text-foreground">
+                    {t('imageEdit.targetChanged')}
+                  </div>
+                ) : null}
+
+                <Field label={t('imageEdit.inputSource')}>
                   <select
-                    value={state.inputFidelity ?? ''}
+                    value={state.inputMode}
+                    disabled={busy}
                     onChange={(event) =>
                       dispatch({
-                        type: 'input-fidelity',
-                        value: event.target.value as 'standard' | 'high',
+                        type: 'input-mode',
+                        value: event.target.value as 'original' | 'flattened',
                       })
                     }
-                    className="h-10 rounded-lg border border-border bg-background px-3 text-sm"
+                    className="h-10 rounded-lg border border-border bg-background px-3 text-sm text-foreground"
                   >
-                    {selectedModel.capabilities.inputFidelityOptions.map((fidelity) => (
-                      <option key={fidelity} value={fidelity}>
-                        {fidelity === 'high'
-                          ? t('imageEdit.fidelityHigh')
-                          : t('imageEdit.fidelityStandard')}
+                    <option value="original">{t('imageEdit.inputOriginal')}</option>
+                    <option value="flattened">{t('imageEdit.inputFlattened')}</option>
+                  </select>
+                </Field>
+
+                <Field label={t('imageEdit.model')}>
+                  <select
+                    value={selectedModel?.key ?? ''}
+                    disabled={busy || props.credentialsLoading || operationModels.length === 0}
+                    onChange={(event) =>
+                      dispatch({
+                        type: 'model',
+                        model:
+                          operationModels.find((model) => model.key === event.target.value) ?? null,
+                      })
+                    }
+                    className="h-10 rounded-lg border border-border bg-background px-3 text-sm text-foreground"
+                  >
+                    {operationModels.map((model) => (
+                      <option key={model.key} value={model.key}>
+                        {model.displayName}
                       </option>
                     ))}
                   </select>
+                  {!props.credentialsLoading && operationModels.length === 0 ? (
+                    <div className="flex flex-col gap-2 rounded-lg bg-muted p-2 text-xs font-normal leading-relaxed text-muted-foreground">
+                      <span>{t('imageEdit.noModel')}</span>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => setProviderSettingsOpen(true)}
+                      >
+                        {t('imageEdit.configureProviders')}
+                      </Button>
+                    </div>
+                  ) : null}
                 </Field>
-              ) : null}
 
-              {promptRequired ? (
-                <Field label={t('imageEdit.prompt')}>
-                  <textarea
-                    ref={promptRef}
-                    value={state.prompt}
-                    rows={4}
-                    placeholder={t(`imageEdit.prompt.${state.operation}`)}
-                    onChange={(event) => dispatch({ type: 'prompt', value: event.target.value })}
-                    className="resize-none rounded-lg border border-border bg-background p-3 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring"
-                  />
-                </Field>
-              ) : null}
+                {selectedModel?.capabilities.inputFidelityOptions?.length ? (
+                  <Field label={t('imageEdit.fidelity')}>
+                    <select
+                      value={state.inputFidelity ?? ''}
+                      onChange={(event) =>
+                        dispatch({
+                          type: 'input-fidelity',
+                          value: event.target.value as 'standard' | 'high',
+                        })
+                      }
+                      className="h-10 rounded-lg border border-border bg-background px-3 text-sm"
+                    >
+                      {selectedModel.capabilities.inputFidelityOptions.map((fidelity) => (
+                        <option key={fidelity} value={fidelity}>
+                          {fidelity === 'high'
+                            ? t('imageEdit.fidelityHigh')
+                            : t('imageEdit.fidelityStandard')}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                ) : null}
 
-              {state.operation === 'inpaint' ? (
-                <Field label={t('imageEdit.maskFeather', { value: state.maskFeatherPx })}>
-                  <input
-                    type="range"
-                    min={0}
-                    max={128}
-                    value={state.maskFeatherPx}
-                    onChange={(event) =>
-                      dispatch({ type: 'mask-feather', value: Number(event.target.value) })
-                    }
-                    className="accent-[hsl(var(--accent))]"
-                  />
-                </Field>
-              ) : null}
+                {promptRequired ? (
+                  <Field label={t('imageEdit.prompt')}>
+                    <textarea
+                      ref={promptRef}
+                      value={state.prompt}
+                      rows={4}
+                      placeholder={t(`imageEdit.prompt.${state.operation}`)}
+                      onChange={(event) => dispatch({ type: 'prompt', value: event.target.value })}
+                      className="resize-none rounded-lg border border-border bg-background p-3 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring"
+                    />
+                  </Field>
+                ) : null}
 
-              {state.operation === 'outpaint' ? (
-                <>
-                  <Field label={t('imageEdit.outputRatio')}>
-                    <div className="grid grid-cols-4 gap-1">
-                      {OUTPAINT_RATIOS.map((ratio) => (
+                {state.operation === 'inpaint' ? (
+                  <Field label={t('imageEdit.maskFeather', { value: state.maskFeatherPx })}>
+                    <input
+                      type="range"
+                      min={0}
+                      max={128}
+                      value={state.maskFeatherPx}
+                      onChange={(event) =>
+                        dispatch({ type: 'mask-feather', value: Number(event.target.value) })
+                      }
+                      className="accent-[hsl(var(--accent))]"
+                    />
+                  </Field>
+                ) : null}
+
+                {state.operation === 'outpaint' ? (
+                  <>
+                    <Field label={t('imageEdit.outputRatio')}>
+                      <div className="grid grid-cols-4 gap-1">
+                        {OUTPAINT_RATIOS.map((ratio) => (
+                          <button
+                            key={ratio}
+                            type="button"
+                            className={`h-8 rounded-md border text-xs ${
+                              state.outpaintPreset === ratio
+                                ? 'border-accent bg-accent/10 text-accent'
+                                : 'border-border bg-background'
+                            }`}
+                            onClick={() =>
+                              dispatch({
+                                type: 'outpaint-preset',
+                                value: ratio,
+                                sourceWidth,
+                                sourceHeight,
+                              })
+                            }
+                          >
+                            {ratio}
+                          </button>
+                        ))}
                         <button
-                          key={ratio}
                           type="button"
                           className={`h-8 rounded-md border text-xs ${
-                            state.outpaintPreset === ratio
+                            state.outpaintPreset === 'free'
                               ? 'border-accent bg-accent/10 text-accent'
                               : 'border-border bg-background'
                           }`}
                           onClick={() =>
-                            dispatch({
-                              type: 'outpaint-preset',
-                              value: ratio,
-                              sourceWidth,
-                              sourceHeight,
-                            })
+                            dispatch({ type: 'outpaint-insets', value: session.outpaintInsets })
                           }
                         >
-                          {ratio}
+                          {t('imageEdit.free')}
+                        </button>
+                      </div>
+                    </Field>
+                    <div className="grid grid-cols-2 gap-2">
+                      {(['top', 'right', 'bottom', 'left'] as const).map((side) => (
+                        <Field key={side} label={t(`imageEdit.side.${side}`)}>
+                          <input
+                            type="number"
+                            min={0}
+                            value={session.outpaintInsets[side]}
+                            onChange={(event) => setOutpaintInset(side, Number(event.target.value))}
+                            className="h-9 rounded-lg border border-border bg-background px-2 text-sm"
+                          />
+                        </Field>
+                      ))}
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      {t('imageEdit.outputSummary', {
+                        width: state.outputCanvas.width,
+                        height: state.outputCanvas.height,
+                        x: state.outputCanvas.sourceX,
+                        y: state.outputCanvas.sourceY,
+                      })}
+                    </p>
+                  </>
+                ) : null}
+
+                {state.operation === 'upscale' ? (
+                  <Field label={t('imageEdit.upscaleFactor')}>
+                    <div className="grid grid-cols-2 gap-2">
+                      {(selectedModel?.capabilities.upscaleFactors ?? []).map((factor) => (
+                        <button
+                          key={factor}
+                          type="button"
+                          className={`h-10 rounded-lg border text-sm ${
+                            state.upscaleFactor === factor
+                              ? 'border-accent bg-accent/10 text-accent'
+                              : 'border-border bg-background'
+                          }`}
+                          onClick={() => dispatch({ type: 'upscale', value: factor })}
+                        >
+                          {factor}×
                         </button>
                       ))}
-                      <button
-                        type="button"
-                        className={`h-8 rounded-md border text-xs ${
-                          state.outpaintPreset === 'free'
-                            ? 'border-accent bg-accent/10 text-accent'
-                            : 'border-border bg-background'
-                        }`}
-                        onClick={() =>
-                          dispatch({ type: 'outpaint-insets', value: session.outpaintInsets })
-                        }
-                      >
-                        {t('imageEdit.free')}
-                      </button>
                     </div>
                   </Field>
-                  <div className="grid grid-cols-2 gap-2">
-                    {(['top', 'right', 'bottom', 'left'] as const).map((side) => (
-                      <Field key={side} label={t(`imageEdit.side.${side}`)}>
-                        <input
-                          type="number"
-                          min={0}
-                          value={session.outpaintInsets[side]}
-                          onChange={(event) => setOutpaintInset(side, Number(event.target.value))}
-                          className="h-9 rounded-lg border border-border bg-background px-2 text-sm"
-                        />
-                      </Field>
-                    ))}
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    {t('imageEdit.outputSummary', {
-                      width: state.outputCanvas.width,
-                      height: state.outputCanvas.height,
-                      x: state.outputCanvas.sourceX,
-                      y: state.outputCanvas.sourceY,
-                    })}
-                  </p>
-                </>
-              ) : null}
+                ) : null}
 
-              {state.operation === 'upscale' ? (
-                <Field label={t('imageEdit.upscaleFactor')}>
-                  <div className="grid grid-cols-2 gap-2">
-                    {(selectedModel?.capabilities.upscaleFactors ?? []).map((factor) => (
-                      <button
-                        key={factor}
-                        type="button"
-                        className={`h-10 rounded-lg border text-sm ${
-                          state.upscaleFactor === factor
-                            ? 'border-accent bg-accent/10 text-accent'
-                            : 'border-border bg-background'
-                        }`}
-                        onClick={() => dispatch({ type: 'upscale', value: factor })}
-                      >
-                        {factor}×
-                      </button>
-                    ))}
-                  </div>
-                </Field>
-              ) : null}
+                {state.operation !== 'remove_background' && state.operation !== 'upscale' ? (
+                  <Field label={t('imageEdit.candidateCount')}>
+                    <input
+                      type="number"
+                      min={1}
+                      max={Math.min(4, selectedModel?.capabilities.maxOutputs ?? 1)}
+                      value={state.count}
+                      onChange={(event) =>
+                        dispatch({
+                          type: 'count',
+                          value: Number(event.target.value),
+                          max: Math.min(4, selectedModel?.capabilities.maxOutputs ?? 1),
+                        })
+                      }
+                      className="h-10 rounded-lg border border-border bg-background px-3 text-sm"
+                    />
+                  </Field>
+                ) : null}
 
-              {state.operation !== 'remove_background' && state.operation !== 'upscale' ? (
-                <Field label={t('imageEdit.candidateCount')}>
-                  <input
-                    type="number"
-                    min={1}
-                    max={Math.min(4, selectedModel?.capabilities.maxOutputs ?? 1)}
-                    value={state.count}
-                    onChange={(event) =>
-                      dispatch({
-                        type: 'count',
-                        value: Number(event.target.value),
-                        max: Math.min(4, selectedModel?.capabilities.maxOutputs ?? 1),
-                      })
-                    }
-                    className="h-10 rounded-lg border border-border bg-background px-3 text-sm"
-                  />
-                </Field>
-              ) : null}
-
-              <div className="rounded-xl bg-muted p-3 text-xs leading-relaxed text-muted-foreground">
-                {t('imageEdit.inputSummary', { width: sourceWidth, height: sourceHeight })}
-                {selectedModel?.capabilities.maxInputPixels
-                  ? ` · ${t('imageEdit.modelLimit', {
-                      pixels: selectedModel.capabilities.maxInputPixels.toLocaleString(),
-                    })}`
-                  : ''}
-                {' · '}
-                {t('imageEdit.geometryHint')}
-              </div>
-
-              {maskMissing ? (
-                <p className="text-xs text-danger">{t('imageEdit.maskMissing')}</p>
-              ) : null}
-              {state.error ? (
-                <div
-                  role="alert"
-                  className="rounded-xl border border-danger/30 bg-danger/10 p-3 text-sm text-danger"
-                >
-                  {state.error}
+                <div className="rounded-xl bg-muted p-3 text-xs leading-relaxed text-muted-foreground">
+                  {t('imageEdit.inputSummary', { width: sourceWidth, height: sourceHeight })}
+                  {selectedModel?.capabilities.maxInputPixels
+                    ? ` · ${t('imageEdit.modelLimit', {
+                        pixels: selectedModel.capabilities.maxInputPixels.toLocaleString(),
+                      })}`
+                    : ''}
+                  {' · '}
+                  {t('imageEdit.geometryHint')}
                 </div>
-              ) : null}
-            </div>
-          </aside>
-        </div>
-      </DialogContent>
-    </Dialog>
+
+                {maskMissing ? (
+                  <p className="text-xs text-danger">{t('imageEdit.maskMissing')}</p>
+                ) : null}
+                {state.error ? (
+                  <div
+                    role="alert"
+                    className="rounded-xl border border-danger/30 bg-danger/10 p-3 text-sm text-danger"
+                  >
+                    {state.error}
+                  </div>
+                ) : null}
+              </div>
+            </aside>
+          </div>
+        </DialogContent>
+      </Dialog>
+      <SettingsDialog
+        open={providerSettingsOpen}
+        onOpenChange={setProviderSettingsOpen}
+        initialTab="providers"
+      />
+    </>
   );
 }
