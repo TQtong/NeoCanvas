@@ -17,7 +17,7 @@ insert into public.model_catalog (
   key, display_name, provider, modality, capabilities, default_params, sort_order, is_active
 ) values (
   'transaction-test-image', 'Transaction Test Image', 'openai', 'image',
-  '{"aspectRatios":["1:1"],"sizes":[],"maxOutputs":4,"supportsNegativePrompt":true,"supportsReferenceImages":true,"supportsImageToVideo":false,"supportsSeed":true,"qualities":["auto"],"isAsync":false,"supportsWebhook":false}',
+  '{"imageOperations":["generate","semantic_edit"],"aspectRatios":["1:1"],"sizes":[],"maxOutputs":4,"supportsNegativePrompt":true,"supportsReferenceImages":true,"supportsImageToVideo":false,"supportsSeed":true,"qualities":["auto"],"isAsync":false,"supportsWebhook":false}',
   '{"aspectRatio":"1:1","count":1}', 9999, true
 );
 
@@ -25,10 +25,10 @@ insert into public.model_catalog (
   key, display_name, provider, modality, capabilities, default_params, sort_order, is_active, user_id
 ) values
   ('transaction-other-private', 'Other Private', 'openai', 'image',
-   '{"aspectRatios":["1:1"],"sizes":[],"maxOutputs":1,"supportsNegativePrompt":false,"supportsReferenceImages":false,"supportsImageToVideo":false,"supportsSeed":false,"qualities":[],"isAsync":false,"supportsWebhook":false}',
+   '{"imageOperations":["generate"],"aspectRatios":["1:1"],"sizes":[],"maxOutputs":1,"supportsNegativePrompt":false,"supportsReferenceImages":false,"supportsImageToVideo":false,"supportsSeed":false,"qualities":[],"isAsync":false,"supportsWebhook":false}',
    '{}', 10000, true, '10000000-0000-0000-0000-000000000002'),
   ('transaction-custom-no-credential', 'Custom No Credential', 'custom:transaction', 'image',
-   '{"aspectRatios":["1:1"],"sizes":[],"maxOutputs":1,"supportsNegativePrompt":false,"supportsReferenceImages":false,"supportsImageToVideo":false,"supportsSeed":false,"qualities":[],"isAsync":false,"supportsWebhook":false}',
+   '{"imageOperations":["generate"],"aspectRatios":["1:1"],"sizes":[],"maxOutputs":1,"supportsNegativePrompt":false,"supportsReferenceImages":false,"supportsImageToVideo":false,"supportsSeed":false,"qualities":[],"isAsync":false,"supportsWebhook":false}',
    '{}', 10001, true, '10000000-0000-0000-0000-000000000001');
 
 insert into public.projects (id, owner_id, title)

@@ -22,7 +22,7 @@ import type {
 import type { EdgeData } from './edges';
 import type { MessageAttachment, MessageMention } from './messages';
 import type { ModelCapabilities, ModelDefaultParams } from './models';
-import type { GenerationParams } from './generation';
+import type { GenerationParams, ReferenceMaterial } from './generation';
 import type { ProviderCredentialRow } from './providers';
 
 /**
@@ -211,6 +211,17 @@ export type AssetRow = {
   duration_ms: number | null;
   size_bytes: number | null;
   thumbnail_path: string | null;
+  /** 是否为蒙版、合成输入或按模型限制生成的辅助资产。 */
+  is_auxiliary: boolean;
+  created_at: string;
+};
+
+/** `generation_inputs` 有序生成输入血缘行。 */
+export type GenerationInputRow = {
+  generation_id: string;
+  asset_id: string;
+  role: ReferenceMaterial['role'];
+  ordinal: number;
   created_at: string;
 };
 
@@ -320,6 +331,12 @@ export interface Database {
           event_key: string;
         };
         Update: Partial<GenerationWebhookEventRow>;
+        Relationships: [];
+      };
+      generation_inputs: {
+        Row: GenerationInputRow;
+        Insert: Omit<GenerationInputRow, 'created_at'> & { created_at?: string };
+        Update: Partial<GenerationInputRow>;
         Relationships: [];
       };
       assets: {

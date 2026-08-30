@@ -13,6 +13,8 @@
 import {
   type GenerationSubmissionResult,
   type ModelCatalogRow,
+  normalizeImageOperation,
+  type ReferenceMaterial,
   type SubmitGenerationResponse,
   type UnifiedGenerationRequest,
 } from './types.ts';
@@ -33,6 +35,25 @@ const MAX_INFLIGHT = Number(Deno.env.get('MAX_INFLIGHT_GENERATIONS') ?? '8');
 const RATE_WINDOW_SECS = Number(Deno.env.get('RATE_LIMIT_WINDOW_SECS') ?? '60');
 const RATE_MAX = Number(Deno.env.get('RATE_LIMIT_MAX') ?? '30');
 
+/** 将规范化图片操作映射为数据库幂等作用域。 */
+function generationOperationType(request: UnifiedGenerationRequest): string {
+  if (request.params.modality !== 'image') return 'generation';
+  const operation = normalizeImageOperation(request.params);
+  return operation === 'generate' ? 'generation' : `image:${operation}`;
+}
+
+/** 收集全部有序资产引用，供原子提交固化输入血缘。 */
+function generationInputs(request: UnifiedGenerationRequest): Array<{
+  assetId: string;
+  role: ReferenceMaterial['role'];
+}> {
+  const materials = [...request.params.references];
+  if (request.params.modality === 'video') {
+    materials.push(...(request.params.keyframes ?? []));
+  }
+  return materials.map(({ assetId, role }) => ({ assetId, role }));
+}
+
 /** 将数据库 RPC 的稳定异常标识映射为能力面错误码。 */
 function submissionError(error: { message: string }): ApiException {
   const message = error.message;
@@ -41,6 +62,9 @@ function submissionError(error: { message: string }): ApiException {
   }
   if (message.includes('PROJECT_FORBIDDEN')) {
     return new ApiException('project_forbidden', '无权向该项目提交生成');
+  }
+  if (message.includes('GENERATION_INPUT_FORBIDDEN')) {
+    return new ApiException('forbidden', '生成输入资产不属于当前项目或用户');
   }
   if (message.includes('PROJECT_NOT_FOUND')) {
     return new ApiException('not_found', '项目不存在');
@@ -139,6 +163,7 @@ export async function createGeneration(
   );
   const adapter = getAdapter(adapterProvider);
   validateParams(modelRow.capabilities, request, adapter.supportedOperations);
+  const operationType = generationOperationType(request);
 
   // 精确幂等重试不重复消耗限流配额：最终是否可复用、摘要是否冲突仍由带项目行锁的
   // create_generation_submission 决定，此处只判断是否需要执行新增请求的滑动窗口检查。
@@ -147,7 +172,7 @@ export async function createGeneration(
     .select('id')
     .eq('requester_id', ownerId)
     .eq('project_id', request.projectId)
-    .eq('operation_type', 'generation')
+    .eq('operation_type', operationType)
     .eq('idempotency_key', request.idempotencyKey)
     .maybeSingle();
   if (existingError) {
@@ -185,9 +210,10 @@ export async function createGeneration(
     p_request_hash: digest,
     p_placeholder_node_id: placeholderId,
     p_placement: placement,
+    p_inputs: generationInputs(request),
     p_target_node_id: request.targetNodeId ?? null,
     p_result_mode: resultMode,
-    p_operation_type: 'generation',
+    p_operation_type: operationType,
     p_max_inflight: MAX_INFLIGHT,
   });
   if (error) throw submissionError(error);

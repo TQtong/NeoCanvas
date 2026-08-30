@@ -29,7 +29,7 @@ Deno.serve(async (request) => {
     const admin = createAdminClient();
     const body = (await request.json()) as SwapMediaCandidateRequest;
 
-    if (!body.projectId || !body.primaryNodeId || !body.candidateNodeId) {
+    if (!body.projectId || !body.primaryNodeId || !body.candidateNodeId || !body.geometryMode) {
       throw new ApiException('invalid_params', '缺少必要字段');
     }
     await assertProjectOwner(admin, body.projectId, userId);
@@ -38,6 +38,7 @@ Deno.serve(async (request) => {
       p_project_id: body.projectId,
       p_primary_node_id: body.primaryNodeId,
       p_candidate_node_id: body.candidateNodeId,
+      p_geometry_mode: body.geometryMode,
     });
     if (error) throw new ApiException('conflict', error.message);
 

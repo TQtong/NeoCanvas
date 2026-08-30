@@ -15,6 +15,7 @@ values
     'openai',
     'image',
     jsonb_build_object(
+      'imageOperations', jsonb_build_array('generate', 'semantic_edit'),
       'aspectRatios', jsonb_build_array('1:1', '3:2', '2:3'),
       'sizes', jsonb_build_array(
         jsonb_build_object('width', 1024, 'height', 1024, 'label', '1024×1024'),
@@ -28,7 +29,12 @@ values
       'supportsSeed', false,
       'qualities', jsonb_build_array('low', 'medium', 'high', 'auto'),
       'isAsync', false,
-      'supportsWebhook', false
+      'supportsWebhook', false,
+      'maxInputImages', 16,
+      'inputFidelityOptions', jsonb_build_array('standard', 'high'),
+      'upscaleFactors', jsonb_build_array(),
+      'supportsTransparentOutput', true,
+      'maxInputPixels', 16777216
     ),
     jsonb_build_object('aspectRatio', '1:1', 'count', 1, 'quality', 'high'),
     10,
@@ -41,6 +47,7 @@ values
     'volcengine',
     'video',
     jsonb_build_object(
+      'imageOperations', jsonb_build_array(),
       'aspectRatios', jsonb_build_array('16:9', '9:16', '1:1'),
       'sizes', jsonb_build_array(),
       'maxOutputs', 1,
@@ -67,6 +74,7 @@ values
     'google',
     'image',
     jsonb_build_object(
+      'imageOperations', jsonb_build_array('generate', 'semantic_edit'),
       'aspectRatios', jsonb_build_array('1:1', '4:3', '3:4', '16:9', '9:16'),
       'sizes', jsonb_build_array(),
       'maxOutputs', 4,
@@ -76,7 +84,12 @@ values
       'supportsSeed', true,
       'qualities', jsonb_build_array('high'),
       'isAsync', false,
-      'supportsWebhook', false
+      'supportsWebhook', false,
+      'maxInputImages', 4,
+      'inputFidelityOptions', jsonb_build_array(),
+      'upscaleFactors', jsonb_build_array(),
+      'supportsTransparentOutput', false,
+      'maxInputPixels', 16777216
     ),
     jsonb_build_object('aspectRatio', '1:1', 'count', 1),
     30,
@@ -89,6 +102,7 @@ values
     'volcengine',
     'image',
     jsonb_build_object(
+      'imageOperations', jsonb_build_array('generate'),
       'aspectRatios', jsonb_build_array('1:1', '4:3', '3:4', '16:9', '9:16'),
       'sizes', jsonb_build_array(),
       'maxOutputs', 4,
@@ -98,7 +112,12 @@ values
       'supportsSeed', true,
       'qualities', jsonb_build_array(),
       'isAsync', false,
-      'supportsWebhook', false
+      'supportsWebhook', false,
+      'maxInputImages', 1,
+      'inputFidelityOptions', jsonb_build_array(),
+      'upscaleFactors', jsonb_build_array(),
+      'supportsTransparentOutput', false,
+      'maxInputPixels', 16777216
     ),
     jsonb_build_object('aspectRatio', '1:1', 'count', 1),
     40,

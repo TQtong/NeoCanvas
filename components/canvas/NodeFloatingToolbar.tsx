@@ -324,6 +324,7 @@ export function NodeFloatingToolbar() {
         projectId,
         primaryNodeId: primaryCandidateNodeId,
         candidateNodeId: node.id,
+        geometryMode: 'preserve_frame',
       });
       const store = useCanvasStore.getState();
       const latestPrimary = store.nodes.find((n) => n.id === primaryCandidateNodeId);

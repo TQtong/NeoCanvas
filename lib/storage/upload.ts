@@ -29,6 +29,8 @@ export interface UploadAssetParams {
   userId: string;
   /** 关联项目（可空，路径次段；无项目时归入 loose）。 */
   projectId?: string | null;
+  /** 是否为蒙版、合并当前外观或降采样输入等辅助资产。 */
+  isAuxiliary?: boolean;
   /** 进度回调（0..1，依赖浏览器 XHR 时可用；此处以二值上报）。 */
   onProgress?: (ratio: number) => void;
 }
@@ -108,11 +110,14 @@ export async function uploadAsset(
   supabase: TypedSupabaseClient,
   params: UploadAssetParams,
 ): Promise<AssetView> {
-  const { file, userId, projectId, onProgress } = params;
+  const { file, userId, projectId, isAuxiliary = false, onProgress } = params;
+  if (isAuxiliary && !projectId) {
+    throw new Error('辅助资产必须关联项目');
+  }
   const kind = kindFromMime(file.type);
   const assetId = uuid();
   const ext = extFromFile(file);
-  const folder = projectId ?? 'loose';
+  const folder = isAuxiliary ? `${projectId}/edit-inputs` : (projectId ?? 'loose');
   const path = `${userId}/${folder}/${assetId}.${ext}`;
 
   onProgress?.(0.05);
@@ -144,6 +149,7 @@ export async function uploadAsset(
       height: meta.height,
       duration_ms: meta.durationMs,
       size_bytes: file.size,
+      is_auxiliary: isAuxiliary,
     })
     .select()
     .single();

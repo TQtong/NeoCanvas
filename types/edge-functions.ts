@@ -95,6 +95,10 @@ export interface LandGenerationResult {
   nodeIds: string[];
 }
 
+/** 候选采用时的节点几何策略。 */
+export const CANDIDATE_GEOMETRY_MODES = ['preserve_frame', 'adopt_output_geometry'] as const;
+export type CandidateGeometryMode = (typeof CANDIDATE_GEOMETRY_MODES)[number];
+
 /** swap-media-candidate 请求。 */
 export interface SwapMediaCandidateRequest {
   /** 当前项目。 */
@@ -103,6 +107,8 @@ export interface SwapMediaCandidateRequest {
   primaryNodeId: string;
   /** 候选媒体节点 id。 */
   candidateNodeId: string;
+  /** 保留主节点外框，或在扩图时采用候选输出几何。 */
+  geometryMode: CandidateGeometryMode;
 }
 
 /** swap-media-candidate 响应。 */
